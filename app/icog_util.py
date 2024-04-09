@@ -89,6 +89,3 @@ def truncate_text(
         logging.info("Text is short enough. No need to summarizing.")
         return text
 
-
-if __name__ == "__main__":
-    text = "city in the region of Southern Savonia in Finland"

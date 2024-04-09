@@ -235,7 +235,14 @@ async def get_bookmark_document(id: int, response: Response):
         return document
 
 
-@app.get("/document_plus/{bookmark_id}", response_model=DocumentDisplay)
+@app.get("/document_plus/{bookmark_id}", responses={
+        404: {
+            "model": HTTPError,
+            "description": "Returning document error",
+        },
+        206: {"model": None, "description": "Document is being processed"},
+        200: {"model": DocumentDisplay, "description": "Document is ready"},
+    })
 async def get_document_plus(bookmark_id: int, response: Response, background_tasks: BackgroundTasks):
     """get document with entities and concepts"""
 
@@ -251,7 +258,7 @@ async def get_document_plus(bookmark_id: int, response: Response, background_tas
         logging.info(
             f"Document plus -> endpoint called on document status {document.status}"
         )
-        return DocumentDisplay.from_orm(document)
+        return None
     elif document.status == "Done":
         entities = app_logic.get_entities_by_document_id(document.id)
 

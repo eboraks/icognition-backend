@@ -1,12 +1,14 @@
 import datetime
 import sys
 import logging
-import os, re
+import os
 import app.transformers_util
 from app import html_parser
 from app.db_connector import get_engine
 from app.models import (
     Bookmark,
+    DocumentPromptOne,
+    DocumentPromptTwo,
     Entity,
     Page,
     Document,
@@ -15,7 +17,6 @@ from app.models import (
     Document_Embeddings,
 )
 from app.together_api_client import (
-    TogetherMixtralOpenAIClient,
     TogetherMixtralClient,
     ApiCallException,
 )
@@ -29,6 +30,7 @@ from sqlalchemy import (
     String,
     func,
     text,
+    exc,
 )
 from sqlalchemy.orm import Session
 
@@ -53,7 +55,7 @@ def test_db_connection():
         conn = engine.connect()
         conn.close()
         return True
-    except sqlalchemy.exc.OperationalError as e:
+    except exc.OperationalError as e:
         logging.error(f"Error connectiong to DB {e}")
         return None
 
@@ -236,68 +238,69 @@ async def extract_info_from_doc(doc: Document):
 
     try:
         logging.info(f"Generating summary for document {doc.id}")
-        response = await mixtralClient.generate(doc.original_text)
+        response = await mixtralClient.generate(body_text=doc.original_text, model=DocumentPromptOne)
         logging.info(f"Response from LLM {response}")
 
     except ApiCallException as e:
         logging.error(f"Error generating with LLM {e}")
         ## TODO store exception in DB
-
         doc.status = "Api Failure"
         update_document(doc)
-        return
+        return None
 
     except Exception as e:
         logging.error(f"Error generating with LLM {e}")
         doc.status = "Failure"
         update_document(doc)
-        return
+        return None
 
     try:
-        if response.oneSentenceSummary:
-            doc.short_summary = response.oneSentenceSummary
-        else:
-            doc.short_summary = "No summary was generated"
-        
-        if response.whatThisArticleIsAbout:
-            doc.is_about = response.whatThisArticleIsAbout
-        else:
-            doc.is_about = "No article is about was generated"
-
-        if response.summaryInNumericBulletPoints:
-            doc.summary_bullet_points = [
-                re.sub(r"[1-9]{,2}\.", "", point).strip()
-                for point in response.summaryInNumericBulletPoints
-            ]
-
-        else:
-            doc.summary_bullet_points = ["No bullet points were generated"]
-
-        if response.usage:
-            doc.llm_service_meta = response.usage
-
-        if response.entities_and_concepts:
-            new_entities = []
-            for entity in response.entities_and_concepts:
-                new_entity = Entity()
-                new_entity.document_id = doc.id
-                new_entity.name = entity.name
-                new_entity.description = entity.explanation
-                new_entity.type = entity.type
-                new_entity.source = mixtralClient._model_name
-                new_entities.append(new_entity)
-
-        logging.info(f"LLM ussage was {response.usage}")
-
-        doc.update_at = datetime.datetime.now()
+        doc = response.populate_document(doc)
         doc.status = "Done"
-
-        return update_document(doc, [new_entities])
+        doc.update_at = datetime.datetime.now()
+        update_document(doc)
+        logging.info(f"Document {doc.id} was updated with summary and bullet points")
 
     except Exception as e:
         doc.status = "Failure"
         logging.error(f"Error generating with LLM {e}")
         update_document(doc)
+
+    
+    # Generate entities
+    try:
+        logging.info(f"Generating entities for document {doc.id}")
+        response = await mixtralClient.generate(body_text=doc.original_text, model=DocumentPromptTwo)
+        logging.info(f"Response from LLM {response}")
+
+        # Using DocumentPromptTwo generate entities methods to create entities    
+        entities = response.generate_entities()
+        
+        for entity in entities:
+            entity.document_id = doc.id
+
+        with Session(engine) as session:
+            session.add_all(entities)
+            session.commit()
+            session.refresh(entities)
+            logging.info(f"{len(entities)} Entities for Document {doc.id} were created")
+        
+        ## Return document to indicate success
+        return doc
+
+    except ApiCallException as e:
+        logging.error(f"Error generating entities with LLM {e}")
+        ## TODO store exception in DB
+        #doc.status = "Api Failure"
+        #update_document(doc)
+        return
+
+    except Exception as e:
+        logging.error(f"Error generating entities from LLM API {e}")
+        #doc.status = "Failure"
+        #update_document(doc)
+        return
+
 
 
 def create_bookmark(page: Page, user_id: str) -> Bookmark:
