@@ -1,5 +1,5 @@
 import re
-from sqlmodel import SQLModel, Field, ARRAY, Float, JSON, Integer, Relationship
+from sqlmodel import SQLModel, Field, ARRAY, Float, JSON, Integer, Relationship, String
 from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import TEXT, JSONB
 from pgvector.sqlalchemy import Vector
@@ -11,14 +11,12 @@ from pydantic import BaseModel
 """
 The SQLModel class is used to define the database schema (when table=True) or to define FastApi payload and response models (when table=False).    
 """
-
-class SubTopic(SQLModel, table=True):
-    """
-    Represents a subtopic with its ID, name, description, and parent topic ID.
-    """
+class Topic(SQLModel, table=True):
     name: str = Field(nullable=False, primary_key=True)
-    name_embedding: List[float] | None = Field(sa_column=Column(Vector(384)))
     description: str | None = Field(default=None, nullable=True)
+    embedding: list[float] | None = Field(sa_column=Column(Vector(384)))
+    subtopics: list["SubTopic"] = Relationship(back_populates="topic")
+
 
 class SubTopic_Entity_Link(SQLModel, table=True):
     """
@@ -26,6 +24,50 @@ class SubTopic_Entity_Link(SQLModel, table=True):
     """
     subtopic_name: Optional[str] = Field(default=None, foreign_key="subtopic.name", primary_key=True)
     entity_id: Optional[int] = Field(default=None, foreign_key="entity.id", primary_key=True)
+
+
+class SubTopic(SQLModel, table=True):
+    """
+    Represents a subtopic with its ID, name, description, and parent topic ID.
+    """
+    id: int = Field(default=None, primary_key=True)
+    name: str = Field(nullable=False)
+    embedding: List[float] | None = Field(sa_column=Column(Vector(384)))
+    description: str | None = Field(default=None, nullable=True)
+    key_words: str | None = Field(default=None)
+    topic_name: str | None= Field(default=None, foreign_key="topic.name")
+    topic: Topic = Relationship(back_populates="subtopics")
+    entities: list["Entity"] = Relationship(back_populates="ent_subtopics", link_model=SubTopic_Entity_Link, sa_relationship_kwargs={"cascade": "all,delete"})
+
+    def entities_agg_string(self):
+        # Create string with each entity nanme, type and description
+        results = ''
+        for entity in self.entities:
+            results += f'{entity.name} ({entity.type}): {entity.description}\n'
+        return results
+
+
+
+class Entity(SQLModel, table=True):
+    """
+    Represents an entity with its ID, document ID, name, description, source, type, Wikidata ID, and score.
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    document_id: Optional[int] = Field(default=None, foreign_key="document.id")
+    document: Optional["Document"] = Relationship(back_populates="doc_entities")
+    name: str = Field(default=None)
+    description: str = Field(default=None, nullable=True)
+    source: str = Field(default=None, nullable=True)
+    type: str = Field(default=None, nullable=True)
+    wikidata_id: str = Field(default=None, nullable=True)
+    score: Optional[float] = Field(default=None, nullable=True)
+    embedding: Optional[List[float]] = Field(sa_column=Column(Vector(384)))
+    ent_subtopics: list[SubTopic] = Relationship(back_populates="entities", link_model=SubTopic_Entity_Link)
+
+
+
+
 
 
 class PagePayload(SQLModel, table=False):
@@ -99,6 +141,7 @@ class Document(SQLModel, table=True):
     update_at: datetime = Field(default_factory=datetime.utcnow, nullable=True)
     status: str = Field(default="Pending", nullable=True)
     llm_service_meta: Optional[Dict] = Field(default={}, sa_column=Column(JSONB))
+    doc_entities: list[Entity] = Relationship(back_populates="document")
 
 
 class Document_Embeddings(SQLModel, table=True):
@@ -116,19 +159,6 @@ class DocArtifact(SQLModel, table=False):
     id: Optional[int] = Field(default=None, primary_key=True)
 
 
-class Entity(SQLModel, table=True):
-    """
-    Represents an entity with its ID, document ID, name, description, source, type, Wikidata ID, and score.
-    """
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    document_id: Optional[int] = Field(default=None)
-    name: str = Field(default=None)
-    description: str = Field(default=None, nullable=True)
-    source: str = Field(default=None, nullable=True)
-    type: str = Field(default=None, nullable=True)
-    wikidata_id: str = Field(default=None, nullable=True)
-    score: Optional[float] = Field(default=None, nullable=True)
 
 
 """ 
@@ -144,125 +174,7 @@ class IdentifyEntity(BaseModel):
     description: Optional[str]
 
 
-class DocumentPrompt(BaseModel):
-    
-    
-    @classmethod
-    def get_messages(cls, body: str) -> list[dict]:
-        raise NotImplementedError("Subclass must implement this method")
-    
-    def populate_document(cls, document: Document) -> Document:
-        raise NotImplementedError("Subclass must implement this method")
-    
-    def generate_entities(cls) -> list[Entity]:
-        raise NotImplementedError("Subclass must implement this method")
 
-
-
-
-class DocumentPromptTwo(DocumentPrompt):
-     
-    entities_and_topics: Optional[List[IdentifyEntity]]
-    usage: Optional[str]
-
-    def populate_document(cls, document: Document) -> Document:
-        
-        document.short_summary=cls.oneSentenceSummary
-        document.llm_service_meta=cls.usage
-
-        return document
-
-    def generate_entities(self) -> list[Entity]:
-        return [Entity(**entity.model_dump()) for entity in self.entities_and_topics]
-        
-    
-    @classmethod
-    def get_messages(cls, body: str):
-
-        _system_content = """You are a researcher task with answering questions about an article.  
-            Please ensure that your responses are socially unbiased and positive in nature.
-            If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
-            If you don't know the answer, please don't share false information."""
-
-        _user_content_1_examples = """Answers output must confirm to the this JSON format. Insure the JSON is valid. Shorten the answer to make sure the JSON is valid. [/INST] 
-            JSON Output: {{
-            "entities_and_topics" : [
-            {{"name": "semiconductor", "type": "industry", "description": "Companies engaged in the design and fabrication of semiconductors and semiconductor devices"}},
-            {{"name": "NBA", "type": "sport league", "description": "NBA is the national basketball league"}},
-            {{"name": "Ford F150", "type": "vehicle", "description": "Article talks about the Ford F150 truck"}},
-            {{"name": "mobile game soft launch", "type": "topic","description": "Mobile game soft launch is a process of releasing a game to a limited audience for testing."}},
-            {{"name": "US Civil War", "type": "topic", "description": "The American Civil War was a civil war in the United States between the Union and the Confederacy, which had been formed by states that had seceded from the Union. The central cause of the war was the dispute over whether slavery would be permitted to expand into the western territories, leading to more slave states, or be prevented from doing so, which many believed would place slavery on a course of ultimate extinction."}},
-            {{"name": "Capitalism", "type": "thoery", "description": Capitalism is an economic system based on the private ownership of the means of production and their operation for profit. Central characteristics of capitalism include capital accumulation, competitive markets, price system, private property, property rights recognition, voluntary exchange, and wage labor."}}
-            ]}"""
-
-        _user_content_2_task = """Use the examples above to identify no more then ten entities (companies, people, location, products....), 
-            topic (marketing, politics, business strategy) and theories (free markets capatalism, gender dynamics...) 
-            mentioned in the article. Include short description of each.
-
-        Use the JSON format above to output your answer. Only output valid JSON format. Reduce the length of the answer to make sure the JSON is valid."""
-
-        _user_content_3_article = """Article: {BODY}""".format(BODY=body)
-
-        return [
-            {"role": "system", "content": _system_content},
-            {"role": "user", "content": _user_content_1_examples},
-            {"role": "user", "content": _user_content_2_task},
-            {"role": "user", "content": _user_content_3_article}
-        ]
-
-
-
-class DocumentPromptOne(DocumentPrompt):
-    whatThisArticleIsAbout: Optional[str]
-    oneSentenceSummary: Optional[str] 
-    summaryInNumericBulletPoints: Optional[List[str]]
-    usage: Optional[str]
-
-    def populate_document(self, document: Document) -> Document:
-            
-            document.is_about=self.whatThisArticleIsAbout
-            document.short_summary=self.oneSentenceSummary
-            bullet_points = [re.sub(r"[1-9]{,2}\.", "", bullet_point).strip() for bullet_point in self.summaryInNumericBulletPoints]
-            document.summary_bullet_points=bullet_points
-            document.llm_service_meta=self.usage
-    
-            return document
-
-
-    @classmethod
-    def get_messages(cls, body: str):
-
-        _system_content = """You are a researcher task with answering questions about an article.  
-            Please ensure that your responses are socially unbiased and positive in nature.
-            If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
-            If you don't know the answer, please don't share false information."""
-
-        _user_content_1_examples = """Answers output must confirm to the this JSON format. Insure the JSON is valid. Shorten the answer to make sure the JSON is valid. [/INST] 
-            JSON Output: {{
-                "whatThisArticleIsAbout" : "Mobile game soft launch",
-                "oneSentenceSummary" : "Mobile game soft launch is a process of releasing a game to a limited audience for testing.",
-                "summaryInNumericBulletPoints" : [
-                "1. Mobile game soft launch is a process of releasing a game to a limited audience for testing.",
-                "2. Getting soft launch require planning, strategy and expirements.",
-                ],
-            }}"""
-
-        _user_content_2_task = """Use the examples above to answer the following questions.
-        1. Three to fours words explaining what the article is about.
-        2. Summarize the article in one sentence. Limit the answer to twenty words.
-        3. Summarize the article up to six bullet-points. Each bullet-point need to have betweeen ten to tweenty words. Limit the number of bullet points must below six.
-        
-        Use the JSON format above to output your answer. Only output valid JSON format. Reduce the length of the answer to make sure the JSON is valid."""
-
-        _user_content_3_article = """Article: {BODY}""".format(BODY=body)
-
-        return [
-            {"role": "system", "content": _system_content},
-            {"role": "user", "content": _user_content_1_examples},
-            {"role": "user", "content": _user_content_2_task},
-            {"role": "user", "content": _user_content_3_article}
-        ]
- 
 
 class DocumentDisplay(BaseModel):
     id: Optional[int]

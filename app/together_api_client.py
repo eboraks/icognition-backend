@@ -10,7 +10,7 @@ from time import sleep
 from pydantic import ValidationError
 from transformers import AutoTokenizer
 from app.icog_util import truncate_text
-from app.models import DocumentPrompt, DocumentPromptOne
+from app.prompt_models import DocumentPrompt, DocumentPromptOne
 
 
 logging.basicConfig(

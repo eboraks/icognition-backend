@@ -267,9 +267,6 @@ async def get_document_plus(bookmark_id: int, response: Response, background_tas
             f"Document plus -> endpoint called on document status {document.status}"
         )
 
-        # Generate embeddings for the document
-        background_tasks.add_task(generate_embedding)
-
         return DocumentDisplay.from_orm(document, entities=entities)
     else:
         response.status_code = status.HTTP_404_NOT_FOUND

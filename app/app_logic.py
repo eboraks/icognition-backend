@@ -7,8 +7,6 @@ from app import html_parser
 from app.db_connector import get_engine
 from app.models import (
     Bookmark,
-    DocumentPromptOne,
-    DocumentPromptTwo,
     Entity,
     Page,
     Document,
@@ -16,6 +14,7 @@ from app.models import (
     DocumentDisplay,
     Document_Embeddings,
 )
+from app.prompt_models import DocumentPromptOne, DocumentPromptTwo
 from app.together_api_client import (
     TogetherMixtralClient,
     ApiCallException,
@@ -242,7 +241,7 @@ async def extract_info_from_doc(doc: Document):
         logging.info(f"Response from LLM {response}")
 
     except ApiCallException as e:
-        logging.error(f"Error generating with LLM {e}")
+        logging.error(f"Error generating with LLM {e}. Status code {e.status_code} reason {e.reason}")
         ## TODO store exception in DB
         doc.status = "Api Failure"
         update_document(doc)
@@ -260,6 +259,7 @@ async def extract_info_from_doc(doc: Document):
         doc.update_at = datetime.datetime.now()
         update_document(doc)
         logging.info(f"Document {doc.id} was updated with summary and bullet points")
+        generate_documents_embeddings()
 
     except Exception as e:
         doc.status = "Failure"
@@ -279,10 +279,11 @@ async def extract_info_from_doc(doc: Document):
         for entity in entities:
             entity.document_id = doc.id
 
+        entities = await app.transformers_util.get_entity_embeddings(entities)
+
         with Session(engine) as session:
             session.add_all(entities)
             session.commit()
-            session.refresh(entities)
             logging.info(f"{len(entities)} Entities for Document {doc.id} were created")
         
         ## Return document to indicate success
@@ -505,6 +506,7 @@ def search_documents(user_id: str, search_term: str = None) -> list[Document]:
 async def generate_documents_embeddings():
     """
     This function generates embeddings for a list of documents
+    The reason this is not being done in the extract_info_from_doc function is because we want to delay returning the response to the user
     """
 
     ## Get Documents that don't have embeddings, by joining with DocumentEmbeddings
@@ -532,6 +534,33 @@ async def generate_documents_embeddings():
     except Exception as e:
         logging.error(f"Error saving embeddings {e}")
         raise e
+
+async def generate_entities_embeddings():
+    """
+    This method generate embeddings for all entities in the database, it's used to retroactively generate embeddings for entities
+    """
+    with Session(engine) as session:
+        ## Get Entities that don't have embeddings, by checking embeddings field is Null
+        entities = session.scalars(
+            select(Entity).filter(Entity.embedding == None)
+        ).all()
+
+        try:
+            entities = await app.transformers_util.get_entity_embeddings(entities)
+        except Exception as e:
+            logging.error(f"Generate_entities_embeddings - Error generating embeddings {e}")
+            raise e
+        
+        ## Save entities with embeddings
+        try:
+            session.add_all(entities)
+            session.commit()
+        except Exception as e:
+            logging.error(f"Generate_entities_embeddings - Error saving embeddings {e}")
+            raise e
+
+
+
 
 
 def search_embeddings(user_id: str, search_term: str) -> list[DocumentDisplay]:

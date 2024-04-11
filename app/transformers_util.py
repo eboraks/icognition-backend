@@ -1,7 +1,7 @@
 from sentence_transformers import SentenceTransformer, util
 from app.models import Document, Entity, Document_Embeddings
 
-model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", device='cpu')
 model.encode("Encode this on startup to avoid latency")
 
 def get_util():
@@ -11,7 +11,15 @@ def get_model():
     return model
 
 def generate_embeddings(term: str) -> list[float]:
-    return model.encode(term)
+    return model.encode(term,  show_progress_bar=True, convert_to_tensor=True)
+
+
+async def get_entity_embeddings(entities: list[Entity]) -> list[Entity]:
+    for entity in entities:
+        entity.embedding = model.encode(f"{entity.name} ({entity.type}) {entity.description}", convert_to_tensor=True)
+    return entities
+
+
 
 
 async def get_document_embeddings(
