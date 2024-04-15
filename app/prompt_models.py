@@ -228,7 +228,7 @@ class SubTopicPrompt(BaseModel):
             }}"""
 
         _user_content_2_task = """Using the following sentences that are in the format of "[NAME] ([TYPE]) [DESCRIPTION]"
-        Come up with a name that describe their topic in the sentences. The name should include a noun and a common noun. Also, include description of the topic 
+        Come up with a name that describe the topic in the sentences. The name should include a noun and a common noun. Also, include description of the topic 
         and key words that are mention in the subtopics. Use the previous JSON output example. 
         
         The topic name needs to aggregate and describe the information from the subtopics. Here are some examples:  

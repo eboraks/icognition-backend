@@ -1,6 +1,8 @@
 from sentence_transformers import SentenceTransformer, util
 from app.models import Document, Entity, Document_Embeddings
 
+
+# Other model that were tested, they more all less all the same - all-mpnet-base-v2, all-MiniLM-L6-v2, all-MiniLM-L12-v2, paraphrase-multilingual-MiniLM-L12-v2
 model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", device='cpu')
 model.encode("Encode this on startup to avoid latency")
 

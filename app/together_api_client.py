@@ -71,14 +71,7 @@ class TogetherMixtralClient:
         self._retry_sleep = 30
         self._retry_attempts = 0
         self._retry_max_attempts = 2
-        self._client_session = aiohttp.ClientSession(
-            headers={
-                "Authorization": f"Bearer {self._api_token}",
-                "content-type": "application/json",
-                "accept": "application/json",
-                "User-Agent": "Icognition App",
-            }
-        )
+        self._client_session = None
  
 
     def build_query(self, templete: str, body_text: str) -> str:
@@ -88,10 +81,25 @@ class TogetherMixtralClient:
             logging.warn(f"Query is too big, let shorten the body text")
 
         return results
+    
+
+    async def getClientSession(self) -> aiohttp.ClientSession:
+        
+        if self._client_session is None:
+            self._client_session = aiohttp.ClientSession(
+            headers={
+                "Authorization": f"Bearer {self._api_token}",
+                "content-type": "application/json",
+                "accept": "application/json",
+                "User-Agent": "Icognition App",
+            }
+        )
+        return self._client_session
 
     async def api_call(self, payload) -> dict:
         API_URL = self._api_url
-        async with self._client_session.post(API_URL, json=payload) as res:
+        await self.getClientSession()
+        async with self._client_session. post(API_URL, json=payload) as res:
             status = res.status
             if status == 200:
                 return await res.json()

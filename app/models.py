@@ -12,8 +12,10 @@ from pydantic import BaseModel
 The SQLModel class is used to define the database schema (when table=True) or to define FastApi payload and response models (when table=False).    
 """
 class Topic(SQLModel, table=True):
-    name: str = Field(nullable=False, primary_key=True)
-    description: str | None = Field(default=None, nullable=True)
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: str | None = Field(default=None)
+    name: str = Field(nullable=False)
+    description: str | None = Field(default=None)
     embedding: list[float] | None = Field(sa_column=Column(Vector(384)))
     subtopics: list["SubTopic"] = Relationship(back_populates="topic")
 
@@ -22,22 +24,22 @@ class SubTopic_Entity_Link(SQLModel, table=True):
     """
     Represents a link between a subtopic and an entity.
     """
-    subtopic_name: Optional[str] = Field(default=None, foreign_key="subtopic.name", primary_key=True)
+    subtopic_id: Optional[int] = Field(default=None, foreign_key="subtopic.id", primary_key=True)
     entity_id: Optional[int] = Field(default=None, foreign_key="entity.id", primary_key=True)
-
 
 class SubTopic(SQLModel, table=True):
     """
     Represents a subtopic with its ID, name, description, and parent topic ID.
     """
     id: int = Field(default=None, primary_key=True)
+    user_id: str | None = Field(nullable=False)
     name: str = Field(nullable=False)
     embedding: List[float] | None = Field(sa_column=Column(Vector(384)))
     description: str | None = Field(default=None, nullable=True)
     key_words: str | None = Field(default=None)
-    topic_name: str | None= Field(default=None, foreign_key="topic.name")
+    topic_id: int | None= Field(default=None, foreign_key="topic.id")
     topic: Topic = Relationship(back_populates="subtopics")
-    entities: list["Entity"] = Relationship(back_populates="ent_subtopics", link_model=SubTopic_Entity_Link, sa_relationship_kwargs={"cascade": "all,delete"})
+    entities: list["Entity"] = Relationship(back_populates="ent_subtopics", link_model=SubTopic_Entity_Link, sa_relationship_kwargs={"cascade": "delete"})
 
     def entities_agg_string(self):
         # Create string with each entity nanme, type and description
@@ -64,7 +66,6 @@ class Entity(SQLModel, table=True):
     score: Optional[float] = Field(default=None, nullable=True)
     embedding: Optional[List[float]] = Field(sa_column=Column(Vector(384)))
     ent_subtopics: list[SubTopic] = Relationship(back_populates="entities", link_model=SubTopic_Entity_Link)
-
 
 
 
