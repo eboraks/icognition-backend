@@ -175,7 +175,28 @@ class IdentifyEntity(BaseModel):
     description: Optional[str]
 
 
+class EntityDisplay(BaseModel):
+    id: Optional[int]
+    document_id: Optional[int]
+    name: Optional[str]
+    description: Optional[str]
+    source: Optional[str]
+    type: Optional[str]
+    wikidata_id: Optional[str]
+    score: Optional[float]
 
+    @classmethod
+    def from_orm(cls, entity: Entity):
+        return cls(
+            id=entity.id,
+            document_id=entity.document_id,
+            name=entity.name,
+            description=entity.description,
+            source=entity.source,
+            type=entity.type,
+            wikidata_id=entity.wikidata_id,
+            score=entity.score,
+        )
 
 class DocumentDisplay(BaseModel):
     id: Optional[int]
@@ -189,7 +210,7 @@ class DocumentDisplay(BaseModel):
     oneSentenceSummary: Optional[str] = None
     is_about: Optional[str] = None
     tldr: Optional[List[str]] = None
-    entities_and_concepts: Optional[List[Entity]] = None
+    entities_and_concepts: Optional[List[EntityDisplay]] = None
     usage: Optional[str] = None
     cosine_similarity: Optional[float] = None
 
@@ -207,6 +228,6 @@ class DocumentDisplay(BaseModel):
             updateAt=document.update_at,
             oneSentenceSummary=document.short_summary,
             is_about=document.is_about,
-            entities_and_concepts=entities,
+            entities_and_concepts= [EntityDisplay.from_orm(entity) for entity in entities] if entities else None,
             cosine_similarity=cosine_similarity,
         )

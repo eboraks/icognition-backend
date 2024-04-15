@@ -197,9 +197,12 @@ async def get_documents_plus_by_user_id(user_id: str):
     results = []
     for bookmark in bookmarks:
         document = app_logic.get_document_by_id(bookmark.document_id)
-        entities = app_logic.get_entities_by_document_id(document.id)
+        if document:
+            entities = app_logic.get_entities_by_document_id(document.id)
+            display = DocumentDisplay.from_orm(document, entities=entities)
+        else:
+            logging.warn(f"Document not found for bookmark {bookmark.id}") 
 
-        display = DocumentDisplay.from_orm(document, entities=entities)
 
         results.append(display)
 
@@ -317,18 +320,10 @@ async def delete_document(id: int) -> None:
     app_logic.delete_document_and_associate_records(id)
 
 
-@app.get("/entities/{user_id}", response_model=List, status_code=200)
-async def post_entities_tree(user_id: str):
-    logging.info(f"Post entities tree")
-    entities = app_logic.get_entities_by_user_id(user_id)
-    return entities
+@app.get("/subtopics/{user_id}", response_model=List, status_code=200)
+async def get_user_subtopics(user_id: str):
+    return []
 
-
-@app.get("/entities_tree/{user_id}", response_model=List, status_code=200)
-async def post_entities_tree(user_id: str):
-    logging.info(f"Post entities tree")
-    entities = app_logic.get_entities_tree_by_user_id(user_id)
-    return entities
 
 
 @app.post("/search", response_model=List[DocumentDisplay], status_code=200)
