@@ -29,15 +29,18 @@ st_model = get_model()
 
 
 
-_entity_similarity_freshold = float(os.envrion["ENTITY_SIMILARITY_FRESHOLD"])
-_clusters_similarity_freshold = float(os.envrion["CLUSTERS_SIMILARITY_THRESHOLD"])
-_clusters_min_size = int(os.envrion["CLUSTERS_MIN_SIZE"])
+_entity_similarity_freshold = float(os.environ["ENTITY_SIMILARITY_FRESHOLD"])
+_clusters_similarity_freshold = float(os.environ["CLUSTERS_SIMILARITY_THRESHOLD"])
+_clusters_min_size = int(os.environ["CLUSTERS_MIN_SIZE"])
 
 def get_entities(user_id: str) -> list[Entity]:
     with Session(engine) as session:
         filter_stmt = select(Entity.id).join(Document, Document.id == Entity.document_id)\
             .join(Bookmark, Document.id == Bookmark.document_id)\
-            .where(Bookmark.user_id == user_id)
+            .where(and_(
+                Bookmark.user_id == user_id,
+                Entity.embedding != None
+            ))
         
         
         stmt = select(Entity).outerjoin(SubTopic_Entity_Link, Entity.id == SubTopic_Entity_Link.entity_id)\
@@ -232,3 +235,17 @@ async def subtopics_factory(user_id: str,
         subtopics.append(subtopic)
     
     return subtopics
+
+def delete_user_id_subtopics(user_id: str):
+    with Session(engine) as session:
+        subtopics = session.scalars(select(SubTopic).where(SubTopic.user_id == user_id)).unique().all()
+        subtopics_ids = [subtopic.id for subtopic in subtopics]
+        delete_links = session.scalars(select(SubTopic_Entity_Link).filter(SubTopic_Entity_Link.subtopic_id.in_(subtopics_ids))).all()
+        
+        for link in delete_links:
+            session.delete(link)
+        
+        for subtopic in subtopics:
+            session.delete(subtopic)
+        
+        session.commit()

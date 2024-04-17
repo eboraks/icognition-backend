@@ -3,6 +3,7 @@ import sys
 import logging
 import os
 import app.transformers_util
+import app.subtopics_util as subtopics_util
 from app import html_parser
 from app.db_connector import get_engine
 from app.models import (
@@ -13,6 +14,8 @@ from app.models import (
     PagePayload,
     DocumentDisplay,
     Document_Embeddings,
+    SubTopic_Entity_Link,
+    SubTopicDisplay,
 )
 from app.prompt_models import DocumentPromptOne, DocumentPromptTwo
 from app.together_api_client import (
@@ -22,16 +25,13 @@ from app.together_api_client import (
 from sqlalchemy import (
     select,
     delete,
-    create_engine,
     and_,
     or_,
-    Integer,
-    String,
-    func,
     text,
     exc,
 )
 from sqlalchemy.orm import Session
+
 
 
 logging.basicConfig(
@@ -65,12 +65,11 @@ def delete_bookmark_and_associate_records(bookmark_id) -> None:
     This function was create for testing purposes.
     """
     doc = get_document_by_bookmark_id(bookmark_id)
+    delete_document_and_associate_records(doc.id)
 
     logging.info(f"Deleting bookmark {bookmark_id} and associated records")
     with Session(engine) as session:
-        session.execute(delete(Document).where(Document.id == doc.id))
         session.execute(delete(Bookmark).where(Bookmark.id == bookmark_id))
-        session.execute(delete(Entity).where(Entity.document_id == doc.id))
         session.commit()
         logging.info(f"Bookmark {bookmark_id} and associated records deleted")
 
@@ -82,9 +81,12 @@ def delete_document_and_associate_records(document_id) -> None:
     """
     logging.info(f"Deleting document {document_id} and associated records")
     with Session(engine) as session:
-        session.execute(delete(Document).where(Document.id == document_id))
+        delete_links = session.scalars(select(SubTopic_Entity_Link).join(Entity).where(Entity.document_id == document_id)).all()
+        for link in delete_links:
+            session.delete(link)
         session.execute(delete(Entity).where(Entity.document_id == document_id))
-        session.execute(delete(Concept).where(Concept.document_id == document_id))
+        session.execute(delete(Document).where(Document.id == document_id))
+
         session.commit()
         logging.info(f"Document {document_id} and associated records deleted")
 
@@ -236,12 +238,13 @@ async def extract_info_from_doc(doc: Document):
     update_document(doc)
 
     try:
-        logging.info(f"Generating summary for document {doc.id}")
+        tokens = mixtralClient._tokenizer.encode(doc.original_text, return_tensors="np")
+        logging.info(f"Generating summary for document {doc.id}. Number of tokens: {len(tokens[0] )}")
         response = await mixtralClient.generate(body_text=doc.original_text, model=DocumentPromptOne)
         logging.info(f"Response from LLM {response}")
 
     except ApiCallException as e:
-        logging.error(f"Error generating with LLM {e}. Status code {e.status_code} reason {e.reason}")
+        logging.error(f"Error generating answer with LLM API {e}")
         ## TODO store exception in DB
         doc.status = "Api Failure"
         update_document(doc)
@@ -259,7 +262,7 @@ async def extract_info_from_doc(doc: Document):
         doc.update_at = datetime.datetime.now()
         update_document(doc)
         logging.info(f"Document {doc.id} was updated with summary and bullet points")
-        generate_documents_embeddings()
+        await generate_documents_embeddings()
 
     except Exception as e:
         doc.status = "Failure"
@@ -285,9 +288,15 @@ async def extract_info_from_doc(doc: Document):
             session.add_all(entities)
             session.commit()
             logging.info(f"{len(entities)} Entities for Document {doc.id} were created")
-        
-        ## Return document to indicate success
-        return doc
+
+        ## Generate subtopics, one day this will be moved to a background task
+        ## Although the factory takes entities, I am not using it to generate subtopics 
+        ## for entities that are already in the database    
+        bookmark = get_bookmark_by_document_id(doc.id)
+        logging.info(f"Generating subtopics for user {bookmark.user_id}")
+        await subtopics_util.subtopics_factory(bookmark.user_id)
+
+        return doc # to indicate process completed.   
 
     except ApiCallException as e:
         logging.error(f"Error generating entities with LLM {e}")
@@ -425,49 +434,28 @@ def get_documenets_by_entity_id(entity_id: int) -> list[Document]:
     return documents
 
 
-def get_entities_tree_by_user_id(user_id: str) -> list:
-    session = Session(engine)
-    queryTypes = text(
-        """select e.type 
-	            from entity e
-	            join document d on e.document_id = d.id
-	            join bookmark b on b.document_id = d.id
-	            where b.user_id = '{USER_ID}'
-	        group by 1""".format(
-            USER_ID=user_id
-        )
-    )
+def get_user_subtopics(user_id: str) -> list[SubTopicDisplay]:
+    
+    results = []
+    with Session(engine) as session:
+        query = text(
+                """SELECT s.id, s.name, s.description, 
+                    count(distinct d.id) as number_of_docs,
+                    json_agg(distinct d.id)
+                    FROM subtopic s
+                    JOIN subtopic_entity_link l ON l.subtopic_id = s.id
+                    JOIN entity e ON e.id = l.entity_id
+                    JOIN document d ON d.id = e.document_id
+                    WHERE s.user_id = '{USER_ID}'
+                GROUP BY s.id, s.name, s.description
+                ORDER BY count(distinct d.id) DESC""".format(USER_ID=user_id)
+            )
 
-    types = session.execute(queryTypes).fetchall()
-    nodes = []
-    for index, type in enumerate(types):
-        node = {}
-        node["key"] = str(index)
-        node["label"] = type[0]
-        node["data"] = type[0] + " folder"
-        node["children"] = []
+        subtopics_touples = session.execute(query).fetchall()
+        for touple in subtopics_touples:
+            results.append(SubTopicDisplay.from_touple(touple))
 
-        entities_nodes = get_entities_by_user_id_and_type(user_id, type[0])
-        for index2, entity in enumerate(entities_nodes):
-            entity_node = {}
-            entity_node["key"] = node["key"] + "-" + str(index2)
-            entity_node["label"] = entity.name
-            entity_node["data"] = entity.name + " entity"
-            entity_node["children"] = []
-
-            node["children"].append(entity_node)
-
-            documents = get_documenets_by_entity_id(entity.id)
-            for index3, document in enumerate(documents):
-                document_node = {}
-                document_node["key"] = entity_node["key"] + "-" + str(index3)
-                document_node["label"] = document.title
-                document_node["data"] = document.title + " document"
-                entity_node["children"].append(document_node)
-        nodes.append(node)
-
-    session.close()
-    return nodes
+    return results
 
 
 def search_documents(user_id: str, search_term: str = None) -> list[Document]:
@@ -555,6 +543,7 @@ async def generate_entities_embeddings():
         try:
             session.add_all(entities)
             session.commit()
+
         except Exception as e:
             logging.error(f"Generate_entities_embeddings - Error saving embeddings {e}")
             raise e

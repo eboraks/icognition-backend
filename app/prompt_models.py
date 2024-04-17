@@ -168,7 +168,7 @@ class DocumentPromptOne(DocumentPrompt):
 
         _user_content_1_examples = """Answers output must confirm to the this JSON format. Insure the JSON is valid. Shorten the answer to make sure the JSON is valid. [/INST] 
             JSON Output: {{
-                "whatThisArticleIsAbout" : "Mobile game soft launch",
+                "whatThisArticleIsAbout" : "This blog post is about the importance of mobile game soft launch",
                 "oneSentenceSummary" : "Mobile game soft launch is a process of releasing a game to a limited audience for testing.",
                 "summaryInNumericBulletPoints" : [
                 "1. Mobile game soft launch is a process of releasing a game to a limited audience for testing.",
@@ -177,7 +177,7 @@ class DocumentPromptOne(DocumentPrompt):
             }}"""
 
         _user_content_2_task = """Use the examples above to answer the following questions.
-        1. Three to fours words explaining what the article is about.
+        1. One short sentance explaining what the article is about.
         2. Summarize the article in one sentence. Limit the answer to twenty words.
         3. Summarize the article up to six bullet-points. Each bullet-point need to have betweeen ten to tweenty words. Limit the number of bullet points must below six.
         
@@ -228,19 +228,23 @@ class SubTopicPrompt(BaseModel):
             }}"""
 
         _user_content_2_task = """Using the following sentences that are in the format of "[NAME] ([TYPE]) [DESCRIPTION]"
-        Come up with a name that describe the topic in the sentences. The name should include a noun and a common noun. Also, include description of the topic 
-        and key words that are mention in the subtopics. Use the previous JSON output example. 
+        Come up with a name that describe the topic in the sentences. If the topic name is a proper noun then include common noun to describe what the proper noun is. 
+        Also, include description of the topic and key words that are mention in the subtopics. Use the previous JSON output example. 
         
+        Here are some examples:
         The topic name needs to aggregate and describe the information from the subtopics. Here are some examples:  
-        1. Topic name "Virtual Meeting Management" should be create for the following subtopics:
+        Sentences: 
         - distraction-free virtual meetings - Virtual meetings that are free from distractions and interruptions
         - distraction-free meetings - Meetings that are free from distractions and interruptions, allowing for better engagement and productivity
         - virtual meetings - Meetings held through video conferencing technology
-        2. Topic name "Vector Databases" for the following subtopics:
+        Answer: Topic name "Virtual Meeting Management"
+
+        Sentences:
         Vector indexes - Vector indexes are a way of organizing and searching for vectors in a high-dimensional space, based on their similarity to a given query vector.
         Vector search retrieval methods - Vector search retrieval methods are a way of searching for information based on the similarity of vectors in a high-dimensional space.
         vector database - A vector database is a type of database that stores and retrieves vector data, which can be used for semantic search and other machine learning tasks 
-
+        Answer: Vector Databases
+        
         Use the JSON format above to output your answer. Only output valid JSON format. Reduce the length of the answer to make sure the JSON is valid."""
 
         _user_content_3_subtopics = """Subtopics: {BODY}""".format(BODY=body)

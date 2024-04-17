@@ -10,12 +10,14 @@ from app.models import (
     DocumentDisplay,
     HTTPError,
     SearchPayload,
+    SubTopicDisplay,
 )
 import logging
 import sys, re, time
 import uvicorn
 import re
 import app.app_logic as app_logic
+import app.subtopics_util as subtopics_util
 import urllib.parse as urlparse
 
 
@@ -294,21 +296,7 @@ async def get_document(id: int, response: Response):
 
 
 
-
-@app.get("/document/{id}/entities")
-async def get_entities(id: int, response: Response):
-    logging.info(f"Icognition document entities endpoint called on {id}")
-    entities = app_logic.get_entities_by_document_id(id)
-
-    if entities is None:
-        response.status_code = status.HTTP_404_NOT_FOUND
-        raise HTTPException(status_code=404, detail="Entities not found")
-    else:
-        response.status_code = status.HTTP_200_OK
-        return entities
-
-
-@app.delete("/bookmark/{id}/document", status_code=204)
+@app.delete("/bookmark/{id}", status_code=204)
 async def delete_bookmark(id: int) -> None:
     logging.info(f"Delete bookmark and associated records for id: {id}")
     app_logic.delete_bookmark_and_associate_records(id)
@@ -320,10 +308,14 @@ async def delete_document(id: int) -> None:
     app_logic.delete_document_and_associate_records(id)
 
 
-@app.get("/subtopics/{user_id}", response_model=List, status_code=200)
+@app.get("/subtopics/{user_id}", response_model=List[SubTopicDisplay], status_code=200)
 async def get_user_subtopics(user_id: str):
-    return []
-
+    try:
+        subtopics = app_logic.get_user_subtopics(user_id)
+        return subtopics
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=404, detail="Subtopics not found")
 
 
 @app.post("/search", response_model=List[DocumentDisplay], status_code=200)
@@ -346,3 +338,16 @@ async def generate_embedding():
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Embedding generation failed")
+
+@app.delete("/subtopics/{user_id}", status_code=204)
+def delete_user_id_subtopics(user_id: str):
+    logging.info(f"Delete subtopics for user_id: {user_id}")
+    subtopics_util.delete_user_id_subtopics(user_id) 
+
+@app.get("/generate/subtopics/{user_id}", status_code=200)
+async def generate_subtopics(user_id: str, background_tasks: BackgroundTasks):
+    try:
+        background_tasks.add_task(subtopics_util.subtopics_factory, user_id)
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Subtopics generation failed")

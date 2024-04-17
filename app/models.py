@@ -231,3 +231,20 @@ class DocumentDisplay(BaseModel):
             entities_and_concepts= [EntityDisplay.from_orm(entity) for entity in entities] if entities else None,
             cosine_similarity=cosine_similarity,
         )
+
+class SubTopicDisplay(BaseModel):
+    id: Optional[int]
+    name: Optional[str]
+    description: Optional[str]
+    number_of_docs: Optional[int]
+    docs_ids: Optional[List[int]]
+
+    @classmethod
+    def from_touple(cls, subtopic_touple):
+        return cls(
+            id=subtopic_touple[0],
+            name=subtopic_touple[1],
+            description=subtopic_touple[2],
+            number_of_docs=subtopic_touple[3],
+            docs_ids=subtopic_touple[4]
+        )

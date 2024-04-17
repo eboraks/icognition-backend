@@ -63,7 +63,7 @@ class TogetherMixtralClient:
         self._api_token = config["TOGETHER_TOKEN"]
         self._options = {"use_cache": True}
         self._api_url = "https://api.together.xyz/inference"
-        self._model_name = "mistralai/Mixtral-8x7B-Instruct-v0.1"
+        self._model_name = config["TOGETHER_MODEL"] # "mistralai/Mixtral-8x7B-Instruct-v0.1"
         self._tokenizer = AutoTokenizer.from_pretrained(
             self._model_name, use_fast=True, use_cache=False
         )
@@ -72,15 +72,6 @@ class TogetherMixtralClient:
         self._retry_attempts = 0
         self._retry_max_attempts = 2
         self._client_session = None
- 
-
-    def build_query(self, templete: str, body_text: str) -> str:
-        results = templete.format(BODY=body_text)
-        tokens = self._tokenizer.encode(results, return_tensor="np")
-        if len(tokens[0]) > self._max_length:
-            logging.warn(f"Query is too big, let shorten the body text")
-
-        return results
     
 
     async def getClientSession(self) -> aiohttp.ClientSession:
@@ -99,21 +90,20 @@ class TogetherMixtralClient:
     async def api_call(self, payload) -> dict:
         API_URL = self._api_url
         await self.getClientSession()
-        async with self._client_session. post(API_URL, json=payload) as res:
-            status = res.status
-            if status == 200:
-                return await res.json()
-            else:
-                logging.info(f"API Call Error: {res.reason}. Status code: {status}")
-                raise ApiCallException(
-                    "Error during API call",
-                    {
-                        "status_code": status,
-                        "content": str(res.content._exception),
-                        "reason": res.reason,
-                    },
-                )
-                return None
+        try:
+            async with self._client_session.post(API_URL, json=payload) as res:
+                status = res.status
+                if status == 200:
+                    return await res.json()
+                else:
+                    logging.info(f"API Call Error: {res.reason}. Status code: {status}")
+                    raise ApiCallException(
+                        message= f"Error during API call. Status code: {status}. Reason: {res.reason}",
+                        response={"status": status, "reason": res.reason}
+                        )
+        except Exception as e:
+            logging.error(f"Error calling API: {e}")
+            raise ApiCallException("Error during API call", {"error": str(e)})
 
     async def generate(
         self,
@@ -126,7 +116,7 @@ class TogetherMixtralClient:
         ## Use template to generate prompt
         ## Build payload
         payload = {
-            "model": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+            "model": self._model_name,
             "messages": model.get_messages(body_text),
             "temperature": temperature,
             "top_p": top_p,
