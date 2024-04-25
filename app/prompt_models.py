@@ -255,6 +255,48 @@ class SubTopicPrompt(BaseModel):
             {"role": "user", "content": _user_content_2_task},
             {"role": "user", "content": _user_content_3_subtopics}
         ]
+    
+class RAGPrompt(BaseModel):
+    """
+    Model for subtopic prompts.
+    """
+
+    answer: str
+    document_ids_used_for_answer: list[int]
+    usage: str | None
+    
+    @classmethod
+    def get_messages(cls, contexts: list[str], question: str):
+        """
+        Get the list of messages for the subtopic prompt.
+
+        Args:
+            body (str): The body of the document.
+
+        Returns:
+            list[dict]: The list of messages for the subtopic prompt.
+        """
+        _system_content = """You are a researcher task with answering questions about an article.  
+            Please ensure that your responses are socially unbiased and positive in nature.
+            If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
+            If you don't know the answer, please don't share false information."""
+
+        _user_instructions = """Using the following context(s), answer the question. Use the context(s) that best fit the question. 
+        Use the document_ids to report what document_id used to answer the question."""
+        
+        _user_context = "Context(s):\n\n"
+        for c in contexts:
+            _user_context += """Document_id {ID} Context: {CONTEXT}\n\n""".format(ID=c['doc_id'], CONTEXT=c['text'])
+
+        _user_question = """Question: {QUESTION}""".format(QUESTION=question)
+
+        
+        return [
+            {"role": "system", "content": _system_content},
+            {"role": "user", "content": _user_instructions},
+            {"role": "user", "content": _user_context},
+            {"role": "user", "content": _user_question}
+        ]
 
 
 

@@ -59,3 +59,29 @@ async def get_document_embeddings(
                 )
 
     return results
+
+
+async def get_document_embeddings_from_entities(entities: list[Entity]) -> list[Document_Embeddings]:
+    results = []
+    for entity in entities:
+        
+        if entity.name:
+            results.append(
+                Document_Embeddings(
+                    document_id=entity.document_id,
+                    entity_id=entity.id,
+                    field="entity_name",
+                    embeddings=model.encode(entity.name),
+                )
+            )
+        if entity.description:
+            results.append(
+                Document_Embeddings(
+                    document_id=entity.document_id,
+                    entity_id=entity.id,
+                    field="entity_description",
+                    embeddings=model.encode(entity.description),
+                )
+            )
+
+    return results

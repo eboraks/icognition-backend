@@ -49,19 +49,18 @@ def get_webpage(payload: PagePayload) -> BeautifulSoup:
 def find_main_article_element(soup: BeautifulSoup) -> list[str]:
 
     articles = []
-    selectors = ["article", "div#article", "div.article-body", "div.article", "main"]
+    selectors = ["div#article", "div.article-body", "div.article", "div.article-container", "article", "main"]
 
     for selector in selectors:
-        articles = soup.select(selector)
-        if len(articles) > 0:
-            break
+        for element in soup.select(selector):
+            articles.append(element)
 
     if len(articles) == 0:
         return None
 
     content_estimator = []
     for article in articles:
-        num_contect_ele = len(article.find_all("h1")) + len(article.find_all("p"))
+        num_contect_ele = len(article.find_all("h1")) + len(article.find_all("h2")) + len(article.find_all("p"))
         content_estimator.append(num_contect_ele)
 
     if len(content_estimator) == 0:
@@ -92,12 +91,16 @@ def get_paragraphs(soup: BeautifulSoup) -> list[str]:
     return text_elements
 
 
-def get_title(soup: BeautifulSoup) -> str:
+def get_title(article: BeautifulSoup, html: BeautifulSoup) -> str:
 
-    title = soup.find("h1")
+    title = article.find("h1")
     if title is None:
-        logging.error("No title found in webpage")
-        title = soup.find("h2")
+        title = html.find("h1")
+        if title is None:
+            title = html.find("h2")
+            if title is None:
+                logging.error("No title found in webpage")
+                return "CLOUD NOT EXTRACT TITLE"
 
     return title.text
 
@@ -151,7 +154,7 @@ def create_page(payload: PagePayload) -> Page:
         logging.error("No paragraphs found in webpage")
         return None
 
-    title = get_title(article_element)
+    title = get_title(article_element, html)
     author = extract_author_medium(article_element)
 
     page = Page()
@@ -164,14 +167,21 @@ def create_page(payload: PagePayload) -> Page:
     return page
 
 
-if __name__ == "__main__":
-    url = "https://bergum.medium.com/four-mistakes-when-introducing-embeddings-and-vector-search-d39478a568c5#tour"
-    tree = get_webpage(url)
-    paragraphs = get_paragraphs(tree)
-    title = get_title(tree)
-    author = extract_author_medium(tree)
-    print(f"Title: {title}")
-    print(f"Author: {author}")
-    for paragraph in paragraphs:
-        print("-----------------")
-        print(paragraph)
+def unsupported_page_url(url: str) -> bool:
+    """Making sure the URL is for supported page. No home page, no search pages
+
+    Args:
+        url (str): URL of the page
+
+    Returns:
+        bool: True if the URL is supported, False otherwise
+    """
+    # Define the regex
+    regexs = []
+    regexs = [r"^https?://[^/]+/$", r"^https?://[^/]+/search\?q=.+$"]
+
+    for regex in regexs:
+        if re.match(regex, url):
+            return True
+    
+    return False

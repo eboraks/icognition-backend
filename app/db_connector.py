@@ -62,10 +62,25 @@ def connect() -> sqlalchemy.engine.base.Engine:
     logging.info(f"Connected to database using TCP")
     return pool
 
-
+connection = None
 def get_engine():
+    global connection
+    if connection:
+        return connection
+    else:
+        connection = (
+            connect_unix_socket()
+            if os.environ.get("INSTANCE_CONNECTION_NAME")
+            else connect()
+        )
+        return connection
+
+
+
+""" def get_engine():
     return (
         connect_unix_socket()
         if os.environ.get("INSTANCE_CONNECTION_NAME")
         else connect()
     )
+ """

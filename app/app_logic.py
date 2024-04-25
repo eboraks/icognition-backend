@@ -6,6 +6,7 @@ import app.transformers_util
 import app.subtopics_util as subtopics_util
 from app import html_parser
 from app.db_connector import get_engine
+from app.icog_util import DocSummarizer
 from app.models import (
     Bookmark,
     Entity,
@@ -17,7 +18,7 @@ from app.models import (
     SubTopic_Entity_Link,
     SubTopicDisplay,
 )
-from app.prompt_models import DocumentPromptOne, DocumentPromptTwo
+from app.prompt_models import DocumentPromptOne, DocumentPromptTwo, RAGPrompt
 from app.together_api_client import (
     TogetherMixtralClient,
     ApiCallException,
@@ -32,8 +33,6 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Session
 
-
-
 logging.basicConfig(
     stream=sys.stdout,
     format="%(asctime)s - %(message)s",
@@ -46,6 +45,7 @@ env_vers = os.environ
 engine = get_engine()
 
 mixtralClient = TogetherMixtralClient()
+summarizer = DocSummarizer()
 
 
 def test_db_connection():
@@ -112,6 +112,17 @@ def get_document_by_bookmark_id(bookmark_id) -> Document:
     session.close()
     return doc
 
+def get_documents_by_user_id(user_id) -> list[Document]:
+    session = Session(engine)
+    docs = session.scalars(
+        select(Document)
+        .join(Bookmark, Bookmark.document_id == Document.id)
+        .where(Bookmark.user_id == user_id)
+    ).unique().all()
+    session.close()
+    return docs
+
+
 
 def get_document_by_id(document_id) -> Document:
     session = Session(engine)
@@ -140,6 +151,8 @@ def get_entities_by_document_id(document_id) -> Entity:
     ).all()
     session.close()
     return entities
+
+
 
 
 def create_page(payload: PagePayload) -> Page:
@@ -238,9 +251,9 @@ async def extract_info_from_doc(doc: Document):
     update_document(doc)
 
     try:
-        tokens = mixtralClient._tokenizer.encode(doc.original_text, return_tensors="np")
-        logging.info(f"Generating summary for document {doc.id}. Number of tokens: {len(tokens[0] )}")
-        response = await mixtralClient.generate(body_text=doc.original_text, model=DocumentPromptOne)
+        logging.info(f"Generating summary for document {doc.id}")
+        summary = summarizer(doc.original_text)
+        response = await mixtralClient.generate(messages=DocumentPromptOne.get_messages(summary), model=DocumentPromptOne)
         logging.info(f"Response from LLM {response}")
 
     except ApiCallException as e:
@@ -273,7 +286,9 @@ async def extract_info_from_doc(doc: Document):
     # Generate entities
     try:
         logging.info(f"Generating entities for document {doc.id}")
-        response = await mixtralClient.generate(body_text=doc.original_text, model=DocumentPromptTwo)
+        response = await mixtralClient.generate(
+            messages=DocumentPromptTwo.get_messages(summary), 
+            model=DocumentPromptTwo)
         logging.info(f"Response from LLM {response}")
 
         # Using DocumentPromptTwo generate entities methods to create entities    
@@ -288,6 +303,9 @@ async def extract_info_from_doc(doc: Document):
             session.add_all(entities)
             session.commit()
             logging.info(f"{len(entities)} Entities for Document {doc.id} were created")
+
+        ## Run generate document embeddings again, to include the new entities
+        await generate_documents_embeddings()
 
         ## Generate subtopics, one day this will be moved to a background task
         ## Although the factory takes entities, I am not using it to generate subtopics 
@@ -368,10 +386,11 @@ def get_bookmark_by_document_id(document_id: int) -> Bookmark:
     return bookmark
 
 
-def get_bookmark_by_url(url: str) -> Bookmark:
+def get_bookmark_by_url(user_id: str, url: str) -> Bookmark:
     url = html_parser.clean_url(url)
     session = Session(engine)
-    bookmark = session.scalar(select(Bookmark).where(Bookmark.url == url))
+    bookmark = session.scalar(select(Bookmark).where(
+        and_(Bookmark.url == url, Bookmark.user_id == user_id)))
     session.close()
     return bookmark
 
@@ -458,37 +477,29 @@ def get_user_subtopics(user_id: str) -> list[SubTopicDisplay]:
     return results
 
 
-def search_documents(user_id: str, search_term: str = None) -> list[Document]:
-    session = Session(engine)
-
-    if search_term is None:
-        documents = session.scalars(
-            select(Document)
-            .join(Bookmark, Bookmark.document_id == Document.id)
-            .filter(Bookmark.user_id == user_id)
-        ).all()
-    else:
-        documents = session.scalars(
-            select(Document)
-            .join(Bookmark, Bookmark.document_id == Document.id)
-            .filter(
-                Bookmark.user_id == user_id,
-                or_(
-                    Document.title.ilike(f"%{search_term}%"),
-                    Document.short_summary.ilike(f"%{search_term}%"),
-                ),
-            ).order_by(Document.update_at.desc())
-        ).all()
-
-    session.close()
-
+def get_document_subtopics(document_id: str) -> list[SubTopicDisplay]:
+    
     results = []
-    for document in documents:
-        entities = get_entities_by_document_id(document.id)
-        display = DocumentDisplay.from_orm(document, entities=entities)
-        results.append(display)
+    with Session(engine) as session:
+        query = text(
+                """SELECT s.id, s.name, s.description, 
+                    count(distinct d.id) as number_of_docs,
+                    json_agg(distinct d.id)
+                    FROM subtopic s
+                    JOIN subtopic_entity_link l ON l.subtopic_id = s.id
+                    JOIN entity e ON e.id = l.entity_id
+                    JOIN document d ON d.id = e.document_id
+                    WHERE d.id = '{DOC_ID}'
+                GROUP BY s.id, s.name, s.description
+                ORDER BY count(distinct d.id) DESC""".format(DOC_ID=document_id)
+            )
+
+        subtopics_touples = session.execute(query).fetchall()
+        for touple in subtopics_touples:
+            results.append(SubTopicDisplay.from_touple(touple))
 
     return results
+
 
 
 async def generate_documents_embeddings():
@@ -507,10 +518,18 @@ async def generate_documents_embeddings():
                 isouter=True,
             )
             .filter(Document_Embeddings.id == None)
-        ).all()
+        ).unique().all()
+
+        entities = session.scalars(
+            select(Entity)\
+                .outerjoin(Document_Embeddings, Entity.id == Document_Embeddings.entity_id)\
+                    .filter(Document_Embeddings.entity_id == None)
+        ).unique().all()
 
     try:
         embeddings = await app.transformers_util.get_document_embeddings(documents)
+        embeddings_from_entities = await app.transformers_util.get_document_embeddings_from_entities(entities)
+        embeddings.extend(embeddings_from_entities)
     except Exception as e:
         logging.error(f"Error generating embeddings {e}")
         raise e
@@ -522,6 +541,11 @@ async def generate_documents_embeddings():
     except Exception as e:
         logging.error(f"Error saving embeddings {e}")
         raise e
+    
+
+        
+
+
 
 async def generate_entities_embeddings():
     """
@@ -549,39 +573,11 @@ async def generate_entities_embeddings():
             raise e
 
 
+def get_document_display_by_id(document_id: int) -> DocumentDisplay:
+    doc = get_document_by_id(document_id)
+    subtopic = get_document_subtopics(document_id)
+    entities = get_entities_by_document_id(document_id)
+    display = DocumentDisplay.from_orm(doc, entities=entities)
+    return display
 
 
-
-def search_embeddings(user_id: str, search_term: str) -> list[DocumentDisplay]:
-    """
-    This function searches for document embeddings by search term
-    """
-    logging.info(f"Generate embeddings for term {search_term}")
-    embedded_term = app.transformers_util.generate_embeddings(search_term) ## Generate embeddings for search term
-    logging.info(f"Embeddings for term {search_term} are length is {len(embedded_term)}")
-
-    # Get document with some embeddings that are closest to the search term
-    logging.info(f"Searching for documents with embeddings closest to term {search_term}")
-
-    with Session(engine) as session:
-        stmt = text("""SELECT a.document_id, a.cosine_similarity
-                    FROM (SELECT de.document_id, MIN(1 - (de.embeddings <=> :vector)) AS cosine_similarity 
-                        FROM document_embeddings AS de
-                        JOIN bookmark ON de.document_id = bookmark.document_id
-                        WHERE bookmark.user_id = :user_id 
-                        GROUP BY de.document_id) a
-                    WHERE a.cosine_similarity > 0.05
-                    ORDER BY a.cosine_similarity DESC""")
-        
-        matched_documents = session.execute(stmt, {"vector": str(embedded_term.tolist()), "user_id": user_id}).all()
-        
-    logging.info(f"Found {len(matched_documents)} matched document for term {search_term}")
-
-    results = []
-    for md in matched_documents:
-        document = get_document_by_id(md[0])
-        entities = get_entities_by_document_id(md[0])
-        display = DocumentDisplay.from_orm(document, entities=entities, cosine_similarity=md[1])
-        results.append(display)    
-
-    return results

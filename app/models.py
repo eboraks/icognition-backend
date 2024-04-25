@@ -7,7 +7,6 @@ from typing import Optional, List, Dict
 from datetime import datetime
 from pydantic import BaseModel
 
-
 """
 The SQLModel class is used to define the database schema (when table=True) or to define FastApi payload and response models (when table=False).    
 """
@@ -149,6 +148,7 @@ class Document_Embeddings(SQLModel, table=True):
     id: int = Field(default=None, primary_key=True)
     document_id: int = Field(nullable=False)
     field: str = Field(default=None, nullable=True)
+    entity_id: int = Field(default=None, nullable=True)
     embeddings: List[float] = Field(sa_column=Column(Vector(384)))
 
 
@@ -231,6 +231,19 @@ class DocumentDisplay(BaseModel):
             entities_and_concepts= [EntityDisplay.from_orm(entity) for entity in entities] if entities else None,
             cosine_similarity=cosine_similarity,
         )
+
+class RagAnswerDisplay(BaseModel):
+    answer: Optional[str]
+    documents_used: Optional[List[int]]
+    llm_service_meta: Optional[Dict]
+
+
+class SearchResults(BaseModel):
+    documents_display: Optional[List[DocumentDisplay]]
+    rag_answer: Optional[RagAnswerDisplay]
+    failure: Optional[str] = None
+
+
 
 class SubTopicDisplay(BaseModel):
     id: Optional[int]

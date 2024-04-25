@@ -168,12 +168,15 @@ async def create_subtopic(user_id: str, entities: list[Entity], cluster: list[in
         
     ## Use LLM to generate a description for the subtopic
     try:
-        answer = await client.generate(body_text=SubTopicPrompt.get_messages(subtopic.entities_agg_string()), model=SubTopicPrompt)
+        answer = await client.generate(messages=SubTopicPrompt.get_messages(subtopic.entities_agg_string()), model=SubTopicPrompt)
     except ApiCallException as e:
         logging.error(f"Error in generating subtopic for {subtopic.name}: {e}")
             
-    try: 
-        key_words = ", ".join(answer.key_words)
+    try:
+        entities_names = [entity.name for entity in subtopic.entities]
+        entities_names.extend(answer.key_words) 
+        entities_names = list(set(entities_names))
+        key_words = ", ".join(entities_names)
         subtopic_str = f"{answer.name} - {answer.description} - {key_words}"
         subtopic_emb = st_model.encode(subtopic_str, convert_to_tensor=True)
 
@@ -234,6 +237,8 @@ async def subtopics_factory(user_id: str,
         subtopic = await create_subtopic(user_id = user_id, entities = entities, cluster = cluster)
         subtopics.append(subtopic)
     
+    logging.info(f"Generated {len(subtopics)} subtopics for user_id {user_id}")
+
     return subtopics
 
 def delete_user_id_subtopics(user_id: str):

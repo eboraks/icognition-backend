@@ -10,15 +10,18 @@ from app.models import (
     DocumentDisplay,
     HTTPError,
     SearchPayload,
+    SearchResults,
     SubTopicDisplay,
 )
 import logging
-import sys, re, time
-import uvicorn
-import re
+import sys
 import app.app_logic as app_logic
 import app.subtopics_util as subtopics_util
-import urllib.parse as urlparse
+import app.html_parser as html_parser
+from app.search_handler import SearchHandler
+from app.prompt_models import RAGPrompt
+
+search = SearchHandler()
 
 
 logging.basicConfig(
@@ -40,6 +43,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["icognitoin-answer-type"],
 )
 
 
@@ -90,11 +94,11 @@ async def create_bookmark(
         )
 
     # Check if payload.url is not the root URL of a website
-    if re.match(r"^https?://[^/]+/$", payload.url):
+    if html_parser.unsupported_page_url(payload.url):
         logging.warn(f"Invalid URL provided: {payload.url}")
         raise HTTPException(
             status_code=400,
-            detail="I am sorry, I can't analyze home pages",
+            detail="I am sorry, I can't analyze home or search pages",
         )
 
     page = app_logic.create_page(payload)
@@ -107,7 +111,7 @@ async def create_bookmark(
         )
 
     ## Check in bookmark already exists
-    bookmark = app_logic.get_bookmark_by_url(page.clean_url)
+    bookmark = app_logic.get_bookmark_by_url(payload.user_id, page.clean_url)
     if bookmark is not None:
         logging.info(f"Bookmark already exists for {page.clean_url}")
         response.status_code = status.HTTP_201_CREATED
@@ -174,7 +178,7 @@ async def regenerate_document(doc: Document):
             )
 
 
-@app.get("/bookmark/user/{user_id}", response_model=List[Bookmark], status_code=200)
+@app.get("/bookmarks/user/{user_id}", response_model=List[Bookmark], status_code=200)
 async def get_bookmarks_by_user_id(user_id: str):
     bookmarks = app_logic.get_bookmarks_by_user_id(user_id)
 
@@ -183,6 +187,15 @@ async def get_bookmarks_by_user_id(user_id: str):
 
     logging.info(f"Icognition return {len(bookmarks)} bookmarks")
     return bookmarks
+
+@app.post("/bookmark/user", response_model=Bookmark, status_code=200)
+async def get_bookmarks_by_user_id(payload: PagePayload):
+    bookmark = app_logic.get_bookmark_by_url(payload.user_id, payload.url)
+
+    if bookmark is None:
+        raise HTTPException(status_code=404, detail="Bookmark not found")
+
+    return bookmark
 
 
 @app.get(
@@ -318,16 +331,30 @@ async def get_user_subtopics(user_id: str):
         raise HTTPException(status_code=404, detail="Subtopics not found")
 
 
-@app.post("/search", response_model=List[DocumentDisplay], status_code=200)
-async def search_documents(search_payload: SearchPayload):
+@app.post("/search", status_code=200, response_model=SearchResults)
+async def search_documents(search_payload: SearchPayload, response: Response):
     logging.info(f"Search documents")
     
-    if(search_payload.query == None):
-        documents = app_logic.search_documents(search_payload.user_id, search_payload.query)
-    else:
-        documents = app_logic.search_embeddings(search_payload.user_id, search_payload.query)
+    try:
+        results = await search(search_payload.user_id, search_payload.query)
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=404, detail="Search failed")
+    
+    if results.failure:
+        return results
 
-    return documents
+    if len(results.documents_display) == 0:
+        raise HTTPException(status_code=404, detail="No results found")
+
+    if results.rag_answer:
+        response.headers["icognitoin-answer-type"] = "RAGAnswer"
+        return results
+    else:
+        response.headers["icognitoin-answer-type"] = "DocumentDisplay"
+        return results
+        
+
 
 
 @app.get("/generate_embedding", status_code=200)
@@ -344,9 +371,10 @@ def delete_user_id_subtopics(user_id: str):
     logging.info(f"Delete subtopics for user_id: {user_id}")
     subtopics_util.delete_user_id_subtopics(user_id) 
 
-@app.get("/generate/subtopics/{user_id}", status_code=200)
-async def generate_subtopics(user_id: str, background_tasks: BackgroundTasks):
+@app.get("/regenerate/subtopics/{user_id}", status_code=200)
+async def regenerate_subtopics(user_id: str, background_tasks: BackgroundTasks):
     try:
+        subtopics_util.delete_user_id_subtopics(user_id)
         background_tasks.add_task(subtopics_util.subtopics_factory, user_id)
     except Exception as e:
         logging.error(e)

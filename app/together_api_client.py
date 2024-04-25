@@ -8,8 +8,6 @@ import aiohttp
 import asyncio
 from time import sleep
 from pydantic import ValidationError
-from transformers import AutoTokenizer
-from app.icog_util import truncate_text
 from app.prompt_models import DocumentPrompt, DocumentPromptOne
 
 
@@ -64,9 +62,6 @@ class TogetherMixtralClient:
         self._options = {"use_cache": True}
         self._api_url = "https://api.together.xyz/inference"
         self._model_name = config["TOGETHER_MODEL"] # "mistralai/Mixtral-8x7B-Instruct-v0.1"
-        self._tokenizer = AutoTokenizer.from_pretrained(
-            self._model_name, use_fast=True, use_cache=False
-        )
         self._max_length = 32000
         self._retry_sleep = 30
         self._retry_attempts = 0
@@ -107,8 +102,8 @@ class TogetherMixtralClient:
 
     async def generate(
         self,
-        body_text: str,
         model: DocumentPrompt = DocumentPromptOne,
+        messages: list[str] = [],
         temperature=0.2,
         top_p=0.8,
         top_k=70,
@@ -117,7 +112,7 @@ class TogetherMixtralClient:
         ## Build payload
         payload = {
             "model": self._model_name,
-            "messages": model.get_messages(body_text),
+            "messages": messages,
             "temperature": temperature,
             "top_p": top_p,
             "top_k": top_k,
@@ -140,17 +135,18 @@ class TogetherMixtralClient:
 
             except ApiCallException as e:
                 logging.error(f"Error calling API and/or handleResponse: {e}")
-                raise e
 
             try:
+                text = res["output"]["choices"][0]["text"]
                 answer = model.model_validate_json(
-                    res["output"]["choices"][0]["text"]
+                    text
                 )
                 answer.usage = res["usage"]
 
             except ValidationError as e:
                 logging.error(f"Error validating JSON: {e}")
-                raise e
+                logging.error(text)
+                
 
             if answer is not None:
                 logging.debug(

@@ -1,5 +1,5 @@
 import logging
-import sys
+import os, sys
 import string
 import numpy as np
 import math
@@ -13,6 +13,13 @@ from sumy.nlp.tokenizers import Tokenizer
 from sumy.summarizers.lsa import LsaSummarizer
 from sumy.nlp.stemmers import Stemmer
 from sumy.utils import get_stop_words
+from transformers import AutoTokenizer
+ 
+config = os.environ
+ 
+model_name = config["TOGETHER_MODEL"] # "mistralai/Mixtral-8x7B-Instruct-v0.1"
+# tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True, use_cache=False)
+
 
 
 logging.basicConfig(
@@ -89,3 +96,26 @@ def truncate_text(
         logging.info("Text is short enough. No need to summarizing.")
         return text
 
+class DocSummarizer():
+    
+    def __init__(self):
+        self._summarizer = LsaSummarizer()
+        self._LANGUAGE = "english"
+    
+    def __call__(self, text: str, reduce_by: int = 0.6) -> str:
+        """
+        Summarize the text using LSA summarizer
+
+        Args:
+            text (str): The text that need to be summarize
+            reduce_by (float, optional): The ratio of the summary to the original text. Defaults to 0.6.
+
+        Returns:
+            Summary (str)
+        """
+        parser = PlaintextParser.from_string(text, Tokenizer(self._LANGUAGE))
+        num_sentences = len(parser.document.sentences)
+        num_sentences_to_summarize = int(num_sentences * reduce_by)
+        summary = self._summarizer(parser.document, num_sentences_to_summarize)
+        summary_text = " ".join([sentence._text for sentence in summary])
+        return summary_text
