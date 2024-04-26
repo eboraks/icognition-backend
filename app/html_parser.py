@@ -148,6 +148,9 @@ def create_page(payload: PagePayload) -> Page:
 
     article_element = find_main_article_element(html)
 
+    if article_element is None:
+        return None
+
     paragraphs = get_paragraphs(article_element)
 
     if paragraphs is None:

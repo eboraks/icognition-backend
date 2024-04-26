@@ -2,11 +2,22 @@ import json
 from app.transformers_util import get_util, get_model
 from app.models import SubTopic, SubTopic_Entity_Link, Entity
 from app.db_connector import get_engine
+import app.subtopics_util as subtopics_util
 import app.app_logic as app_logic
 from sqlalchemy.orm import Session
 from sqlalchemy import delete, select
 import pytest 
 
+user_id = 'yU13Hk9BwEQiREgh91YM6EFKR7M2'
+
+def test_get_records():
+    entities = subtopics_util.get_entities(user_id)
+    documents = subtopics_util.get_documents(user_id)
+    assert len(entities) > 0
+    assert len(documents) > 0
+
+    records = subtopics_util.get_records(entities=entities, documents=documents)
+    assert len(records) > 0
 
 def insert_entities_group(entities_group):
     engine = get_engine()
