@@ -1,6 +1,6 @@
 import json
 from app.transformers_util import get_util, get_model
-from app.models import SubTopic, SubTopic_Entity_Link, Entity
+from app.models import Document, SubTopic, SubTopic_Entity_Link, Entity
 from app.db_connector import get_engine
 import app.subtopics_util as subtopics_util
 import app.app_logic as app_logic
@@ -9,15 +9,41 @@ from sqlalchemy import delete, select
 import pytest 
 
 user_id = 'yU13Hk9BwEQiREgh91YM6EFKR7M2'
+engine = get_engine()
 
-def test_get_records():
-    entities = subtopics_util.get_entities(user_id)
-    documents = subtopics_util.get_documents(user_id)
-    assert len(entities) > 0
-    assert len(documents) > 0
+def test_delete_doc_entities():
+    
+    with Session(engine) as session:
+        # get all entities with document_id 243
+        entities = session.scalars(select(Entity).filter(Entity.document_id == 243)).all()
+        # Delete all subtopic with entities
+        subtopics = session.scalars(select(SubTopic).join(SubTopic_Entity_Link)\
+                                    .filter(SubTopic_Entity_Link.entity_id.in_(
+                                        [entity.id for entity in entities]))).all()
+        entity_links = session.scalars(select(SubTopic_Entity_Link)\
+                                      .filter(SubTopic_Entity_Link.entity_id.in_(
+                                          [entity.id for entity in entities]))).all()
+        for link in entity_links:
+            session.delete(link)
+        
+        for subtopic in subtopics:
+            session.delete(subtopic)
 
-    records = subtopics_util.get_records(entities=entities, documents=documents)
-    assert len(records) > 0
+        for entity in entities:    
+            session.delete(entity)
+        session.commit()
+
+
+@pytest.mark.asyncio
+async def test_generate_entitiies_for_test_doc():
+
+    ## Get document 243
+    with Session(engine) as session:
+        doc = session.scalars(select(Document).filter(Document.id == 243)).one()
+        assert doc is not None
+    
+    await app_logic.extract_info_from_doc(doc)
+
 
 def insert_entities_group(entities_group):
     engine = get_engine()

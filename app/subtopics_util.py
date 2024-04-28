@@ -145,7 +145,7 @@ def generate_clusters(entities: list[Entity],
     return clusters
 
 
-async def create_subtopic(user_id: str, entities: list[Entity], cluster: list[int]) -> SubTopic:
+async def create_subtopic(user_id: str, entities: list[Entity], cluster: list[int]) -> SubTopic | None:
     """Method that create subtopic from the given cluster of entities.
 
     Args:
@@ -154,7 +154,7 @@ async def create_subtopic(user_id: str, entities: list[Entity], cluster: list[in
         entities (list[Entity]): list of Entity objects
 
     Returns:
-        SubTopic: Subtopic object
+        SubTopic: Subtopic object or None
     """
     
     ## Add entities to the subtopic
@@ -163,6 +163,11 @@ async def create_subtopic(user_id: str, entities: list[Entity], cluster: list[in
     subtopic_entities = []
     for i in cluster:
         subtopic_entities.append(entities[i])
+
+    doc_ids = set([entity.document_id for entity in subtopic_entities])
+    if (len(doc_ids) < 2):
+        logging.info("Skipping subtopic creation. Not enough documents.")
+        return None
 
     subtopic.entities = subtopic_entities
         
@@ -235,7 +240,8 @@ async def subtopics_factory(user_id: str,
     for cluster in clusters:
         ## Create subtopic for each cluster and save it to the database
         subtopic = await create_subtopic(user_id = user_id, entities = entities, cluster = cluster)
-        subtopics.append(subtopic)
+        if subtopic is not None:
+            subtopics.append(subtopic)
     
     logging.info(f"Generated {len(subtopics)} subtopics for user_id {user_id}")
 

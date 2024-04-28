@@ -46,6 +46,14 @@ class SubTopic(SQLModel, table=True):
         for entity in self.entities:
             results += f'{entity.name} ({entity.type}): {entity.description}\n'
         return results
+    
+    def to_node(self):
+        return TreeNode(
+            key = self.id,
+            label = self.name,
+            data = self.description,
+            children = [entity.to_node() for entity in self.entities]
+        )
 
 
 
@@ -66,8 +74,20 @@ class Entity(SQLModel, table=True):
     embedding: Optional[List[float]] = Field(sa_column=Column(Vector(384)))
     ent_subtopics: list[SubTopic] = Relationship(back_populates="entities", link_model=SubTopic_Entity_Link)
 
+    def to_node(self):
+        return TreeNode(
+            key = self.id,
+            label = self.name,
+            data =  self.description,
+            children = [])
 
 
+class TreeNode(BaseModel):
+    "Tree Node Model based on primevue Tree data filter"
+    key: int
+    label: str
+    data: str
+    children: list["TreeNode"] | None = None
 
 
 class PagePayload(SQLModel, table=False):

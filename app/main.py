@@ -12,6 +12,7 @@ from app.models import (
     SearchPayload,
     SearchResults,
     SubTopicDisplay,
+    TreeNode,
 )
 import logging
 import sys
@@ -326,6 +327,15 @@ async def get_user_subtopics(user_id: str):
     try:
         subtopics = app_logic.get_user_subtopics(user_id)
         return subtopics
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=404, detail="Subtopics not found")
+
+@app.get("/subtopics_node/{user_id}", response_model=List[TreeNode], status_code=200)
+async def get_user_subtopics_node(user_id: str):
+    try:
+        subtopics_nodes = app_logic.get_subtopics_nodes_by_user(user_id)
+        return subtopics_nodes
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=404, detail="Subtopics not found")

@@ -15,8 +15,10 @@ from app.models import (
     PagePayload,
     DocumentDisplay,
     Document_Embeddings,
+    SubTopic,
     SubTopic_Entity_Link,
     SubTopicDisplay,
+    TreeNode,
 )
 from app.prompt_models import DocumentPromptOne, DocumentPromptTwo, RAGPrompt
 from app.together_api_client import (
@@ -283,6 +285,19 @@ async def extract_info_from_doc(doc: Document):
         update_document(doc)
 
     
+    # Genrate entities from document is about and bullet points
+    entities_from_doc = []
+    entities_from_doc.append(Entity(document_id=doc.id, type="From_Document", description=doc.is_about, name=""))
+
+    for bullet in doc.summary_bullet_points:
+        entities_from_doc.append(Entity(document_id=doc.id, type="From_Document", description=bullet, name=""))
+    
+    with Session(engine) as session:
+        session.add_all(entities_from_doc)
+        session.commit()
+        logging.info(f"{len(entities_from_doc)} Entities for Document {doc.id} were created")
+
+
     # Generate entities
     try:
         logging.info(f"Generating entities for document {doc.id}")
@@ -475,6 +490,20 @@ def get_user_subtopics(user_id: str) -> list[SubTopicDisplay]:
             results.append(SubTopicDisplay.from_touple(touple))
 
     return results
+
+def get_subtopics_nodes_by_user(user_id: str) -> list[TreeNode]:
+    ## Get subtopic by user
+    with Session(engine) as session:
+        subtopics = session.scalars(
+            select(SubTopic).where(SubTopic.user_id == user_id)
+        ).unique().all()
+        
+        nodes = []
+        for subtopic in subtopics:
+            nodes.append(subtopic.to_node())
+
+    return nodes
+
 
 
 def get_document_subtopics(document_id: str) -> list[SubTopicDisplay]:
