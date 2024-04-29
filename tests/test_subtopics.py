@@ -11,6 +11,13 @@ import pytest
 user_id = 'yU13Hk9BwEQiREgh91YM6EFKR7M2'
 engine = get_engine()
 
+
+def test_entity_existing():
+    new_entity = Entity(name="Larry David", description="Comedian, writer, actor, and television producer", type="person")
+    exist = app_logic.entity_exists(new_entity)
+    assert exist.id is not None
+
+
 def test_delete_doc_entities():
     
     with Session(engine) as session:

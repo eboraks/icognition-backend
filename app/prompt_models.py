@@ -78,7 +78,14 @@ class DocumentPromptTwo(DocumentPrompt):
         Returns:
             list[Entity]: The list of generated entities.
         """
-        return [Entity(**entity.model_dump()) for entity in self.entities_and_topics]
+        entities = []
+        temps = [Entity(**entity.model_dump()) for entity in self.entities_and_topics]
+        for temp in temps:
+            ## temp.name doesn't alreasy exist in entities entity.name
+            if temp.name not in [entity.name for entity in entities]:
+                entities.append(temp)
+
+        return entities
 
     @classmethod
     def get_messages(cls, body: str):
@@ -107,9 +114,9 @@ class DocumentPromptTwo(DocumentPrompt):
             {{"name": "Capitalism", "type": "thoery", "description": Capitalism is an economic system based on the private ownership of the means of production and their operation for profit. Central characteristics of capitalism include capital accumulation, competitive markets, price system, private property, property rights recognition, voluntary exchange, and wage labor."}}
             ]}"""
 
-        _user_content_2_task = """Use the examples above to identify no more then ten entities (companies, people, location, event, products....), 
-            topic (marketing, politics, business strategy) and theories (free markets capatalism, gender dynamics...) 
-            mentioned in the article. Include short description of each.
+        _user_content_2_task = """Use the examples above to identify entities (companies, people, location, event, products....), 
+            topics (marketing, politics, business strategy) and theories (free markets capatalism, gender dynamics...) 
+            mentioned in the article. Include short description of each. Deduplicate entities and topics using the name field. 
 
         Use the JSON format above to output your answer. Only output valid JSON format. Reduce the length of the answer to make sure the JSON is valid."""
 
@@ -276,17 +283,19 @@ class RAGPrompt(BaseModel):
         Returns:
             list[dict]: The list of messages for the subtopic prompt.
         """
-        _system_content = """You are a researcher task with answering questions about an article.  
+        _system_content = """You are a researcher task with answering questions using articles.  
             Please ensure that your responses are socially unbiased and positive in nature.
             If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
             If you don't know the answer, please don't share false information."""
 
-        _user_instructions = """Using the following context(s), answer the question. Use the context(s) that best fit the question. 
-        Use the document_ids to report what document_id used to answer the question."""
+        _user_instructions = """Using the following article(s), answer the question. If possible answer using multiple artilcess that best fit the question. 
+        Within the answer use Document_Name to report the sources article, do not include Document_IDs in answer, instead use the document_ids_used_for_answer field. 
+        Use the field 'document_ids_used_for_answer' to report Document_ID used to answer the question."""
         
-        _user_context = "Context(s):\n\n"
+        _user_context = "Articles:\n"
         for c in contexts:
-            _user_context += """Document_id {ID} Context: {CONTEXT}\n\n""".format(ID=c['doc_id'], CONTEXT=c['text'])
+            _user_context += """Document_ID: {ID}, Document_Name: {TITLE}, Article: {CONTEXT}\n""".format(
+                ID=c['doc_id'], TITLE=c['doc_title'], CONTEXT=c['text'])
 
         _user_question = """Question: {QUESTION}""".format(QUESTION=question)
 

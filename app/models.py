@@ -52,7 +52,7 @@ class SubTopic(SQLModel, table=True):
             key = self.id,
             label = self.name,
             data = self.description,
-            children = [entity.to_node() for entity in self.entities]
+            children = [entity.to_node() for entity in self.entities if entity.name is not None]
         )
 
 
@@ -65,7 +65,7 @@ class Entity(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     document_id: Optional[int] = Field(default=None, foreign_key="document.id")
     document: Optional["Document"] = Relationship(back_populates="doc_entities")
-    name: str = Field(default=None)
+    name: str = Field(default=None, nullable=True)
     description: str = Field(default=None, nullable=True)
     source: str = Field(default=None, nullable=True)
     type: str = Field(default=None, nullable=True)

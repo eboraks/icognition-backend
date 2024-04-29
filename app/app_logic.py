@@ -49,6 +49,7 @@ engine = get_engine()
 mixtralClient = TogetherMixtralClient()
 summarizer = DocSummarizer()
 
+doc_counter_for_subtopics = 0
 
 def test_db_connection():
 
@@ -243,6 +244,23 @@ def reassociate_bookmark_with_document(old_document_id, new_document_id):
         return bookmark
 
 
+def entity_exists(new_entity: Entity) -> Entity:
+    with Session(engine) as session:
+        query = text("""
+            SELECT e.id, e.name
+                FROM entity e 
+                WHERE (levenshtein_less_equal(LOWER(e.name), LOWER(:search), 2) <=2)
+                LIMIT 1
+            """).bindparams(search=new_entity.name)
+        
+        exist_entity = session.execute(query).first()
+        if exist_entity:
+            logging.info(f"Entity {new_entity.name} already exists")
+            return exist_entity
+        else:
+            return new_entity
+
+
 async def extract_info_from_doc(doc: Document):
     """
     Function that takes pages and return a document with the generated summary,
@@ -285,12 +303,13 @@ async def extract_info_from_doc(doc: Document):
         update_document(doc)
 
     
-    # Genrate entities from document is about and bullet points
+    # Genrate entities from document summary about and bullet points
+    # These entities don't have name or type and they mostly used to generate subtopics
     entities_from_doc = []
-    entities_from_doc.append(Entity(document_id=doc.id, type="From_Document", description=doc.is_about, name=""))
+    entities_from_doc.append(Entity(document_id=doc.id, type="From_Document", description=doc.is_about, name=None))
 
     for bullet in doc.summary_bullet_points:
-        entities_from_doc.append(Entity(document_id=doc.id, type="From_Document", description=bullet, name=""))
+        entities_from_doc.append(Entity(document_id=doc.id, type="From_Document", description=bullet, name=None))
     
     with Session(engine) as session:
         session.add_all(entities_from_doc)
@@ -327,7 +346,13 @@ async def extract_info_from_doc(doc: Document):
         ## for entities that are already in the database    
         bookmark = get_bookmark_by_document_id(doc.id)
         logging.info(f"Generating subtopics for user {bookmark.user_id}")
-        await subtopics_util.subtopics_factory(bookmark.user_id)
+        global doc_counter_for_subtopics
+        doc_counter_for_subtopics += 1
+        
+        if doc_counter_for_subtopics >= 5:
+            subtopics_util.delete_user_id_subtopics(bookmark.user_id)
+            await subtopics_util.subtopics_factory(bookmark.user_id)
+            doc_counter_for_subtopics = 0
 
         return doc # to indicate process completed.   
 

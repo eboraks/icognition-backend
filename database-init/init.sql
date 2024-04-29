@@ -1,1 +1,2 @@
 CREATE EXTENSION vector;
+CREATE EXTENSION fuzzystrmatch;

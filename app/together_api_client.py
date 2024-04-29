@@ -127,6 +127,7 @@ class TogetherMixtralClient:
         self._retry_attempts = 0
 
         while continue_loop:
+            answer = None
             try:
                 self._retry_attempts += 1
                 logging.debug(f"Attempt {self._retry_attempts} to generate summary")
