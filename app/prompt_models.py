@@ -1,10 +1,5 @@
 import re
-from sqlmodel import SQLModel, Field, ARRAY, Float, JSON, Integer, Relationship, String
-from sqlalchemy import Column
-from sqlalchemy.dialects.postgresql import TEXT, JSONB
-from pgvector.sqlalchemy import Vector
 from typing import Optional, List, Dict
-from datetime import datetime
 from pydantic import BaseModel
 
 from app.models import Document, Entity, IdentifyEntity
@@ -114,11 +109,14 @@ class DocumentPromptTwo(DocumentPrompt):
             {{"name": "Capitalism", "type": "thoery", "description": Capitalism is an economic system based on the private ownership of the means of production and their operation for profit. Central characteristics of capitalism include capital accumulation, competitive markets, price system, private property, property rights recognition, voluntary exchange, and wage labor."}}
             ]}"""
 
-        _user_content_2_task = """Use the examples above to identify entities (companies, people, location, event, products....), 
-            topics (marketing, politics, business strategy) and theories (free markets capatalism, gender dynamics...) 
+        _user_content_2_task = """Use the examples above to identify the ten most important entities and topic 
             mentioned in the article. Include short description of each. Deduplicate entities and topics using the name field. 
-
-        Use the JSON format above to output your answer. Only output valid JSON format. Reduce the length of the answer to make sure the JSON is valid."""
+            Here are some examples of entities and topics types:  
+                entities: (companies, people, location, event, products....), 
+                topics: (marketing, politics, business strategy)
+                theories: (free markets capatalism, gender dynamics...)
+            Use the JSON format above to output your answer. Only output valid JSON format. 
+            Reduce the length of the answer to make sure the JSON is valid."""
 
         _user_content_3_article = """Article: {BODY}""".format(BODY=body)
 

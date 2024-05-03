@@ -119,3 +119,29 @@ class DocSummarizer():
         summary = self._summarizer(parser.document, num_sentences_to_summarize)
         summary_text = " ".join([sentence._text for sentence in summary])
         return summary_text
+
+
+def deduplicate_objects_list(l: list) -> list:
+    """
+    Deduplicate a list objects using the id attribute
+
+    Args:
+        l (list): The list that need to be deduplicated
+
+    Returns:
+        list: The deduplicated list
+    """
+    ids = [i.id for i in l]
+    duplicates = {x for x in ids if ids.count(x) > 1}
+    if len(duplicates) > 0:
+        logging.warning(f"Deduplicate objects found: {duplicates}. List length: {len(l)}")
+
+        for d in duplicates:
+            for r in l:
+                if r.id == d:
+                    l.remove(r)
+                    break
+        logging.info(f"Removed duplicate. New list length: {len(l)}")
+        return deduplicate_objects_list(l)
+    else:
+        return l

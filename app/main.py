@@ -19,6 +19,7 @@ import sys
 import app.app_logic as app_logic
 import app.subtopics_util as subtopics_util
 import app.html_parser as html_parser
+import app.getters as getter
 from app.search_handler import SearchHandler
 from app.prompt_models import RAGPrompt
 
@@ -112,7 +113,7 @@ async def create_bookmark(
         )
 
     ## Check in bookmark already exists
-    bookmark = app_logic.get_bookmark_by_url(payload.user_id, page.clean_url)
+    bookmark = getter.get_bookmark_by_url(payload.user_id, page.clean_url)
     if bookmark is not None:
         logging.info(f"Bookmark already exists for {page.clean_url}")
         response.status_code = status.HTTP_201_CREATED
@@ -156,13 +157,14 @@ async def post_regenerate_document(
 
 
 ## Background task to generate summaries from LLM
-async def generate_document(document_id):
-    document = app_logic.get_document_by_id(document_id)
+async def generate_document(bookmark: Bookmark):
+    document = getter.get_document_by_id(bookmark.document_id)
 
     if document.status in ["Pending", "Done", "Failure"]:
-        logging.info(f"Background task for document ID: {document_id}")
-        document = await app_logic.extract_info_from_doc(document)
-        logging.info(f"Background task for document ID: {document_id} completed")
+        logging.info(f"Background task for document ID: {bookmark.document_id}")
+        await app_logic.extract_info_from_doc(document)
+        await app_logic.generate_embeddings(bookmark.user_id)
+        logging.info(f"Background task for document ID: {bookmark.document_id} completed")
 
 
 ## Background task to regenerate summaries from LLM if not already exists
@@ -181,7 +183,7 @@ async def regenerate_document(doc: Document):
 
 @app.get("/bookmarks/user/{user_id}", response_model=List[Bookmark], status_code=200)
 async def get_bookmarks_by_user_id(user_id: str):
-    bookmarks = app_logic.get_bookmarks_by_user_id(user_id)
+    bookmarks = getter.get_bookmarks_by_user_id(user_id)
 
     if bookmarks is None:
         raise HTTPException(status_code=404, detail="Bookmarks not found")
@@ -191,7 +193,7 @@ async def get_bookmarks_by_user_id(user_id: str):
 
 @app.post("/bookmark/user", response_model=Bookmark, status_code=200)
 async def get_bookmarks_by_user_id(payload: PagePayload):
-    bookmark = app_logic.get_bookmark_by_url(payload.user_id, payload.url)
+    bookmark = getter.get_bookmark_by_url(payload.user_id, payload.url)
 
     if bookmark is None:
         raise HTTPException(status_code=404, detail="Bookmark not found")
@@ -205,16 +207,16 @@ async def get_bookmarks_by_user_id(payload: PagePayload):
     status_code=200,
 )
 async def get_documents_plus_by_user_id(user_id: str):
-    bookmarks = app_logic.get_bookmarks_by_user_id(user_id)
+    bookmarks = getter.get_bookmarks_by_user_id(user_id)
 
     if bookmarks is None:
         raise HTTPException(status_code=404, detail="Bookmarks not found")
 
     results = []
     for bookmark in bookmarks:
-        document = app_logic.get_document_by_id(bookmark.document_id)
+        document = getter.get_document_by_id(bookmark.document_id)
         if document:
-            entities = app_logic.get_entities_by_document_id(document.id)
+            entities = getter.get_entities_by_document_id(document.id)
             display = DocumentDisplay.from_orm(document, entities=entities)
         else:
             logging.warn(f"Document not found for bookmark {bookmark.id}") 
@@ -228,7 +230,7 @@ async def get_documents_plus_by_user_id(user_id: str):
 
 @app.get("/bookmark", response_model=Bookmark, status_code=200)
 async def get_bookmark_by_url(url: str):
-    bookmark = app_logic.get_bookmark_by_url(url)
+    bookmark = getter.get_bookmark_by_url(url)
 
     if bookmark is None:
         raise HTTPException(status_code=404, detail="Bookmark not found")
@@ -240,7 +242,7 @@ async def get_bookmark_by_url(url: str):
 @app.get("/bookmark/{id}/document")
 async def get_bookmark_document(id: int, response: Response):
     logging.info(f"Icognition bookmark document endpoint called on {id}")
-    document = app_logic.get_document_by_bookmark_id(id)
+    document = getter.get_document_by_bookmark_id(id)
 
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -266,7 +268,7 @@ async def get_document_plus(bookmark_id: int, response: Response, background_tas
     """get document with entities and concepts"""
 
     logging.info(f"Document plus -> endpoint called on bookmark {bookmark_id}")
-    document = app_logic.get_document_by_bookmark_id(bookmark_id)
+    document = getter.get_document_by_bookmark_id(bookmark_id)
 
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -279,7 +281,7 @@ async def get_document_plus(bookmark_id: int, response: Response, background_tas
         )
         return None
     elif document.status == "Done":
-        entities = app_logic.get_entities_by_document_id(document.id)
+        entities = getter.get_entities_by_document_id(document.id)
 
         response.status_code = status.HTTP_200_OK
         logging.info(
@@ -295,7 +297,7 @@ async def get_document_plus(bookmark_id: int, response: Response, background_tas
 @app.get("/document/{id}")
 async def get_document(id: int, response: Response):
     logging.info(f"Icognition document endpoint called on {id}")
-    document = app_logic.get_document_by_id(id)
+    document = getter.get_document_by_id(id)
 
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -325,7 +327,7 @@ async def delete_document(id: int) -> None:
 @app.get("/subtopics/{user_id}", response_model=List[SubTopicDisplay], status_code=200)
 async def get_user_subtopics(user_id: str):
     try:
-        subtopics = app_logic.get_user_subtopics(user_id)
+        subtopics = getter.get_user_subtopics(user_id)
         return subtopics
     except Exception as e:
         logging.error(e)
@@ -334,7 +336,7 @@ async def get_user_subtopics(user_id: str):
 @app.get("/subtopics_node/{user_id}", response_model=List[TreeNode], status_code=200)
 async def get_user_subtopics_node(user_id: str):
     try:
-        subtopics_nodes = app_logic.get_subtopics_nodes_by_user(user_id)
+        subtopics_nodes = getter.get_subtopics_nodes_by_user(user_id)
         return subtopics_nodes
     except Exception as e:
         logging.error(e)

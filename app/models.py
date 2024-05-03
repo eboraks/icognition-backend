@@ -1,4 +1,3 @@
-import re
 from sqlmodel import SQLModel, Field, ARRAY, Float, JSON, Integer, Relationship, String
 from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import TEXT, JSONB
@@ -6,6 +5,14 @@ from pgvector.sqlalchemy import Vector
 from typing import Optional, List, Dict
 from datetime import datetime
 from pydantic import BaseModel
+
+class TreeNode(BaseModel):
+    "Tree Node Model based on primevue Tree data filter"
+    key: int
+    label: str
+    data: str
+    children: list["TreeNode"] | None = None
+
 
 """
 The SQLModel class is used to define the database schema (when table=True) or to define FastApi payload and response models (when table=False).    
@@ -19,12 +26,36 @@ class Topic(SQLModel, table=True):
     subtopics: list["SubTopic"] = Relationship(back_populates="topic")
 
 
+class SubTopic_Embedding_Link(SQLModel, table=True):
+    """
+    Represents a link between a subtopic and an embedding.
+    """
+    subtopic_id: Optional[int] = Field(default=None, foreign_key="subtopic.id", primary_key=True)
+    embedding_id: Optional[int] = Field(default=None, foreign_key="embedding.id", primary_key=True)
+
+class SubTopic_Document_Link(SQLModel, table=True):
+    """
+    Represents a link between a subtopic and an document.
+    """
+    subtopic_id: Optional[int] = Field(default=None, foreign_key="subtopic.id", primary_key=True)
+    document_id: Optional[int] = Field(default=None, foreign_key="document.id", primary_key=True)
+
 class SubTopic_Entity_Link(SQLModel, table=True):
     """
-    Represents a link between a subtopic and an entity.
+    Represents a link between a subtopic and an document.
     """
     subtopic_id: Optional[int] = Field(default=None, foreign_key="subtopic.id", primary_key=True)
     entity_id: Optional[int] = Field(default=None, foreign_key="entity.id", primary_key=True)
+
+
+class SubTopicDisplay(BaseModel):
+    id: Optional[int]
+    name: Optional[str]
+    description: Optional[str]
+    number_of_docs: Optional[int]
+    docs_ids: Optional[List[int]]
+    ents_ids: Optional[List[int]]
+    key_words: Optional[str]
 
 class SubTopic(SQLModel, table=True):
     """
@@ -33,18 +64,20 @@ class SubTopic(SQLModel, table=True):
     id: int = Field(default=None, primary_key=True)
     user_id: str | None = Field(nullable=False)
     name: str = Field(nullable=False)
-    embedding: List[float] | None = Field(sa_column=Column(Vector(384)))
+    vector: List[float] | None = Field(sa_column=Column(Vector(384)))
     description: str | None = Field(default=None, nullable=True)
     key_words: str | None = Field(default=None)
     topic_id: int | None= Field(default=None, foreign_key="topic.id")
     topic: Topic = Relationship(back_populates="subtopics")
-    entities: list["Entity"] = Relationship(back_populates="ent_subtopics", link_model=SubTopic_Entity_Link, sa_relationship_kwargs={"cascade": "delete"})
+    embeddings: list["Embedding"] = Relationship(back_populates="subtopics", link_model=SubTopic_Embedding_Link, sa_relationship_kwargs={"cascade": "delete"})
+    documents: list["Document"] = Relationship(back_populates="subtopics", link_model=SubTopic_Document_Link, sa_relationship_kwargs={"cascade": "delete"})
+    entities: list["Entity"] = Relationship(back_populates="subtopics", link_model=SubTopic_Entity_Link, sa_relationship_kwargs={"cascade": "delete"})
 
     def entities_agg_string(self):
         # Create string with each entity nanme, type and description
         results = ''
-        for entity in self.entities:
-            results += f'{entity.name} ({entity.type}): {entity.description}\n'
+        for emb in self.embeddings:
+            results += f'{emb.text}\n'
         return results
     
     def to_node(self):
@@ -54,25 +87,41 @@ class SubTopic(SQLModel, table=True):
             data = self.description,
             children = [entity.to_node() for entity in self.entities if entity.name is not None]
         )
+    
+    def to_display(self) -> "SubTopicDisplay":
+        return SubTopicDisplay(
+            id = self.id,
+            name = self.name,
+            description = self.description,
+            number_of_docs = len(self.documents),
+            docs_ids = [doc.id for doc in self.documents],
+            ents_ids = [ent.id for ent in self.entities],
+            key_words = self.key_words)
 
 
+class Document_Entity_Link(SQLModel, table=True):
+    """
+    Represents a link between a document and an entity.
+    """
+
+    document_id: Optional[int] = Field(default=None, foreign_key="document.id", primary_key=True)
+    entity_id: Optional[int] = Field(default=None, foreign_key="entity.id", primary_key=True)
 
 class Entity(SQLModel, table=True):
     """
     Represents an entity with its ID, document ID, name, description, source, type, Wikidata ID, and score.
     """
-
     id: Optional[int] = Field(default=None, primary_key=True)
-    document_id: Optional[int] = Field(default=None, foreign_key="document.id")
-    document: Optional["Document"] = Relationship(back_populates="doc_entities")
     name: str = Field(default=None, nullable=True)
     description: str = Field(default=None, nullable=True)
     source: str = Field(default=None, nullable=True)
     type: str = Field(default=None, nullable=True)
     wikidata_id: str = Field(default=None, nullable=True)
     score: Optional[float] = Field(default=None, nullable=True)
-    embedding: Optional[List[float]] = Field(sa_column=Column(Vector(384)))
-    ent_subtopics: list[SubTopic] = Relationship(back_populates="entities", link_model=SubTopic_Entity_Link)
+
+    ## Many to Many relationships between entities documents
+    documents: Optional["Document"] = Relationship(back_populates="entities", link_model=Document_Entity_Link)
+    subtopics: list["SubTopic"] = Relationship(back_populates="entities", link_model=SubTopic_Entity_Link)
 
     def to_node(self):
         return TreeNode(
@@ -80,14 +129,125 @@ class Entity(SQLModel, table=True):
             label = self.name,
             data =  self.description,
             children = [])
+    
+
+    def to_display(self) -> "EntityDisplay":
+        return EntityDisplay(
+            id=self.id,
+            name=self.name,
+            description=self.description,
+            source=self.source,
+            type=self.type,
+        )
+    
+    
+    def to_embeddings(self) -> list["Embedding"]:
+        """
+        Converts the model instance to a list of Embeddings objects.
+
+        Returns:
+            A list of Embeddings objects representing the model instance.
+        """
+        results = []
+
+        if self.description and self.name:
+            results.append(
+                Embedding(
+                    source_type="entity",
+                    source_id=self.id,
+                    field="entity_name_description",
+                    text=f"{self.name} - {self.description}",
+                )
+            )
+
+        return results
 
 
-class TreeNode(BaseModel):
-    "Tree Node Model based on primevue Tree data filter"
-    key: int
-    label: str
-    data: str
-    children: list["TreeNode"] | None = None
+class Document(SQLModel, table=True):
+    """
+    Represents a document with its ID, title, URL, original text, authors, short summary, summary bullet points,
+    raw answer, publication date, update timestamp, and status.
+    """
+
+    id: int = Field(default=None, primary_key=True)
+    title: str = Field(default=None, nullable=True)
+    url: str = Field(default=None, nullable=True)
+    original_text: str = Field(default=None, nullable=True)
+    authors: List[float] = Field(sa_column=Column(ARRAY(Float)), default=[])
+    short_summary: str = Field(default=None, nullable=True)
+    is_about: str = Field(default=None, nullable=True)
+    summary_bullet_points: List[str] = Field(default=[], sa_column=Column(JSON))
+    raw_answer: str = Field(default=None, nullable=True)
+    publication_date: datetime = Field(default=None, nullable=True)
+    update_at: datetime = Field(default_factory=datetime.now, nullable=True)
+    status: str = Field(default="Pending", nullable=True)
+    llm_service_meta: Optional[Dict] = Field(default={}, sa_column=Column(JSONB))
+
+    ## Many to Many relationships between documents and entities
+    entities: list["Entity"] = Relationship(back_populates="documents", link_model=Document_Entity_Link)
+    subtopics: list["SubTopic"] = Relationship(back_populates="documents", link_model=SubTopic_Document_Link)
+
+    def to_display(self, cosine_similarity: float = None) -> "DocumentDisplay":
+
+        return DocumentDisplay(
+            id = self.id,
+            title = self.title,
+            url = self.url,
+            authors = self.authors,
+            tldr = self.summary_bullet_points,
+            publicationDate = self.publication_date,
+            llmServiceMeta = self.llm_service_meta,
+            status = self.status,
+            updateAt = self.update_at,
+            oneSentenceSummary = self.short_summary,
+            is_about = self.is_about,
+            entities_and_concepts= [ent.to_display() for ent in self.entities] ,
+            cosine_similarity=cosine_similarity,
+        )
+
+
+
+    def to_embeddings(self) -> list["Embedding"]:
+        """
+        Converts the model instance to a list of Embeddings objects.
+
+        Returns:
+            A list of Embeddings objects representing the model instance.
+        """
+        results = []
+
+        if self.title:
+            results.append(
+                Embedding(
+                    source_type="document",
+                    source_id=self.id,
+                    field="title",
+                    text=self.title,
+                )
+            )
+
+        if self.is_about:
+            results.append(
+                Embedding(
+                    source_type="document",
+                    source_id=self.id,
+                    field="is_about",
+                    text=self.is_about,
+                )
+            )
+
+        if self.summary_bullet_points:
+            for bullet_point in self.summary_bullet_points:
+                results.append(
+                    Embedding(
+                        source_type="document",
+                        source_id=self.id,
+                        field="summary_bullet_points",
+                        text=bullet_point,
+                    )
+                )
+
+        return results
 
 
 class PagePayload(SQLModel, table=False):
@@ -136,40 +296,24 @@ class Bookmark(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     url: str = Field(nullable=False)
-    update_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
+    update_at: datetime = Field(default_factory=datetime.now, nullable=False)
     document_id: Optional[int] = Field(default=None, nullable=True)
     user_id: Optional[str] = Field(nullable=False)
     cloned_documents: List[int] = Field(default=[], sa_column=Column(ARRAY(Integer)))
 
 
-class Document(SQLModel, table=True):
-    """
-    Represents a document with its ID, title, URL, original text, authors, short summary, summary bullet points,
-    raw answer, publication date, update timestamp, and status.
-    """
 
+
+class Embedding(SQLModel, table=True):
     id: int = Field(default=None, primary_key=True)
-    title: str = Field(default=None, nullable=True)
-    url: str = Field(default=None, nullable=True)
-    original_text: str = Field(default=None, nullable=True)
-    authors: List[float] = Field(sa_column=Column(ARRAY(Float)), default=[])
-    short_summary: str = Field(default=None, nullable=True)
-    is_about: str = Field(default=None, nullable=True)
-    summary_bullet_points: List[str] = Field(default=[], sa_column=Column(JSON))
-    raw_answer: str = Field(default=None, nullable=True)
-    publication_date: datetime = Field(default=None, nullable=True)
-    update_at: datetime = Field(default_factory=datetime.utcnow, nullable=True)
-    status: str = Field(default="Pending", nullable=True)
-    llm_service_meta: Optional[Dict] = Field(default={}, sa_column=Column(JSONB))
-    doc_entities: list[Entity] = Relationship(back_populates="document")
-
-
-class Document_Embeddings(SQLModel, table=True):
-    id: int = Field(default=None, primary_key=True)
-    document_id: int = Field(nullable=False)
+    user_id: str = Field(default=None, nullable=True)
     field: str = Field(default=None, nullable=True)
-    entity_id: int = Field(default=None, nullable=True)
-    embeddings: List[float] = Field(sa_column=Column(Vector(384)))
+    text: str = Field(default=None, nullable=True)
+    source_type: str = Field(default=None, nullable=False)
+    source_id: int = Field(default=None, nullable=False)
+    vector: List[float] = Field(sa_column=Column(Vector(384)))
+    subtopics: list["SubTopic"] = Relationship(back_populates="embeddings", link_model=SubTopic_Embedding_Link, sa_relationship_kwargs={"cascade": "delete"})
+
 
 
 class DocArtifact(SQLModel, table=False):
@@ -197,26 +341,12 @@ class IdentifyEntity(BaseModel):
 
 class EntityDisplay(BaseModel):
     id: Optional[int]
-    document_id: Optional[int]
     name: Optional[str]
-    description: Optional[str]
-    source: Optional[str]
-    type: Optional[str]
-    wikidata_id: Optional[str]
-    score: Optional[float]
-
-    @classmethod
-    def from_orm(cls, entity: Entity):
-        return cls(
-            id=entity.id,
-            document_id=entity.document_id,
-            name=entity.name,
-            description=entity.description,
-            source=entity.source,
-            type=entity.type,
-            wikidata_id=entity.wikidata_id,
-            score=entity.score,
-        )
+    description: Optional[str] | None
+    source: Optional[str] | None
+    type: Optional[str] | None
+    
+ 
 
 class DocumentDisplay(BaseModel):
     id: Optional[int]
@@ -265,19 +395,4 @@ class SearchResults(BaseModel):
 
 
 
-class SubTopicDisplay(BaseModel):
-    id: Optional[int]
-    name: Optional[str]
-    description: Optional[str]
-    number_of_docs: Optional[int]
-    docs_ids: Optional[List[int]]
 
-    @classmethod
-    def from_touple(cls, subtopic_touple):
-        return cls(
-            id=subtopic_touple[0],
-            name=subtopic_touple[1],
-            description=subtopic_touple[2],
-            number_of_docs=subtopic_touple[3],
-            docs_ids=subtopic_touple[4]
-        )

@@ -1,11 +1,7 @@
-from typing import Any
 import os
 import logging
 import sys
-import re
-import json
 import aiohttp
-import asyncio
 from time import sleep
 from pydantic import ValidationError
 from app.prompt_models import DocumentPrompt, DocumentPromptOne
@@ -146,7 +142,11 @@ class TogetherMixtralClient:
 
             except ValidationError as e:
                 logging.error(f"Error validating JSON: {e}")
-                logging.error(text)
+                logging.error(f"Api results {res}")
+            
+            except UnboundLocalError as e:
+                logging.error(f"Error processing response: {e}")
+                logging.error(f"Api results {res}")
                 
 
             if answer is not None:

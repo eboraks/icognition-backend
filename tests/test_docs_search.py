@@ -15,22 +15,25 @@ async def test_workflow():
     user_id = "yU13Hk9BwEQiREgh91YM6EFKR7M2"
 
     query = "Tell me about Phil Jackson leadership style?"
+    ##query = "what a test?"
 
     results = await search(user_id=user_id, query=query)
-    assert type(results[0]) == RAGPrompt
+    assert results is not None
+    assert len(results.documents_display) > 0
+
 
     results = await search(user_id = user_id, query = "Phil Jackson leadership style")
-    assert len(results) > 0
-    for result in results:
-        assert type(result) == DocumentDisplay
-        assert result.title 
-        assert result.cosine_similarity
+    assert results is not None
+    for doc in results.documents_display:
+        assert type(doc) == DocumentDisplay
+        assert doc.title 
+        assert doc.cosine_similarity
 
     results = await search(user_id = user_id)
-    assert len(results) > 0
-    for result in results:
-        assert type(result) == DocumentDisplay
-        assert result.title
+    assert results is not None
+    for doc in results.documents_display:
+        assert type(doc) == DocumentDisplay
+        assert doc.title
 
     
     
