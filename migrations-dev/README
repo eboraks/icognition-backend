@@ -1,0 +1,28 @@
+# Alembic Migration
+
+This Alembic migration was created following the example in https://testdriven.io/blog/fastapi-sqlmodel/ with excluding the async steps.
+
+## Iniation Steps
+
+1. Initiate the migration configuration - `alembic init migrations`
+2. Edits:
+
+- In script.py.mako added:
+  -- import sqlmodel
+  -- import pgvector
+- In env.py added:
+  -- from sqlmodel import SQLModel
+  -- from pgvector import Vectors
+  -- from app.models import WD_Item, WD_Alias, Document, Bookmark, Keyphrase
+  -- target_metadata = SQLModel.metadata
+- alembic.ini
+  sqlalchemy.url = postgresql+pg8000://app:2214@localhost/icog_db
+
+3. Generation of the migration script `alembic -c migrations-dev/alembic.ini revision --autogenerate -m "init"`
+4. Apply change to the database `alembic -c migrations-dev/alembic.ini upgrade head`
+
+## Apply new changes
+
+1. Make changes to models.py file
+2. Run `alembic -c migrations-dev/alembic.ini revision --autogenerate -m "{MESSAGE}"`
+3. Apply changes `alembic -c migrations-dev/alembic.ini upgrade head`
