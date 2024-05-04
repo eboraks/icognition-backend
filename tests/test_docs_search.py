@@ -35,5 +35,16 @@ async def test_workflow():
         assert type(doc) == DocumentDisplay
         assert doc.title
 
+
+def test_search_embeddings():
     
+    from app.search_handler import SearchHandler ## Need to be imported within async becuase it's calling aiohttp via togeter client
     
+    search = SearchHandler()
+
+    matches = search.search_embeddings(user_id="yU13Hk9BwEQiREgh91YM6EFKR7M2", search_term="Phil Jackson", threshold=0.1)
+
+    for match in matches:
+        assert match.cosine_similarity > 0.1
+        assert match.id
+        assert match.embedding_id

@@ -43,6 +43,8 @@ def get_document_by_bookmark_id(bookmark_id) -> Document:
         .join(Bookmark, Bookmark.document_id == Document.id)
         .where(Bookmark.id == bookmark_id)
     )
+    session.add_all(doc.entities)
+    session.add_all(doc.subtopics)
     session.close()
     return doc
 

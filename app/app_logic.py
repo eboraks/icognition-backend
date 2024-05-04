@@ -195,21 +195,47 @@ def reassociate_bookmark_with_document(old_document_id, new_document_id):
         )
         return bookmark
 
+def insert_entities(entities: list[Entity], doc: Document = None) -> None:
 
-def entity_exists(new_entity: Entity) -> Entity:
+    
+    session_entities = []
+    for entity in entities:
+        ## Safe insert, return existing entity if it already exists or the new one
+        session_entities.append(insert_entity_safe(entity))
+    
     with Session(engine) as session:
+        for entity in session_entities:
+            session.merge(Document_Entity_Link(document_id=doc.id, entity_id=entity.id))
+        session.commit()
+       
+        
+        logging.info(f"{len(entities)} Entities for D ocument {doc.id} were associated")
+
+
+def insert_entity_safe(new_entity: Entity) -> Entity:
+    with Session(engine) as session:
+
+        ## If the entity name is <=4 characters, reduce the levenshtein distance to 1
+        if len(new_entity.name) <= 4:
+            distance = 1
+        else:
+            distance = 2
+
         query = text("""
             SELECT e.id
                 FROM entity e 
-                WHERE (levenshtein_less_equal(LOWER(e.name), LOWER(:search), 2) <=2)
+                WHERE (levenshtein_less_equal(LOWER(e.name), LOWER(:search), :dist) <=:dist)
                 LIMIT 1
-            """).bindparams(search=new_entity.name)
+            """).bindparams(search=new_entity.name, dist=distance)
         
         exist_entity = session.execute(query).scalar_one_or_none()
         if exist_entity:
             logging.info(f"Entity {new_entity.name} already exists")
             return session.scalar(select(Entity).where(Entity.id == exist_entity)) 
         else:
+            session.add(new_entity)
+            session.commit()
+            session.refresh(new_entity)
             return new_entity
 
 
@@ -292,21 +318,7 @@ async def extract_info_from_doc(doc: Document, testing: bool = False):
         # Using DocumentPromptTwo generate entities methods to create entities    
         entities = response.generate_entities()
 
-        with Session(engine) as session:
-            session.add(doc)
-            session.refresh(doc)
-            
-            ## For each entity extract by LLM, check if it already exists in the database
-            ## if it does, use the existing entity, else create a new entity
-            ids_of_doc_entities = [entity.id for entity in doc.entities]
-            for entity in entities:
-                unique = entity_exists(entity)
-                if unique.id not in ids_of_doc_entities:
-                    doc.entities.append(unique)
-
-            session.add_all(doc.entities)
-            session.commit()
-            logging.info(f"{len(entities)} Entities for Document {doc.id} were created")
+        insert_entities(entities, doc)
 
         ## Generate subtopics, one day this will be moved to a background task
         ## Although the factory takes entities, I am not using it to generate subtopics 

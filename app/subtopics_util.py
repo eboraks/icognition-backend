@@ -50,9 +50,9 @@ def add_embedding_to_subtopic(embedding: Embedding,
         stmt = text("""SELECT a.emb_id, a.subtopic_id, a.cosine_similarity
                     FROM (SELECT e.id AS emb_id, l.subtopic_id AS subtopic_id, MAX(1 - (e.vector <=> :vector)) AS cosine_similarity 
                             FROM embedding AS e
-                            LEFT OUTER JOIN subtopic_embedding_link l ON l.embedding_id = e.id
+                            JOIN subtopic_embedding_link l ON l.embedding_id = e.id
                             WHERE e.user_id = :user_id
-                            AND l.subtopic_id IS NULL
+                            AND l.subtopic_id IS NOT NULL
                             AND e.id != :needle_id
                             GROUP BY 1, 2) a
                     JOIN subtopic_embedding_link b ON a.subtopic_id = b.subtopic_id
@@ -70,6 +70,13 @@ def add_embedding_to_subtopic(embedding: Embedding,
             session.add(embedding)
             session.refresh(embedding)
             subtopic.embeddings.append(embedding)
+
+            if embedding.get_documnet_id():
+                session.merge(SubTopic_Document_Link(subtopic_id = subtopic.id, document_id = embedding.get_documnet_id()))
+
+            if embedding.get_entity_id():
+                session.merge(SubTopic_Entity_Link(subtopic_id = subtopic.id, entity_id = embedding.get_entity_id()))
+
             session.commit()
             result = subtopic
         else:

@@ -3,6 +3,7 @@ from app.transformers_util import generate_embeddings
 from app.db_connector import get_engine
 from app.models import DocumentDisplay, RagAnswerDisplay, SearchResults
 import app.getters as getter
+import app.icog_util as util
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -31,7 +32,7 @@ engine = get_engine()
 
 
 class MatchedDocument(BaseModel):
-    document_id: int
+    id: int
     entity_id: int | None
     embedding_id: int
     cosine_similarity: float
@@ -100,7 +101,7 @@ class SearchHandler:
 
         retrieved_contexts = []
         for doc in docs:
-            td = getter.get_document_by_id(doc.document_id)
+            td = getter.get_document_by_id(doc.id)
             summary = self._summarizer(td.original_text)
             retrieved_contexts.append({"doc_id": td.id, "doc_title": td.title, "text": summary})
 
@@ -155,30 +156,20 @@ class SearchHandler:
             if emb_source == "entity":
                 docs = getter.get_documents_by_entity_id(emb_source_id)
                 for doc in docs:
-                    results.append(MatchedDocument(document_id=doc.id, 
+                    results.append(MatchedDocument(id=doc.id, 
                                                    entity_id = emb_source_id, 
                                                    embedding_id=emb_id,
                                                    cosine_similarity=emb_cosine_similarity))
             
             if emb_source == "document":
-                results.append(MatchedDocument(document_id=emb_source_id, 
+                results.append(MatchedDocument(id=emb_source_id, 
                                                 entity_id = None, 
                                                 embedding_id=emb_id,
                                                 cosine_similarity=emb_cosine_similarity))
 
         ## Remove duplicate documents, if there are any
-        docs_ids = [r.document_id for r in results]
-        duplicate_docs = {x for x in docs_ids if docs_ids.count(x) > 1}
-        if len(duplicate_docs) > 0:
-            logging.warning(f"SearhHandler results duplicate documents found: {duplicate_docs}. Total results: {len(results)}")
-
-            for d in duplicate_docs:
-                for r in results:
-                    if r.document_id == d:
-                        results.remove(r)
-                        break
-            logging.info(f"Removed duplicate documents. Total results: {len(results)}")      
-     
+        results = util.deduplicate_objects_list(results)
+        
         return results
      
     def from_matches_to_display(self, matched_docs: list[MatchedDocument]) -> list[DocumentDisplay]:
@@ -188,7 +179,7 @@ class SearchHandler:
         logging.info(f"Get document display for matched documents")
         results = []
         for doc in matched_docs:
-            display = getter.get_document_display_by_id(doc.document_id, doc.cosine_similarity)
+            display = getter.get_document_display_by_id(doc.id, doc.cosine_similarity)
             results.append(display) 
 
         return results

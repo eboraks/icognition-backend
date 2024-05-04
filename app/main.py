@@ -122,7 +122,7 @@ async def create_bookmark(
         logging.info(f"Page object created for {page.clean_url}")
         bookmark = app_logic.create_bookmark(page, payload.user_id)
         logging.info(f"Bookmark created for {bookmark.url}")
-        background_tasks.add_task(generate_document, bookmark.document_id)
+        background_tasks.add_task(generate_document, bookmark)
         response.status_code = status.HTTP_201_CREATED
         return bookmark
 
@@ -164,6 +164,7 @@ async def generate_document(bookmark: Bookmark):
         logging.info(f"Background task for document ID: {bookmark.document_id}")
         await app_logic.extract_info_from_doc(document)
         await app_logic.generate_embeddings(bookmark.user_id)
+        await subtopics_util.subtopics_factory(bookmark.user_id)
         logging.info(f"Background task for document ID: {bookmark.document_id} completed")
 
 
@@ -216,8 +217,7 @@ async def get_documents_plus_by_user_id(user_id: str):
     for bookmark in bookmarks:
         document = getter.get_document_by_id(bookmark.document_id)
         if document:
-            entities = getter.get_entities_by_document_id(document.id)
-            display = DocumentDisplay.from_orm(document, entities=entities)
+            display = document.to_display()
         else:
             logging.warn(f"Document not found for bookmark {bookmark.id}") 
 
@@ -281,17 +281,16 @@ async def get_document_plus(bookmark_id: int, response: Response, background_tas
         )
         return None
     elif document.status == "Done":
-        entities = getter.get_entities_by_document_id(document.id)
-
+        
         response.status_code = status.HTTP_200_OK
         logging.info(
             f"Document plus -> endpoint called on document status {document.status}"
         )
 
-        return DocumentDisplay.from_orm(document, entities=entities)
+        return document.to_display()
     else:
         response.status_code = status.HTTP_404_NOT_FOUND
-        return DocumentDisplay.from_orm(document)
+        return document.to_display()
 
 
 @app.get("/document/{id}")
@@ -327,7 +326,7 @@ async def delete_document(id: int) -> None:
 @app.get("/subtopics/{user_id}", response_model=List[SubTopicDisplay], status_code=200)
 async def get_user_subtopics(user_id: str):
     try:
-        subtopics = getter.get_user_subtopics(user_id)
+        subtopics = getter.get_subtopics_display(user_id = user_id)
         return subtopics
     except Exception as e:
         logging.error(e)

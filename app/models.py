@@ -314,6 +314,18 @@ class Embedding(SQLModel, table=True):
     vector: List[float] = Field(sa_column=Column(Vector(384)))
     subtopics: list["SubTopic"] = Relationship(back_populates="embeddings", link_model=SubTopic_Embedding_Link, sa_relationship_kwargs={"cascade": "delete"})
 
+    def get_documnet_id(self):
+        if self.source_type == "document":
+            return self.source_id
+        else:
+            return None
+        
+    def get_entity_id(self):
+        if self.source_type == "entity":
+            return self.source_id
+        else:
+            return None
+
 
 
 class DocArtifact(SQLModel, table=False):
@@ -364,23 +376,6 @@ class DocumentDisplay(BaseModel):
     usage: Optional[str] = None
     cosine_similarity: Optional[float] = None
 
-    @classmethod
-    def from_orm(cls, document: Document, entities: List[Entity] = None, cosine_similarity: float = None):
-        return cls(
-            id=document.id,
-            title=document.title,
-            url=document.url,
-            authors=document.authors,
-            tldr=document.summary_bullet_points,
-            publicationDate=document.publication_date,
-            llmServiceMeta=document.llm_service_meta,
-            status=document.status,
-            updateAt=document.update_at,
-            oneSentenceSummary=document.short_summary,
-            is_about=document.is_about,
-            entities_and_concepts= [EntityDisplay.from_orm(entity) for entity in entities] if entities else None,
-            cosine_similarity=cosine_similarity,
-        )
 
 class RagAnswerDisplay(BaseModel):
     answer: Optional[str]

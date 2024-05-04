@@ -1,10 +1,12 @@
 from app.db_connector import get_engine
 import app.app_logic as app_logic
+import app.getters as getter
+import app.main as main
 from sqlalchemy.orm import Session
 from sqlalchemy import delete, select
 import pytest
 
-from app.models import Entity 
+from app.models import Document_Entity_Link, Entity 
 
 
 user_id = 'yU13Hk9BwEQiREgh91YM6EFKR7M2'
@@ -51,7 +53,7 @@ async def test_bookmark_page():
 
 @pytest.mark.asyncio
 async def test_information_extration():
-    tdoc = app_logic.get_document_by_id(130)
+    tdoc = app_logic.get_document_by_id(133)
     assert tdoc != None
 
     await app_logic.extract_info_from_doc(doc = tdoc, testing=True)
@@ -82,10 +84,6 @@ async def test_information_extration():
             assert ent_emb.text != None
     
     
-def test_entity_existing():
-    new_entity = Entity(name="Larry David", description="Comedian, writer, actor, and television producer", type="person")
-    exist = app_logic.entity_exists(new_entity)
-    assert exist.id is not None
 
 def test_get_document():
     doc = app_logic.get_document_by_id(130)
@@ -98,3 +96,51 @@ def test_get_document():
         assert ent.id != None
         assert ent.name != None
         assert ent.type != None
+
+
+def test_insert_entities():
+    
+    doc = getter.get_document_by_id(130)
+    
+
+    entities_one = [
+        Entity(name="Larry David", description="Comedian, writer, actor, and television producer", type="person"),
+        Entity(name="Jerry Seinfeld", description="Comedian, actor, and writer", type="person"),
+        Entity(name="Seinfeld", description="American television sitcom", type="concept"),
+    ]
+
+    entities_two = [
+        Entity(name="Seinfeld", description="American television sitcom", type="concept"),
+        Entity(name="Curb Your Enthusiasm", description="American television sitcom", type="concept"),
+        Entity(name="HBO", description="American premium cable and satellite television network", type="concept"),
+    ]
+
+    with Session(engine) as session:
+        agg_entities = entities_one + entities_two
+        for ent in agg_entities:
+            ents = session.scalars(select(Entity).where(Entity.name == ent.name)).all()
+            for ent in ents:
+                session.execute(delete(Document_Entity_Link).where(Document_Entity_Link.entity_id == ent.id))
+                session.execute(delete(Entity).where(Entity.id == ent.id))
+
+        session.commit()
+
+    existing_entities = getter.get_entities_by_document_id(doc.id)
+    num_existing_entities = len(existing_entities)
+
+    app_logic.insert_entities(entities_one, doc)
+
+    app_logic.insert_entities(entities_two, doc)
+
+    entities = getter.get_entities_by_document_id(doc.id)
+    assert len(entities) == num_existing_entities + 5
+
+@pytest.mark.asyncio
+async def test_main_generate_document():
+    bookmark = getter.get_bookmark_by_id(2)
+
+    await main.generate_document(bookmark) 
+
+    doc = getter.get_document_by_id(bookmark.document_id)
+    assert doc != None
+    
