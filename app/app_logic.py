@@ -18,6 +18,7 @@ from app.models import (
     Embedding,
     Document_Entity_Link,
     SubTopic,
+    SubTopic_Document_Link,
     SubTopic_Entity_Link,
     SubTopicDisplay,
     TreeNode,
@@ -86,10 +87,14 @@ def delete_document_and_associate_records(document_id) -> None:
     """
     logging.info(f"Deleting document {document_id} and associated records")
     with Session(engine) as session:
-        delete_links = session.scalars(select(SubTopic_Entity_Link).join(Entity).where(Entity.document_id == document_id)).all()
-        for link in delete_links:
+        delete_subt_links = session.scalars(select(SubTopic_Document_Link).where(SubTopic_Document_Link.document_id == document_id)).all()
+        for link in delete_subt_links:
             session.delete(link)
-        session.execute(delete(Entity).where(Entity.document_id == document_id))
+
+        delete_doc_ent_links = session.scalars(select(Document_Entity_Link).where(Document_Entity_Link.document_id == document_id)).all()
+        for link in delete_doc_ent_links:
+            session.delete(link)
+        
         session.execute(delete(Document).where(Document.id == document_id))
 
         session.commit()

@@ -10,7 +10,9 @@ class TreeNode(BaseModel):
     "Tree Node Model based on primevue Tree data filter"
     key: int
     label: str
-    data: str
+    data: str | None
+    doc_count: int | None
+    doc_ids: list[int] | None
     children: list["TreeNode"] | None = None
 
 
@@ -64,11 +66,13 @@ class SubTopic(SQLModel, table=True):
     id: int = Field(default=None, primary_key=True)
     user_id: str | None = Field(nullable=False)
     name: str = Field(nullable=False)
+    name_update_at: datetime = Field(default = datetime.now(), nullable=True)
     vector: List[float] | None = Field(sa_column=Column(Vector(384)))
     description: str | None = Field(default=None, nullable=True)
     key_words: str | None = Field(default=None)
     topic_id: int | None= Field(default=None, foreign_key="topic.id")
     topic: Topic = Relationship(back_populates="subtopics")
+    update_at: datetime = Field(default_factory = datetime.now, nullable=True)
     embeddings: list["Embedding"] = Relationship(back_populates="subtopics", link_model=SubTopic_Embedding_Link, sa_relationship_kwargs={"cascade": "delete"})
     documents: list["Document"] = Relationship(back_populates="subtopics", link_model=SubTopic_Document_Link, sa_relationship_kwargs={"cascade": "delete"})
     entities: list["Entity"] = Relationship(back_populates="subtopics", link_model=SubTopic_Entity_Link, sa_relationship_kwargs={"cascade": "delete"})
@@ -83,8 +87,10 @@ class SubTopic(SQLModel, table=True):
     def to_node(self):
         return TreeNode(
             key = self.id,
-            label = self.name,
+            doc_count = len(self.documents),
+            label = f"{self.name} ({len(self.documents)})",
             data = self.description,
+            doc_ids = [doc.id for doc in self.documents],
             children = [entity.to_node() for entity in self.entities if entity.name is not None]
         )
     
@@ -120,14 +126,16 @@ class Entity(SQLModel, table=True):
     score: Optional[float] = Field(default=None, nullable=True)
 
     ## Many to Many relationships between entities documents
-    documents: Optional["Document"] = Relationship(back_populates="entities", link_model=Document_Entity_Link)
+    documents: list["Document"] = Relationship(back_populates="entities", link_model=Document_Entity_Link)
     subtopics: list["SubTopic"] = Relationship(back_populates="entities", link_model=SubTopic_Entity_Link)
 
     def to_node(self):
         return TreeNode(
             key = self.id,
-            label = self.name,
+            label = f"{self.name} ({self.type})" if self.type else self.name, 
             data =  self.description,
+            doc_count=None,
+            doc_ids = [doc.id for doc in self.documents],
             children = [])
     
 

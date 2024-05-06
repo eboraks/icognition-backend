@@ -1,6 +1,14 @@
+import logging, sys
 from sentence_transformers import SentenceTransformer, util
 from app.models import Document, Entity
 
+
+logging.basicConfig(
+    stream=sys.stdout,
+    format="%(funcName)s - %(asctime)s - %(message)s",
+    level=logging.DEBUG,
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 # Other model that were tested, they more all less all the same - all-mpnet-base-v2, all-MiniLM-L6-v2, all-MiniLM-L12-v2, paraphrase-multilingual-MiniLM-L12-v2
 model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", device='cpu')
@@ -13,6 +21,7 @@ def get_model():
     return model
 
 def generate_embeddings(term: str) -> list[float]:
+    logging.info(f"Generating embeddings vector for term: {term}")
     return model.encode(term,  show_progress_bar=False, convert_to_tensor=True)
 
 

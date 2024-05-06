@@ -28,7 +28,7 @@ search = SearchHandler()
 
 logging.basicConfig(
     stream=sys.stdout,
-    format="%(asctime)s - %(message)s",
+    format="%(asctime)s - %(funcName)s:%(lineno)d - %(message)s",
     level=logging.DEBUG,
     datefmt="%Y-%m-%d %H:%M:%S",
 )
@@ -332,6 +332,7 @@ async def get_user_subtopics(user_id: str):
         logging.error(e)
         raise HTTPException(status_code=404, detail="Subtopics not found")
 
+
 @app.get("/subtopics_node/{user_id}", response_model=List[TreeNode], status_code=200)
 async def get_user_subtopics_node(user_id: str):
     try:
@@ -340,6 +341,15 @@ async def get_user_subtopics_node(user_id: str):
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=404, detail="Subtopics not found")
+
+@app.get("/subtopics_name_regenerate/{user_id}", status_code=200)
+async def regenerate_user_subtopics(user_id: str, background_tasks: BackgroundTasks):
+    try:
+        background_tasks.add_task(subtopics_util.rename_subtopics, user_id)
+        return {"Message": "Subtopics regeneration submitted"}
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=404, detail="Subtopics regeneration failed")
 
 
 @app.post("/search", status_code=200, response_model=SearchResults)

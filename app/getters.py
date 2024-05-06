@@ -222,12 +222,16 @@ def get_subtopics_nodes_by_user(user_id: str) -> list[TreeNode]:
     ## Get subtopic by user
     with Session(engine) as session:
         subtopics = session.scalars(
-            select(SubTopic).where(SubTopic.user_id == user_id)
+            select(SubTopic)\
+            .join(SubTopic_Document_Link, SubTopic_Document_Link.subtopic_id == SubTopic.id)
+            .where(and_(SubTopic.user_id == user_id, SubTopic_Document_Link.document_id != None))
         ).unique().all()
         
         nodes = []
         for subtopic in subtopics:
             nodes.append(subtopic.to_node())
+
+        nodes.sort(key=lambda x: x.doc_count, reverse=True)
 
     return nodes
 

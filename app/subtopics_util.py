@@ -1,13 +1,16 @@
+from datetime import datetime, timedelta
 import os
+
 from app.db_connector import get_engine
 from app.models import Bookmark, Document, Entity, SubTopic, SubTopic_Document_Link, SubTopic_Embedding_Link, Embedding, SubTopic_Entity_Link
 from app.prompt_models import SubTopicPrompt
-from app.transformers_util import get_util, get_model, generate_embeddings
+from app.transformers_util import get_util, generate_embeddings
 import app.getters as getter
 import app.icog_util as util
 from sqlalchemy.orm import Session
 from sqlalchemy import (
     and_,
+    or_,
     select,
     func,
     text,
@@ -27,7 +30,6 @@ client = TogetherMixtralClient()
 
 engine = get_engine()
 st_util = get_util()
-st_model = get_model()
 
 
 
@@ -77,6 +79,7 @@ def add_embedding_to_subtopic(embedding: Embedding,
             if embedding.get_entity_id():
                 session.merge(SubTopic_Entity_Link(subtopic_id = subtopic.id, entity_id = embedding.get_entity_id()))
 
+            subtopic.update_at = datetime.now()
             session.commit()
             result = subtopic
         else:
@@ -103,6 +106,59 @@ def generate_clusters(embeddings: list[Embedding],
     clusters = st_util.community_detection(embs, min_community_size=minimum_community_size, threshold=cosine_similarity_threshold)
     logging.info(f"Generated {len(clusters)} clusters from the {len(embs)} embedding.")
     return clusters
+
+
+async def generate_subtopic_name(subtopic: SubTopic) -> SubTopicPrompt:
+    ## Use LLM to generate a description for the subtopic
+    try:
+        with Session(engine) as session:
+            session.add(subtopic)
+            text = subtopic.entities_agg_string()
+
+        if not text:
+            logging.info("Skipping subtopic creation. No text to used to generate name.")
+            return None
+        
+        answer = await client.generate(messages=SubTopicPrompt.get_messages(text), model=SubTopicPrompt)
+        return answer
+    except Exception as e:
+        logging.error(f"Error in generating subtopic for {subtopic.name}: {e}")
+        return None
+
+
+async def rename_subtopic(subtopic: SubTopic):
+    
+    answer = await generate_subtopic_name(subtopic)
+    try:
+        subtopic.name = answer.name
+        subtopic.description = answer.description
+        subtopic.key_words = ", ".join(answer.key_words)
+        subtopic.name_update_at = datetime.now()
+        subtopic.update_at = datetime.now()
+        subtopic.vector =  generate_embeddings(f"{subtopic.name} {subtopic.description} {subtopic.key_words}")
+    except Exception as e:
+        logging.error(f"Error in processing subtopic {subtopic.name}: {e}")
+    
+    with Session(engine) as session:
+        session.add(subtopic)
+        session.commit()
+        session.refresh(subtopic)
+    
+    return subtopic
+
+async def rename_subtopics(user_id: str):
+
+    with Session(engine) as session:
+        subtopics = session.scalars(select(SubTopic).where(
+                    or_(SubTopic.name_update_at == None, 
+                        SubTopic.name_update_at + timedelta(minutes=1) < SubTopic.update_at),
+                    SubTopic.user_id == user_id
+                )).unique().all()
+    
+    for subtopic in subtopics:
+        await rename_subtopic(subtopic)
+    logging.info(f"Renamed {len(subtopics)} subtopics.")
+    
 
 
 async def create_subtopic(user_id: str, embeddings: list[Embedding], cluster: list[int], 
@@ -158,15 +214,7 @@ async def create_subtopic(user_id: str, embeddings: list[Embedding], cluster: li
     subtopic.documents = docs
     subtopic.embeddings = subtopic_embs
 
-    ## Use LLM to generate a description for the subtopic
-    try:
-        if (subtopic.entities_agg_string() is None):
-            logging.info("Skipping subtopic creation. No text to used to generate name.")
-            return None
-        
-        answer = await client.generate(messages=SubTopicPrompt.get_messages(subtopic.entities_agg_string()), model=SubTopicPrompt)
-    except ApiCallException as e:
-        logging.error(f"Error in generating subtopic for {subtopic.name}: {e}")
+    answer = await generate_subtopic_name(subtopic)
             
     try:
         subtopic.name = answer.name
@@ -174,6 +222,8 @@ async def create_subtopic(user_id: str, embeddings: list[Embedding], cluster: li
         subtopic.key_words = ", ".join(answer.key_words)
         subtopic.vector =  generate_embeddings(f"{subtopic.name} {subtopic.description} {subtopic.key_words}")
         subtopic.user_id = user_id
+        subtopic.name_update_at = datetime.now()
+        subtopic.update_at = datetime.now()
     except Exception as e:
         logging.error(f"Error in processing subtopic {subtopic.name}: {e}")
 
