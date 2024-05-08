@@ -393,10 +393,19 @@ def delete_user_id_subtopics(user_id: str):
     subtopics_util.delete_user_id_subtopics(user_id) 
 
 @app.get("/regenerate/subtopics/{user_id}", status_code=200)
-async def regenerate_subtopics(user_id: str, background_tasks: BackgroundTasks):
+async def regenerate_subtopics(_user_id: str, background_tasks: BackgroundTasks):
     try:
-        subtopics_util.delete_user_id_subtopics(user_id)
-        background_tasks.add_task(subtopics_util.subtopics_factory, user_id)
+        subtopics_util.delete_user_id_subtopics(_user_id)
+        background_tasks.add_task(subtopics_util.subtopics_factory, user_id = _user_id, force_run = True)
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Subtopics generation failed")
+    
+@app.get("/generate/subtopics/{user_id}", status_code=200)
+async def regenerate_subtopics(_user_id: str, background_tasks: BackgroundTasks):
+    try:
+        background_tasks.add_task(subtopics_util.subtopics_factory, 
+                                  user_id = _user_id, force_run = True)
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Subtopics generation failed")

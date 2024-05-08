@@ -1,8 +1,8 @@
 """init
 
-Revision ID: 3b0ed01afc25
+Revision ID: 113fc960e714
 Revises: 
-Create Date: 2024-04-29 16:49:58.097250
+Create Date: 2024-05-08 15:11:51.373254
 
 """
 from typing import Sequence, Union
@@ -15,7 +15,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = '3b0ed01afc25'
+revision: str = '113fc960e714'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -29,7 +29,7 @@ def upgrade() -> None:
     sa.Column('update_at', sa.DateTime(), nullable=False),
     sa.Column('document_id', sa.Integer(), nullable=True),
     sa.Column('user_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.Column('cloned_documents', sa.ARRAY(sa.Integer()), nullable=True),
+    sa.Column('cloned_documents', postgresql.ARRAY(sa.Integer()), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('document',
@@ -37,7 +37,7 @@ def upgrade() -> None:
     sa.Column('title', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('url', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('original_text', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('authors', sa.ARRAY(sa.Float()), nullable=True),
+    sa.Column('authors', postgresql.ARRAY(sa.Float()), nullable=True),
     sa.Column('short_summary', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('is_about', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('summary_bullet_points', sa.JSON(), nullable=True),
@@ -48,12 +48,28 @@ def upgrade() -> None:
     sa.Column('llm_service_meta', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_table('document_embeddings',
+    op.create_table('embedding',
     sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('document_id', sa.Integer(), nullable=False),
+    sa.Column('version', sa.Integer(), nullable=True),
+    sa.Column('user_id', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('field', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('entity_id', sa.Integer(), nullable=True),
-    sa.Column('embeddings', pgvector.sqlalchemy.Vector(dim=384), nullable=True),
+    sa.Column('text', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+    sa.Column('source_type', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('source_id', sa.Integer(), nullable=False),
+    sa.Column('vector', pgvector.sqlalchemy.Vector(dim=384), nullable=True),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_table('entity',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('version', sa.Integer(), nullable=True),
+    sa.Column('name', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+    sa.Column('description', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+    sa.Column('descriptions_bank', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+    sa.Column('source', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+    sa.Column('type', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+    sa.Column('wikidata_id', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+    sa.Column('score', sa.Float(), nullable=True),
+    sa.Column('update_at', sa.DateTime(), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('topic',
@@ -64,29 +80,39 @@ def upgrade() -> None:
     sa.Column('embedding', pgvector.sqlalchemy.Vector(dim=384), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_table('entity',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('document_id', sa.Integer(), nullable=True),
-    sa.Column('name', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('description', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('source', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('type', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('wikidata_id', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('score', sa.Float(), nullable=True),
-    sa.Column('embedding', pgvector.sqlalchemy.Vector(dim=384), nullable=True),
+    op.create_table('document_entity_link',
+    sa.Column('document_id', sa.Integer(), nullable=False),
+    sa.Column('entity_id', sa.Integer(), nullable=False),
     sa.ForeignKeyConstraint(['document_id'], ['document.id'], ),
-    sa.PrimaryKeyConstraint('id')
+    sa.ForeignKeyConstraint(['entity_id'], ['entity.id'], ),
+    sa.PrimaryKeyConstraint('document_id', 'entity_id')
     )
     op.create_table('subtopic',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('user_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('name', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.Column('embedding', pgvector.sqlalchemy.Vector(dim=384), nullable=True),
+    sa.Column('name_update_at', sa.DateTime(), nullable=True),
+    sa.Column('vector', pgvector.sqlalchemy.Vector(dim=384), nullable=True),
     sa.Column('description', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('key_words', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('topic_id', sa.Integer(), nullable=True),
+    sa.Column('update_at', sa.DateTime(), nullable=True),
     sa.ForeignKeyConstraint(['topic_id'], ['topic.id'], ),
     sa.PrimaryKeyConstraint('id')
+    )
+    op.create_table('subtopic_document_link',
+    sa.Column('subtopic_id', sa.Integer(), nullable=False),
+    sa.Column('document_id', sa.Integer(), nullable=False),
+    sa.ForeignKeyConstraint(['document_id'], ['document.id'], ),
+    sa.ForeignKeyConstraint(['subtopic_id'], ['subtopic.id'], ),
+    sa.PrimaryKeyConstraint('subtopic_id', 'document_id')
+    )
+    op.create_table('subtopic_embedding_link',
+    sa.Column('subtopic_id', sa.Integer(), nullable=False),
+    sa.Column('embedding_id', sa.Integer(), nullable=False),
+    sa.ForeignKeyConstraint(['embedding_id'], ['embedding.id'], ),
+    sa.ForeignKeyConstraint(['subtopic_id'], ['subtopic.id'], ),
+    sa.PrimaryKeyConstraint('subtopic_id', 'embedding_id')
     )
     op.create_table('subtopic_entity_link',
     sa.Column('subtopic_id', sa.Integer(), nullable=False),
@@ -101,10 +127,13 @@ def upgrade() -> None:
 def downgrade() -> None:
     # ### commands auto generated by Alembic - please adjust! ###
     op.drop_table('subtopic_entity_link')
+    op.drop_table('subtopic_embedding_link')
+    op.drop_table('subtopic_document_link')
     op.drop_table('subtopic')
-    op.drop_table('entity')
+    op.drop_table('document_entity_link')
     op.drop_table('topic')
-    op.drop_table('document_embeddings')
+    op.drop_table('entity')
+    op.drop_table('embedding')
     op.drop_table('document')
     op.drop_table('bookmark')
     # ### end Alembic commands ###

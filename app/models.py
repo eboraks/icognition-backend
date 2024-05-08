@@ -1,6 +1,6 @@
-from sqlmodel import SQLModel, Field, ARRAY, Float, JSON, Integer, Relationship, String
+from sqlmodel import SQLModel, Field, Float, JSON, Integer, Relationship, String
 from sqlalchemy import Column
-from sqlalchemy.dialects.postgresql import TEXT, JSONB
+from sqlalchemy.dialects.postgresql import TEXT, JSONB, ARRAY
 from pgvector.sqlalchemy import Vector
 from typing import Optional, List, Dict
 from datetime import datetime
@@ -118,12 +118,15 @@ class Entity(SQLModel, table=True):
     Represents an entity with its ID, document ID, name, description, source, type, Wikidata ID, and score.
     """
     id: Optional[int] = Field(default=None, primary_key=True)
+    version: int = Field(default=1, nullable=True)
     name: str = Field(default=None, nullable=True)
     description: str = Field(default=None, nullable=True)
+    descriptions_bank: Optional[str] = Field(default=None)
     source: str = Field(default=None, nullable=True)
     type: str = Field(default=None, nullable=True)
     wikidata_id: str = Field(default=None, nullable=True)
     score: Optional[float] = Field(default=None, nullable=True)
+    update_at: datetime = Field(default=datetime.now(), nullable=True)
 
     ## Many to Many relationships between entities documents
     documents: list["Document"] = Relationship(back_populates="entities", link_model=Document_Entity_Link)
@@ -159,13 +162,20 @@ class Entity(SQLModel, table=True):
         results = []
 
         if self.description and self.name:
+
+            if self.descriptions_bank:
+                _text = f"{self.name} - {self.description}, {self.descriptions_bank}"
+            else:
+                _text = f"{self.name} - {self.description}"
+
             results.append(
                 Embedding(
                     source_type="entity",
                     source_id=self.id,
+                    version=self.version,
                     field="entity_name_description",
-                    text=f"{self.name} - {self.description}",
-                )
+                    text=_text,
+                ) 
             )
 
         return results
@@ -314,6 +324,7 @@ class Bookmark(SQLModel, table=True):
 
 class Embedding(SQLModel, table=True):
     id: int = Field(default=None, primary_key=True)
+    version: int = Field(default=1, nullable=True)
     user_id: str = Field(default=None, nullable=True)
     field: str = Field(default=None, nullable=True)
     text: str = Field(default=None, nullable=True)
@@ -342,7 +353,6 @@ class DocArtifact(SQLModel, table=False):
     """
 
     id: Optional[int] = Field(default=None, primary_key=True)
-
 
 
 

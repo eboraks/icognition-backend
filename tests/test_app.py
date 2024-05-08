@@ -53,7 +53,7 @@ async def test_bookmark_page():
 
 @pytest.mark.asyncio
 async def test_information_extration():
-    tdoc = app_logic.get_document_by_id(133)
+    tdoc = getter.get_document_by_id(130)
     assert tdoc != None
 
     await app_logic.extract_info_from_doc(doc = tdoc, testing=True)
@@ -68,7 +68,7 @@ async def test_information_extration():
     await app_logic.generate_embeddings(user_id=user_id)
 
     # Testing the embeddings were generated
-    doc_embeddings = app_logic.get_document_embeddings(tdoc.id)
+    doc_embeddings = getter.get_document_embeddings(tdoc.id)
     assert len(doc_embeddings) > 0
     for emb in doc_embeddings:
         assert len(emb.vector) > 0
@@ -77,7 +77,7 @@ async def test_information_extration():
 
     for ent in tdoc.entities:
         assert ent.id != None
-        ent_embeddings = app_logic.get_entity_embeddings(ent.id)
+        ent_embeddings = getter.get_entity_embeddings(ent.id)
         for ent_emb in ent_embeddings:
             assert len(ent_emb.vector) > 0
             assert ent_emb.field != None
@@ -86,7 +86,7 @@ async def test_information_extration():
     
 
 def test_get_document():
-    doc = app_logic.get_document_by_id(130)
+    doc = getter.get_document_by_id(130)
     assert doc.id == 130
     
     display = doc.to_display()
@@ -100,7 +100,7 @@ def test_get_document():
 
 def test_insert_entities():
     
-    doc = getter.get_document_by_id(130)
+    doc = getter.get_document_by_id(127)
     
 
     entities_one = [
@@ -110,9 +110,10 @@ def test_insert_entities():
     ]
 
     entities_two = [
-        Entity(name="Seinfeld", description="American television sitcom", type="concept"),
+        Entity(name="Seinfeld", description="American television sitcom from the 1990s", type="concept"),
         Entity(name="Curb Your Enthusiasm", description="American television sitcom", type="concept"),
         Entity(name="HBO", description="American premium cable and satellite television network", type="concept"),
+        Entity(name="Seinfeld", description="American television comedy show with Jerry Seinfeld from the 1990s", type="concept"),
     ]
 
     with Session(engine) as session:
@@ -137,7 +138,7 @@ def test_insert_entities():
 
 @pytest.mark.asyncio
 async def test_main_generate_document():
-    bookmark = getter.get_bookmark_by_id(2)
+    bookmark = getter.get_bookmark_by_id(185)
 
     await main.generate_document(bookmark) 
 

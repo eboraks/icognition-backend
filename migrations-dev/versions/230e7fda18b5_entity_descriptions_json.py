@@ -1,8 +1,8 @@
-"""Adding cascade delete to embeddings
+"""Entity descriptions JSON
 
-Revision ID: 3491144dde68
-Revises: 276800e9802f
-Create Date: 2024-04-30 13:06:55.106586
+Revision ID: 230e7fda18b5
+Revises: 218b7712a92d
+Create Date: 2024-05-06 20:02:14.064151
 
 """
 from typing import Sequence, Union
@@ -15,8 +15,8 @@ from pgvector.sqlalchemy import Vector
 
 
 # revision identifiers, used by Alembic.
-revision: str = '3491144dde68'
-down_revision: Union[str, None] = '276800e9802f'
+revision: str = '230e7fda18b5'
+down_revision: Union[str, None] = '218b7712a92d'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

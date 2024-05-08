@@ -19,6 +19,7 @@ from app.models import (
     Document_Entity_Link,
     SubTopic,
     SubTopic_Document_Link,
+    SubTopic_Embedding_Link,
     SubTopic_Entity_Link,
     SubTopicDisplay,
     TreeNode,
@@ -91,9 +92,21 @@ def delete_document_and_associate_records(document_id) -> None:
         for link in delete_subt_links:
             session.delete(link)
 
+        session.flush()
         delete_doc_ent_links = session.scalars(select(Document_Entity_Link).where(Document_Entity_Link.document_id == document_id)).all()
-        for link in delete_doc_ent_links:
-            session.delete(link)
+        for delink in delete_doc_ent_links:
+            session.delete(delink)
+
+        delete_doc_embs = session.scalars(select(Embedding).where(Embedding.source_id == document_id)).all()
+        emb_ids = []
+        for emb in delete_doc_embs:
+            emb_ids.append(emb.id)
+            session.delete(emb)
+
+        session.flush()
+        delete_subt_emb_links = session.scalars(select(SubTopic_Embedding_Link).where(SubTopic_Embedding_Link.embedding_id.in_(emb_ids))).all()
+        for emblink in delete_subt_emb_links:
+            session.delete(emblink)
         
         session.execute(delete(Document).where(Document.id == document_id))
 
@@ -214,10 +227,10 @@ def insert_entities(entities: list[Entity], doc: Document = None) -> None:
         session.commit()
        
         
-        logging.info(f"{len(entities)} Entities for D ocument {doc.id} were associated")
+        logging.info(f"{len(entities)} Entities for Document {doc.id} were associated")
 
 
-def insert_entity_safe(new_entity: Entity) -> Entity:
+def  insert_entity_safe(new_entity: Entity) -> Entity:
     with Session(engine) as session:
 
         ## If the entity name is <=4 characters, reduce the levenshtein distance to 1
@@ -236,12 +249,24 @@ def insert_entity_safe(new_entity: Entity) -> Entity:
         exist_entity = session.execute(query).scalar_one_or_none()
         if exist_entity:
             logging.info(f"Entity {new_entity.name} already exists")
-            return session.scalar(select(Entity).where(Entity.id == exist_entity)) 
+            ent = session.scalar(select(Entity).where(Entity.id == exist_entity))
+            
+            if ent.descriptions_bank == None:   
+                ent.descriptions_bank = f"{new_entity.description}"
+            else:
+                ent.descriptions_bank += f"; {new_entity.description}" 
+            
+            ent.version += 1
+            ent.update_at = datetime.datetime.now()
+            session.commit()
+            session.refresh(ent)
+            return ent
         else:
             session.add(new_entity)
             session.commit()
             session.refresh(new_entity)
             return new_entity
+
 
 
 async def extract_info_from_doc(doc: Document, testing: bool = False):
@@ -430,9 +455,9 @@ async def generate_embeddings(user_id: str):
             .join(Bookmark, Bookmark.document_id == Document_Entity_Link.document_id)\
             .outerjoin(Embedding, Embedding.source_id == Entity.id)\
             .where(
-                and_(
-                    Embedding.source_id == None, 
-                    Bookmark.user_id == user_id))).unique().all()
+                or_(Embedding.source_id == None, 
+                    Embedding.version < Entity.version),
+                and_(Bookmark.user_id == user_id))).unique().all()
 
         embeddings = []
         for entity in entities:
@@ -443,3 +468,12 @@ async def generate_embeddings(user_id: str):
             embedding.user_id = user_id
         session.add_all(embeddings)
         session.commit()
+
+
+def update_entity_embedding(entity: Entity):
+    with Session(engine) as session:
+        embedding = session.scalar(select(Embedding).where(Embedding.source_id == entity.id))
+        embedding.vector = transformers_util.generate_embeddings(entity.name)
+        session.add(embedding)
+        session.commit()
+        logging.info(f"Embedding for entity {entity.id} was updated")

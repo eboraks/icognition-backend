@@ -192,8 +192,8 @@ async def create_subtopic(user_id: str, embeddings: list[Embedding], cluster: li
         if (emb.source_type == "document"):
             doc_ids.add(emb.source_id)
     
-    if (len(doc_ids) < min_num_of_doc and len(ent_ids) < min_num_of_entities):
-        logging.info("Skipping subtopic creation. Not enough documents.")
+    if (len(doc_ids) < min_num_of_doc or len(ent_ids) < min_num_of_entities):
+        logging.info("Skipping subtopic creation. Not enough documents and entities")
         return None
 
     docs = getter.get_documents_by_ids(doc_ids)
@@ -256,6 +256,7 @@ def get_orphaned_embeddings(user_id: str) -> list[Embedding]:
 
 async def subtopics_factory(_user_id: str, 
                             _embeddings: list[Embedding] = None,
+                            _force_run: bool = False,
                             minimum_community_size: int = _clusters_min_size, 
                             cosine_similarity_threshold: float = _clusters_similarity_freshold) -> list[SubTopic]:
     """Method that generates subtopics from the given entities.
@@ -270,6 +271,10 @@ async def subtopics_factory(_user_id: str,
     Returns:
         list[SubTopic]: The list of generated subtopics.
     """
+
+    if (should_run_subtopics_factory(_user_id) == False and _force_run == False):
+        logging.info(f"Skipping subtopic generation for user_id {_user_id}")
+        return []
 
     if _embeddings is None:
         logging.info(f"Getting embedding for user_id {_user_id} without subtopic")
@@ -289,6 +294,7 @@ async def subtopics_factory(_user_id: str,
     _embeddings = None
     _embeddings = get_orphaned_embeddings(user_id= _user_id)
 
+        
     ## Generate clusters for embeddings
     clusters = generate_clusters(embeddings = _embeddings, 
                                     minimum_community_size = minimum_community_size, 
@@ -296,6 +302,7 @@ async def subtopics_factory(_user_id: str,
 
     subtopics = []
     for cluster in clusters:
+
         ## Create subtopic for each cluster and save it to the database
         subtopic = await create_subtopic(user_id = _user_id, embeddings = _embeddings, cluster = cluster)
         if subtopic is not None:
@@ -326,3 +333,23 @@ def delete_user_id_subtopics(user_id: str):
             session.delete(subtopic)
         
         session.commit()
+
+def should_run_subtopics_factory(user_id: str):
+    """Run the subtopics factory if the user has at least 4 documents with no subtopic."""
+
+    with Session(engine) as session:
+        query = text("""
+            SELECT (COUNT(DISTINCT d.id) %% 4) as result
+	            FROM document d
+	            JOIN bookmark b ON b.document_id = d.id
+	            LEFT OUTER JOIN subtopic_document_link l ON d.id = l.document_id
+            WHERE l.document_id is null
+            AND d.status = 'Done' 
+            AND b.user_id = :user_id""").bindparams(user_id=user_id)
+
+        result = session.execute(query).first()
+        if result[0] == 0:
+            return True
+        else:
+            logging.debug(f"Skipping subtopic generation for user_id {user_id}. Query result is {result[0]}")
+            return False

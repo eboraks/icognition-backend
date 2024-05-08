@@ -54,6 +54,7 @@ def get_documents_by_user_id(user_id) -> list[Document]:
         select(Document)
         .join(Bookmark, Bookmark.document_id == Document.id)
         .where(Bookmark.user_id == user_id)
+        .order_by(Bookmark.update_at.desc())
     ).unique().all()
     session.close()
     return docs
@@ -285,3 +286,8 @@ def get_document_display_by_id(document_id: int, cosine_similarity: float = None
     doc = get_document_by_id(document_id)
     display = doc.to_display(cosine_similarity=cosine_similarity)
     return display
+
+def get_embedding_by_id(embedding_id: int) -> Embedding:
+    with Session(engine) as session:
+        embedding = session.scalar(select(Embedding).where(Embedding.id == embedding_id))
+    return embedding

@@ -17,3 +17,8 @@ The backend application for icognition
 
 # Load env variable from .env in local. Ths mostly use for testing 
 * export $(cat .env | xargs) && env
+
+
+
+## GCP
+## STG DB: see .env files

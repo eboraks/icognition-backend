@@ -121,7 +121,7 @@ class SearchHandler:
             logging.error(f"Error calling TogetherMixtral API: {str(e)}")
             return None
            
-    def search_embeddings(self, user_id: str, search_term: str, threshold: float = 0.5, max_results: int = 10) -> list[MatchedDocument]:
+    def search_embeddings(self, user_id: str, search_term: str, threshold: float = 0.5, max_results: int = 20, attempts: int = 0) -> list[MatchedDocument]:
         """
         This function searches for document embeddings by search term
         """
@@ -139,6 +139,7 @@ class SearchHandler:
                             WHERE e.user_id = :user_id
                             GROUP BY 1,2,3) a
                     WHERE a.cosine_similarity >= :threshold
+                    GROUP BY 1, 2, 3, 4
                     ORDER BY a.cosine_similarity DESC
                     LIMIT :limit""")
             
@@ -146,6 +147,10 @@ class SearchHandler:
             
             logging.info(f"Found {len(matches)} matched embeddings for term {search_term}")
 
+        ### If we don't have enough matches, we can try to lower the threshold, but only 2 times going from 0.5 to 0.3. 
+        if(len(matches) < 10 and attempts <= 2):
+            return self.search_embeddings(user_id=user_id, search_term=search_term, threshold=threshold-0.1, max_results=max_results, attempts=attempts+1)
+        
         results = []
         for mat in matches:
             emb_id = mat[0]
