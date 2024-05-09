@@ -14,7 +14,7 @@ steps:
   name: 'gcr.io/cloud-builders/gcloud:latest'
   args: [
     'run', 'deploy', 'icognition-api-scv', 
-    '--service-account' ,'sa-icognition-api-svc@${PROJECT_ID}.iam.gserviceaccount.com',
+    '--service-account' ,'sa-icognition-svc@${PROJECT_ID}.iam.gserviceaccount.com',
     '--allow-unauthenticated',
     '--memory', '512Mi',
     '--platform', 'managed',
@@ -25,16 +25,15 @@ steps:
     '--max-instances', '1',
     '--ingress', 'all',
     '--region', 'us-central1',
-    '--set-env-vars', 'DUMMY_USER=777',
-    '--set-env-vars', 'INSTANCE_CONNECTION_NAME=strange-tome-412113:us-central1:stg-icog-psql',
+    '--set-env-vars', 'INSTANCE_CONNECTION_NAME=stg-icognition:us-central1:psql-icog-stg',
     '--set-secrets', 'DATABASE_URL=icog-db-stg-secret:latest',
     '--set-secrets', 'TOGETHER_TOKEN=together-token-secret:latest',
     '--set-secrets', 'DB_NAME=central-db-icog-name:latest',
     '--set-secrets', 'DB_USER=central-db-icog-user:latest',
     '--set-secrets', 'DB_PASSWORD=central-db-icog-password:latest',
-    '--add-cloudsql-instances', 'strange-tome-412113:us-central1:stg-icog-psql',
+    '--add-cloudsql-instances', 'stg-icognition:us-central1:psql-icog-stg',
     ]
-timeout: 600s
+timeout: 1000s
 options:
   logging: CLOUD_LOGGING_ONLY
   dynamic_substitutions: true
