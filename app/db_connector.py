@@ -74,13 +74,3 @@ def get_engine():
             else connect()
         )
         return connection
-
-
-
-""" def get_engine():
-    return (
-        connect_unix_socket()
-        if os.environ.get("INSTANCE_CONNECTION_NAME")
-        else connect()
-    )
- """

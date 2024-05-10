@@ -3,24 +3,22 @@ import os, sys
 import string
 import numpy as np
 import math
+import nltk
 
 from stop_words import get_stop_words
 from nltk.tokenize import word_tokenize
-from transformers import AutoTokenizer
-from typing import Any, Dict, List, Union
 from sumy.parsers.plaintext import PlaintextParser
 from sumy.nlp.tokenizers import Tokenizer
 from sumy.summarizers.lsa import LsaSummarizer
 from sumy.nlp.stemmers import Stemmer
 from sumy.utils import get_stop_words
-from transformers import AutoTokenizer
  
 config = os.environ
  
 model_name = config["TOGETHER_MODEL"] # "mistralai/Mixtral-8x7B-Instruct-v0.1"
 # tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True, use_cache=False)
 
-
+nltk.download('punkt')
 
 logging.basicConfig(
     stream=sys.stdout,
