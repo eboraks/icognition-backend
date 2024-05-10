@@ -26,6 +26,7 @@ steps:
     '--ingress', 'all',
     '--region', 'us-central1',
     '--set-env-vars', 'INSTANCE_CONNECTION_NAME=stg-icognition:us-central1:psql-icog-stg',
+    '--set-env-vars', 'TOGETHER_MODEL=mistralai/Mixtral-8x7B-Instruct-v0.1',
     '--set-secrets', 'DATABASE_URL=icog-db-stg-secret:latest',
     '--set-secrets', 'TOGETHER_TOKEN=together-token-secret:latest',
     '--set-secrets', 'DB_NAME=central-db-icog-name:latest',
