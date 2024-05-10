@@ -16,7 +16,7 @@ steps:
     'run', 'deploy', 'icognition-api-scv', 
     '--service-account' ,'sa-icognition-svc@${PROJECT_ID}.iam.gserviceaccount.com',
     '--allow-unauthenticated',
-    '--memory', '512Mi',
+    '--memory', '2048Mi',
     '--platform', 'managed',
     '--image', 'us-central1-docker.pkg.dev/${PROJECT_ID}/icognition-api-artifact-registry/icognition-api-img',
     '--port', '8080',
