@@ -37,6 +37,7 @@ app = FastAPI()
 origins = [
     "chrome-extension://oeilkphkfimekfadiflbljknbhfmppej",
     "http://localhost:8080",
+    "https://icognition.ai",
 ]
 
 app.add_middleware(
