@@ -14,9 +14,9 @@ steps:
   name: 'gcr.io/cloud-builders/gcloud:latest'
   args: [
     'run', 'deploy', 'icognition-api-scv', 
-    '--service-account' ,'sa-icognition-api-svc@${PROJECT_ID}.iam.gserviceaccount.com',
+    '--service-account' ,'sa-icognition-svc@${PROJECT_ID}.iam.gserviceaccount.com',
     '--allow-unauthenticated',
-    '--memory', '512Mi',
+    '--memory', '2048Mi',
     '--platform', 'managed',
     '--image', 'us-central1-docker.pkg.dev/${PROJECT_ID}/icognition-api-artifact-registry/icognition-api-img',
     '--port', '8080',
@@ -24,17 +24,22 @@ steps:
     '--min-instances', '0',
     '--max-instances', '1',
     '--ingress', 'all',
+    '--network', 'default',
+    '--subnet', 'default',
     '--region', 'us-central1',
-    '--set-env-vars', 'DUMMY_USER=777',
-    '--set-env-vars', 'INSTANCE_CONNECTION_NAME=strange-tome-412113:us-central1:stg-icog-psql',
+    '--set-env-vars', 'INSTANCE_CONNECTION_NAME=stg-icognition:us-central1:psql-icog-stg',
+    '--set-env-vars', 'TOGETHER_MODEL=mistralai/Mixtral-8x7B-Instruct-v0.1',
+    '--set-env-vars', 'ENTITY_SIMILARITY_FRESHOLD=0.7',
+    '--set-env-vars', 'CLUSTERS_SIMILARITY_THRESHOLD=0.7',
+    '--set-env-vars', 'CLUSTERS_MIN_SIZE=3',
     '--set-secrets', 'DATABASE_URL=icog-db-stg-secret:latest',
     '--set-secrets', 'TOGETHER_TOKEN=together-token-secret:latest',
     '--set-secrets', 'DB_NAME=central-db-icog-name:latest',
     '--set-secrets', 'DB_USER=central-db-icog-user:latest',
     '--set-secrets', 'DB_PASSWORD=central-db-icog-password:latest',
-    '--add-cloudsql-instances', 'strange-tome-412113:us-central1:stg-icog-psql',
+    '--add-cloudsql-instances', 'stg-icognition:us-central1:psql-icog-stg',
     ]
-timeout: 600s
+timeout: 1200s
 options:
   logging: CLOUD_LOGGING_ONLY
   dynamic_substitutions: true
