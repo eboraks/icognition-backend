@@ -17,6 +17,27 @@ logger = logging.getLogger(__name__)
 MININUM_PARAGRAPH_LENGTH = 10
 
 
+def get_meta_tags(soup: BeautifulSoup) -> dict:
+
+    """
+    <meta data-rh="true" property="article:content_tier" content="metered">
+    <meta data-rh="true" property="article:tag" content="Gaza Strip">
+    <meta data-rh="true" name="news_keywords" content="Gaza Strip,Israel,West Bank,Benjamin Netanyahu,Palestinians,Judaism,Israel Gaza War,Israeli settlement,Civilian casualties">
+    <meta data-rh="true" http-equiv="Content-Language" content="en">
+    <meta property="og:locale" content="en_US">
+    <meta data-rh="true" property="article:published_time" content="2024-05-16T18:40:06.000Z">
+    <meta data-rh="true" property="og:url" content="https://www.nytimes.com/2024/05/16/opinion/israeli-palestine-psyche.html">
+    <meta data-rh="true" property="og:title" content="Opinion | The View Within Israel Turns Bleak">
+    <meta data-rh="true" property="og:image" content="https://static01.nyt.com/images/2024/05/18/multimedia/17stack-3-hkpc/17stack-3-hkpc-facebookJumbo.jpg">
+    <meta data-rh="true" property="og:description" content="Attitudes toward the “Palestinian problem” range from detached fatigue to the belief that driving Palestinians into submission is God’s work.">
+    <meta data-rh="true" property="og:type" content="article">
+    <meta property="og:site_name" content="The Atlantic">
+    <meta name="author" content="Ed Yong">
+    <meta name="parsely-author" content="Jan-Patrick Barnert">
+    <meta data-rh="true" property="article:author" content="https://www.nytimes.com/by/megan-k-stack">
+    """
+
+
 def get_webpage(payload: PagePayload) -> BeautifulSoup:
     """_summary_
 
