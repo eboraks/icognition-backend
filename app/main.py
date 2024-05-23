@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks, status, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from typing import List
 from app.models import (
     Bookmark,
@@ -114,18 +115,30 @@ async def create_bookmark(
         )
 
     ## Check in bookmark already exists
-    bookmark = getter.get_bookmark_by_url(payload.user_id, page.clean_url)
-    if bookmark is not None:
-        logging.info(f"Bookmark already exists for {page.clean_url}")
-        response.status_code = status.HTTP_201_CREATED
-        return bookmark
+    _bookmark = getter.get_bookmark_by_url(payload.user_id, page.clean_url)
+    if _bookmark is not None:
+        _doc = getter.get_document_by_bookmark_id(_bookmark.id)
+        
+        if _doc.status == "Done":
+            logging.info(f"Bookmark already exists for {page.clean_url}")
+            response.status_code = status.HTTP_201_CREATED
+            return _bookmark
+        elif _doc.status == "Processing":
+            logging.info(f"Document is still processing for {page.clean_url}")
+            response.status_code = status.HTTP_206_PARTIAL_CONTENT
+            return _bookmark
+        elif _doc.status in ["Failure", "Pending"]:
+            logging.info(f"Document status is {_doc.status} attempting to regenerated document for {page.clean_url}")
+            background_tasks.add_task(generate_document, bookmark = _bookmark)
+            response.status_code = status.HTTP_201_CREATED
+            return _bookmark
     else:
         logging.info(f"Page object created for {page.clean_url}")
-        bookmark = app_logic.create_bookmark(page, payload.user_id)
-        logging.info(f"Bookmark created for {bookmark.url}")
-        background_tasks.add_task(generate_document, bookmark)
+        _bookmark = app_logic.create_bookmark(page, payload.user_id)
+        logging.info(f"Bookmark created for {_bookmark.url}")
+        background_tasks.add_task(generate_document, bookmark = _bookmark)
         response.status_code = status.HTTP_201_CREATED
-        return bookmark
+        return _bookmark
 
 
 @app.post(
@@ -165,7 +178,7 @@ async def generate_document(bookmark: Bookmark):
         logging.info(f"Background task for document ID: {bookmark.document_id}")
         await app_logic.extract_info_from_doc(document)
         await app_logic.generate_embeddings(bookmark.user_id)
-        await subtopics_util.subtopics_factory(bookmark.user_id)
+        await subtopics_util.subtopics_factory(_user_id = bookmark.user_id)
         logging.info(f"Background task for document ID: {bookmark.document_id} completed")
 
 
@@ -209,24 +222,14 @@ async def get_bookmarks_by_user_id(payload: PagePayload):
     status_code=200,
 )
 async def get_documents_plus_by_user_id(user_id: str):
-    bookmarks = getter.get_bookmarks_by_user_id(user_id)
+    
+    documents = getter.get_documents_display_by_user_id(user_id)
+    
+    if documents is None:
+        raise HTTPException(status_code=404, detail="Documents not found")
 
-    if bookmarks is None:
-        raise HTTPException(status_code=404, detail="Bookmarks not found")
-
-    results = []
-    for bookmark in bookmarks:
-        document = getter.get_document_by_id(bookmark.document_id)
-        if document:
-            display = document.to_display()
-        else:
-            logging.warn(f"Document not found for bookmark {bookmark.id}") 
-
-
-        results.append(display)
-
-    logging.info(f"Icognition return {len(results)} documents_plus")
-    return results
+    logging.info(f"Icognition return {len(documents)} documents_plus")
+    return documents
 
 
 @app.get("/bookmark", response_model=Bookmark, status_code=200)
@@ -394,19 +397,25 @@ def delete_user_id_subtopics(user_id: str):
     subtopics_util.delete_user_id_subtopics(user_id) 
 
 @app.get("/regenerate/subtopics/{user_id}", status_code=200)
-async def regenerate_subtopics(_user_id: str, background_tasks: BackgroundTasks):
+async def regenerate_subtopics(user_id: str, background_tasks: BackgroundTasks):
     try:
-        subtopics_util.delete_user_id_subtopics(_user_id)
-        background_tasks.add_task(subtopics_util.subtopics_factory, user_id = _user_id, force_run = True)
+        subtopics_util.delete_user_id_subtopics(user_id)
+        background_tasks.add_task(subtopics_util.subtopics_factory, _user_id = user_id, _force_run = True)
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Subtopics generation failed")
     
 @app.get("/generate/subtopics/{user_id}", status_code=200)
-async def regenerate_subtopics(_user_id: str, background_tasks: BackgroundTasks):
+async def generate_subtopics(user_id: str, background_tasks: BackgroundTasks):
     try:
         background_tasks.add_task(subtopics_util.subtopics_factory, 
-                                  user_id = _user_id, force_run = True)
+                                  _user_id = user_id, _force_run = True)
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Subtopics generation failed")
+
+@app.get("/placeholder_image", 
+         responses = {200: {"content": {"image/png": {}}}},
+        response_class=FileResponse)
+async def get_placeholder_image():
+    return FileResponse("./app/assets/images/library_placeholder.jpg")

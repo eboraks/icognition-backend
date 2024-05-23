@@ -145,9 +145,17 @@ def create_document(page: Page):
         return doc
 
     doc = Document()
-    doc.title = page.title.strip()
+    doc.title = page.title
     doc.url = page.clean_url
     doc.original_text = page.full_text
+    doc.authors = ", ".join(page.authors) if page.authors else None
+    doc.metadata_keywords = ", ".join(page.keywords) if page.keywords else None
+    doc.locale = page.locale
+    doc.publication_date = page.publish_date
+    doc.image_url = page.image_url
+    doc.site_name = page.site_name
+    doc.metadata_description = page.metadata_description
+
     session.add(doc)
     session.commit()
     session.refresh(doc)
@@ -234,7 +242,9 @@ def  insert_entity_safe(new_entity: Entity) -> Entity:
     with Session(engine) as session:
 
         ## If the entity name is <=4 characters, reduce the levenshtein distance to 1
-        if len(new_entity.name) <= 4:
+        if len(new_entity.name) <= 2:
+            distance = 0
+        elif len(new_entity.name) <= 4:
             distance = 1
         else:
             distance = 2
@@ -350,19 +360,6 @@ async def extract_info_from_doc(doc: Document, testing: bool = False):
 
         insert_entities(entities, doc)
 
-        ## Generate subtopics, one day this will be moved to a background task
-        ## Although the factory takes entities, I am not using it to generate subtopics 
-        ## for entities that are already in the database    
-        bookmark = getter.get_bookmark_by_document_id(doc.id)
-        logging.info(f"Generating subtopics for user {bookmark.user_id}")
-        global doc_counter_for_subtopics
-        doc_counter_for_subtopics += 1
-        
-        if doc_counter_for_subtopics >= 5:
-            subtopics_util.delete_user_id_subtopics(bookmark.user_id)
-            await subtopics_util.subtopics_factory(bookmark.user_id)
-            doc_counter_for_subtopics = 0
-
         return doc # to indicate process completed.   
 
     except ApiCallException as e:
@@ -448,16 +445,16 @@ async def generate_embeddings(user_id: str):
         session.commit()    
 
     ## Generate embeddings for entities that don't have embeddings
+    ## May, 22. Remove Embedding.version < Entity.version) from where clause, becuase embedding have old versions (versions add additive)
+    ## results in always generating embeddings for entities with version above 1. That mean that updated entities will not generate new embeddings
+    ## for now. In the future this can be improved, but for now it's ok.
     with Session(engine) as session:
         entities = session.scalars(
             select(Entity)\
             .join(Document_Entity_Link, Document_Entity_Link.entity_id == Entity.id)\
             .join(Bookmark, Bookmark.document_id == Document_Entity_Link.document_id)\
             .outerjoin(Embedding, Embedding.source_id == Entity.id)\
-            .where(
-                or_(Embedding.source_id == None, 
-                    Embedding.version < Entity.version),
-                and_(Bookmark.user_id == user_id))).unique().all()
+            .where(Embedding.source_id == None, Bookmark.user_id == user_id)).unique().all()
 
         embeddings = []
         for entity in entities:

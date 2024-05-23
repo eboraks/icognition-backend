@@ -1,10 +1,11 @@
+from datetime import datetime
 import requests
 import logging
 import re
 from bs4 import BeautifulSoup
 from app.models import Page, PagePayload
 import urllib.parse as urlparse
-
+from dateutil.parser import parse
 
 logging.basicConfig(
     format="%(asctime)s,%(msecs)03d %(levelname)-8s [%(filename)s:%(lineno)d] %(message)s",
@@ -17,9 +18,156 @@ logger = logging.getLogger(__name__)
 MININUM_PARAGRAPH_LENGTH = 10
 
 
+def get_keywords(tags: dict) -> list[str]:
+    """Extract keywords from meta tags
+
+    Args:
+        tags (dict): Meta tags
+
+    Returns:
+        list[str]: List of keywords
+    """
+    keywords = []
+    if "news_keywords" in tags:
+        keywords = tags["news_keywords"].split(",")
+        return keywords
+    
+    if "keywords" in tags:
+        keywords = tags["keywords"].split(",")
+        return keywords
+    
+    for key in tags:
+        if "article:tag" in key:
+            keywords.append(tags[key])
+
+
+def get_authors(tags: dict) -> set[str]:
+    """Extract author from meta tags
+
+    Args:
+        tags (dict): Meta tags
+
+    Returns:
+        str: list author name
+    """
+
+    authers = set()
+    for key in tags:
+        if "author" in key:
+            authers.add(tags[key])
+    
+        if "parsely-author" in tags:
+            authers.add(tags["parsely-author"])
+    
+        if "article:author" in tags:
+            authers.add(tags["article:author"])
+    
+    return authers
+
+def get_locale(tags: dict) -> str:
+    """Extract locale from meta tags
+
+    Args:
+        tags (dict): Meta tags
+
+    Returns:
+        str: locale
+    """
+    if "og:locale" in tags:
+        return tags["og:locale"]
+    else:
+        return None
+
+def get_publish_date(tags: dict) -> datetime:
+    """Extract publish date from meta tags
+
+    Args:
+        tags (dict): Meta tags
+
+    Returns:
+        str: publish date
+    """
+    if "article:published_time" in tags:
+        strdate = tags["article:published_time"]
+        return parse(strdate)
+    else:
+        return None
+
+def get_image_url(tags: dict) -> str:
+    """Extract image from meta tags
+
+    Args:
+        tags (dict): Meta tags
+
+    Returns:
+        str: image url
+    """
+    if "og:image" in tags:
+        return tags["og:image"]
+    else:
+        return None
+    
+def get_title(tags: dict) -> str:
+    """Extract title from meta tags
+
+    Args:
+        tags (dict): Meta tags
+
+    Returns:
+        str: title
+    """
+    if "og:title" in tags:
+        return tags["og:title"]
+    else:
+        return None
+    
+def get_site_name(tags: dict) -> str:
+    """Extract site name from meta tags
+
+    Args:
+        tags (dict): Meta tags
+
+    Returns:
+        str: site name
+    """
+    if "og:site_name" in tags:
+        return tags["og:site_name"]
+    else:
+        return None
+
+def get_url(tags: dict) -> str:
+    """Extract url from meta tags
+
+    Args:
+        tags (dict): Meta tags
+
+    Returns:
+        str: url
+    """
+    if "og:url" in tags:
+        return tags["og:url"]
+    else:
+        return None
+
+def get_description(tags: dict) -> str:
+    """Extract description from meta tags
+
+    Args:
+        tags (dict): Meta tags
+
+    Returns:
+        str: description
+    """
+    if "og:description" in tags:
+        return tags["og:description"]
+    else:
+        return None
+
+
 def get_meta_tags(soup: BeautifulSoup) -> dict:
 
     """
+    Examples of tags of interest:
     <meta data-rh="true" property="article:content_tier" content="metered">
     <meta data-rh="true" property="article:tag" content="Gaza Strip">
     <meta data-rh="true" name="news_keywords" content="Gaza Strip,Israel,West Bank,Benjamin Netanyahu,Palestinians,Judaism,Israel Gaza War,Israeli settlement,Civilian casualties">
@@ -35,7 +183,19 @@ def get_meta_tags(soup: BeautifulSoup) -> dict:
     <meta name="author" content="Ed Yong">
     <meta name="parsely-author" content="Jan-Patrick Barnert">
     <meta data-rh="true" property="article:author" content="https://www.nytimes.com/by/megan-k-stack">
+    <meta data-rh="true" property="og:site_name" content="Medium">
     """
+    
+    meta_tags = {}
+    for tag in soup.find_all("meta"):
+        if tag.get("property") is not None:
+            meta_tags[tag.get("property")] = tag.get("content")
+        elif tag.get("name") is not None:
+            meta_tags[tag.get("name")] = tag.get("content")
+        elif tag.get("http-equiv") is not None:
+            meta_tags[tag.get("http-equiv")] = tag.get("content")
+
+    return meta_tags
 
 
 def get_webpage(payload: PagePayload) -> BeautifulSoup:
@@ -112,28 +272,6 @@ def get_paragraphs(soup: BeautifulSoup) -> list[str]:
     return text_elements
 
 
-def get_title(article: BeautifulSoup, html: BeautifulSoup) -> str:
-
-    title = article.find("h1")
-    if title is None:
-        title = html.find("h1")
-        if title is None:
-            title = html.find("h2")
-            if title is None:
-                logging.error("No title found in webpage")
-                return "CLOUD NOT EXTRACT TITLE"
-
-    return title.text
-
-
-def extract_author_medium(soup: BeautifulSoup) -> str:
-    try:
-        author = soup.find(attrs={"data-testid": "authorName"}).text
-        return author
-    except:
-        logging.error(f"Cloud not extract author")
-
-
 def clean_url(url: str) -> str:
     """Clean URL from trailing characters
 
@@ -167,6 +305,8 @@ def create_page(payload: PagePayload) -> Page:
         logging.error("No webpage found")
         return None
 
+    
+
     article_element = find_main_article_element(html)
 
     if article_element is None:
@@ -178,15 +318,25 @@ def create_page(payload: PagePayload) -> Page:
         logging.error("No paragraphs found in webpage")
         return None
 
-    title = get_title(article_element, html)
-    author = extract_author_medium(article_element)
+    metatags = get_meta_tags(html)
 
     page = Page()
-    page.clean_url = clean_url(payload.url)
     page.paragraphs = paragraphs
-    page.author = author
+    page.authors = get_authors(metatags)
     page.full_text = "\n".join(paragraphs)
-    page.title = title
+    page.title = get_title(metatags)
+    page.keywords = get_keywords(metatags)
+    page.locale = get_locale(metatags)
+    page.publish_date = get_publish_date(metatags)
+    page.image_url = get_image_url(metatags)
+    page.site_name = get_site_name(metatags)
+    if page.site_name is None:
+        page.site_name = urlparse.urlparse(payload.url).netloc
+    page.clean_url = get_url(metatags)
+    if page.clean_url is None:
+        page.clean_url = clean_url(payload.url)
+    page.metadata_description = get_description(metatags)
+
 
     return page
 

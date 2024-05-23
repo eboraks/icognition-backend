@@ -43,13 +43,14 @@ _min_ents_for_subtopic = int(os.getenv("MIN_ENTS_FOR_SUBTOPIC", 4))
 
 
  
-def add_embedding_to_subtopic(embedding: Embedding, 
+async def add_embedding_to_subtopic(embedding: Embedding, 
                              threshold: float = _entity_similarity_freshold) -> SubTopic | None:
     """Method that adds an embedding to a subtopic if it matches the cosine similarity threshold."""
-    result = None
     with Session(engine) as session:
         ## Query to find the subtopic that matches the embedding
-        stmt = text("""SELECT a.emb_id, a.subtopic_id, a.cosine_similarity
+        stmt = text("""
+                    SELECT c.subtopic_id, MAX(c.cosine_similarity) as cosine_similarity, json_agg(DISTINCT c.embedding_id) as embedding_ids
+                    FROM (SELECT a.emb_id AS embedding_id, a.subtopic_id AS subtopic_id, a.cosine_similarity AS cosine_similarity
                     FROM (SELECT e.id AS emb_id, l.subtopic_id AS subtopic_id, MAX(1 - (e.vector <=> :vector)) AS cosine_similarity 
                             FROM embedding AS e
                             JOIN subtopic_embedding_link l ON l.embedding_id = e.id
@@ -60,18 +61,25 @@ def add_embedding_to_subtopic(embedding: Embedding,
                     JOIN subtopic_embedding_link b ON a.subtopic_id = b.subtopic_id
                     WHERE a.cosine_similarity >= :threshold
                     ORDER BY a.cosine_similarity DESC
-                    LIMIT :limit""")
+                    LIMIT :limit) c
+                    GROUP BY 1
+                    """)
         
-        matches_subtopic = session.execute(stmt, {"vector": str(embedding.vector.tolist()), 
+        matches_subtopics = session.execute(stmt, {"vector": str(embedding.vector.tolist()), 
                                                  "user_id": embedding.user_id, 
                                                  "needle_id": embedding.id, 
-                                                 "threshold": threshold, "limit": 1}).first()
+                                                 "threshold": threshold, "limit": 5}).fetchall()
         
-        if (matches_subtopic is not None):
-            subtopic = session.scalar(select(SubTopic).where(SubTopic.id == matches_subtopic.subtopic_id))
+        logging.info(f"Found {len(matches_subtopics)} subtopics that match the embedding {embedding.id}")
+        results = []
+        for match in matches_subtopics:
+    
+            subtopic = session.scalar(select(SubTopic).where(SubTopic.id == match.subtopic_id))
             session.add(embedding)
             session.refresh(embedding)
-            subtopic.embeddings.append(embedding)
+            
+            note = f"Matching embedding to {embedding.id} are {match.embedding_ids} with cosine similarity {match.cosine_similarity}"
+            session.merge(SubTopic_Embedding_Link(subtopic_id = subtopic.id, embedding_id = embedding.id, notes = note))
 
             if embedding.get_documnet_id():
                 session.merge(SubTopic_Document_Link(subtopic_id = subtopic.id, document_id = embedding.get_documnet_id()))
@@ -81,13 +89,12 @@ def add_embedding_to_subtopic(embedding: Embedding,
 
             subtopic.update_at = datetime.now()
             session.commit()
-            result = subtopic
-        else:
-            result = None
+            results.append(subtopic)
     
-    return result
+    
+    return results
 
-def generate_clusters(embeddings: list[Embedding], 
+async def generate_clusters(embeddings: list[Embedding], 
                       minimum_community_size: int = _clusters_min_size, 
                       cosine_similarity_threshold: float = _clusters_similarity_freshold):
     """Method that generates clusters of sentences using sentence transformer.
@@ -186,13 +193,19 @@ async def create_subtopic(user_id: str, embeddings: list[Embedding], cluster: li
     doc_ids = set()
     ent_ids = set()
     for emb in subtopic_embs:
-        if (emb.source_type == "entity"):
+        if (emb.source_type == "entity"): 
             ent_ids.add(emb.source_id)
 
         if (emb.source_type == "document"):
             doc_ids.add(emb.source_id)
-    
-    if (len(doc_ids) < min_num_of_doc or len(ent_ids) < min_num_of_entities):
+
+    ## Each entity can have multiple documents, so we need to fetch all the documents for the entities
+    for ent_id in ent_ids:
+        docs = getter.get_documenets_by_entity_id(ent_id)
+        for doc in docs:
+            doc_ids.add(doc.id)
+     
+    if (len(doc_ids) < min_num_of_doc and len(ent_ids) < min_num_of_entities):
         logging.info("Skipping subtopic creation. Not enough documents and entities")
         return None
 
@@ -282,13 +295,10 @@ async def subtopics_factory(_user_id: str,
     
     ## Search if embedding already match an existing subtopic
     ## If yes, add the embedding to the subtopic and refetch orphaned embeddings
-    subtopics_match = []    
-    for emb in _embeddings:
-        subtopic = add_embedding_to_subtopic(embedding = emb)
-        if subtopic:
-            subtopics_match.append(emb)
-    logging.info(f"Matched {len(subtopics_match)} embeddings to existing subtopics for user_id {_user_id}")
-
+    existing_subtopics = getter.get_subtopics_display(user_id = _user_id)
+    if len(existing_subtopics) > 0: # If there are existing subtopics, add the embeddings to them
+        for emb in _embeddings:
+            subtopics = await add_embedding_to_subtopic(embedding = emb)
 
     ## Refetch orphaned embeddings
     _embeddings = None
@@ -296,7 +306,7 @@ async def subtopics_factory(_user_id: str,
 
         
     ## Generate clusters for embeddings
-    clusters = generate_clusters(embeddings = _embeddings, 
+    clusters = await generate_clusters(embeddings = _embeddings, 
                                     minimum_community_size = minimum_community_size, 
                                     cosine_similarity_threshold = cosine_similarity_threshold)
 

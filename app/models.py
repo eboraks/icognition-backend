@@ -34,6 +34,7 @@ class SubTopic_Embedding_Link(SQLModel, table=True):
     """
     subtopic_id: Optional[int] = Field(default=None, foreign_key="subtopic.id", primary_key=True)
     embedding_id: Optional[int] = Field(default=None, foreign_key="embedding.id", primary_key=True)
+    notes: Optional[str] = Field(default=None)
 
 class SubTopic_Document_Link(SQLModel, table=True):
     """
@@ -163,10 +164,7 @@ class Entity(SQLModel, table=True):
 
         if self.description and self.name:
 
-            if self.descriptions_bank:
-                _text = f"{self.name} - {self.description}, {self.descriptions_bank}"
-            else:
-                _text = f"{self.name} - {self.description}"
+            _text = f"{self.name} - {self.description}"
 
             results.append(
                 Embedding(
@@ -191,7 +189,12 @@ class Document(SQLModel, table=True):
     title: str = Field(default=None, nullable=True)
     url: str = Field(default=None, nullable=True)
     original_text: str = Field(default=None, nullable=True)
-    authors: List[float] = Field(sa_column=Column(ARRAY(Float)), default=[])
+    authors: str = Field(default=None, nullable=True)
+    metadata_keywords: str = Field(default=None, nullable=True)
+    metadata_description: str = Field(default=None, nullable=True)
+    locale: str = Field(default=None, nullable=True)
+    image_url: str = Field(default=None, nullable=True)
+    site_name: str = Field(default=None, nullable=True)
     short_summary: str = Field(default=None, nullable=True)
     is_about: str = Field(default=None, nullable=True)
     summary_bullet_points: List[str] = Field(default=[], sa_column=Column(JSON))
@@ -211,7 +214,7 @@ class Document(SQLModel, table=True):
             id = self.id,
             title = self.title,
             url = self.url,
-            authors = self.authors,
+            authors = self.authors.split(",") if self.authors else None,
             tldr = self.summary_bullet_points,
             publicationDate = self.publication_date,
             llmServiceMeta = self.llm_service_meta,
@@ -221,6 +224,8 @@ class Document(SQLModel, table=True):
             is_about = self.is_about,
             entities_and_concepts= [ent.to_display() for ent in self.entities] ,
             cosine_similarity=cosine_similarity,
+            image_url=self.image_url,
+            site_name=self.site_name
         )
 
 
@@ -251,6 +256,26 @@ class Document(SQLModel, table=True):
                     source_id=self.id,
                     field="is_about",
                     text=self.is_about,
+                )
+            ) 
+
+        if self.metadata_keywords:
+            results.append(
+                Embedding(
+                    source_type="document",
+                    source_id=self.id,
+                    field="metadata_keywords",
+                    text=self.metadata_keywords,
+                )
+            )
+        
+        if self.metadata_description:
+            results.append(
+                Embedding(
+                    source_type="document",
+                    source_id=self.id,
+                    field="metadata_description",
+                    text=self.metadata_description,
                 )
             )
 
@@ -302,9 +327,16 @@ class Page(SQLModel, table=False):
 
     clean_url: Optional[str] = Field(default=None)
     title: Optional[str] = Field(default=None)
-    author: Optional[str] = Field(default=None)
+    authors: Optional[List[str]] = Field(default=None)
     paragraphs: Optional[List[str]] = Field(default=None)
     full_text: Optional[str] = Field(default=None)
+    keywords: Optional[List[str]] = Field(default=None)
+    locale: Optional[str] = Field(default=None)
+    publish_date: Optional[datetime] = Field(default=None)
+    image_url: Optional[str] = Field(default=None)
+    site_name: Optional[str] = Field(default=None)
+    metadata_description: Optional[str] = Field(default=None)
+
 
 
 class Bookmark(SQLModel, table=True):
@@ -331,6 +363,7 @@ class Embedding(SQLModel, table=True):
     source_type: str = Field(default=None, nullable=False)
     source_id: int = Field(default=None, nullable=False)
     vector: List[float] = Field(sa_column=Column(Vector(384)))
+    update_at: datetime = Field(default_factory=datetime.now, nullable=True)
     subtopics: list["SubTopic"] = Relationship(back_populates="embeddings", link_model=SubTopic_Embedding_Link, sa_relationship_kwargs={"cascade": "delete"})
 
     def get_documnet_id(self):
@@ -383,7 +416,7 @@ class DocumentDisplay(BaseModel):
     title: Optional[str]
     url: Optional[str] = None
     authors: Optional[List[str]] = None
-    publicationDate: Optional[str] = None
+    publicationDate: Optional[datetime] = None
     llmServiceMeta: Optional[Dict] = None
     status: Optional[str] = None
     updateAt: Optional[datetime] = None
@@ -393,6 +426,8 @@ class DocumentDisplay(BaseModel):
     entities_and_concepts: Optional[List[EntityDisplay]] = None
     usage: Optional[str] = None
     cosine_similarity: Optional[float] = None
+    image_url: Optional[str] = None
+    site_name: Optional[str] = None
 
 
 class RagAnswerDisplay(BaseModel):
@@ -408,4 +443,12 @@ class SearchResults(BaseModel):
 
 
 
+class TestList(SQLModel, table=True):
+    id: int = Field(default=None, primary_key=True)
+    texts: Optional[List[str]] = Field(default=None, sa_column=Column(ARRAY(String)))
+    texts2: List[str] = Field(default=[], sa_column=Column(ARRAY(String)))
+    json1: Optional[List[str]] = Field(default=[], sa_column=Column(JSON))
 
+    # Needed for Column(JSON)
+    class Config:
+        arbitrary_types_allowed = True

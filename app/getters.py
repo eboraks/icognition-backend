@@ -48,16 +48,36 @@ def get_document_by_bookmark_id(bookmark_id) -> Document:
     session.close()
     return doc
 
-def get_documents_by_user_id(user_id) -> list[Document]:
+def get_documents_by_user_id(user_id: str, document_status = "Done") -> list[Document]:
     session = Session(engine)
     docs = session.scalars(
         select(Document)
         .join(Bookmark, Bookmark.document_id == Document.id)
-        .where(Bookmark.user_id == user_id)
+        .where(and_(
+            Bookmark.user_id == user_id,
+            Document.status == document_status))
         .order_by(Bookmark.update_at.desc())
     ).unique().all()
     session.close()
     return docs
+
+def get_documents_display_by_user_id(user_id: str, document_status = "Done") -> list[DocumentDisplay]:
+    results = []
+    session = Session(engine)
+    docs = session.scalars(
+        select(Document)
+        .join(Bookmark, Bookmark.document_id == Document.id)
+        .where(and_(
+            Bookmark.user_id == user_id,
+            Document.status == document_status))
+        .order_by(Bookmark.update_at.desc())
+    ).unique().all()
+
+    for doc in docs:
+        results.append(doc.to_display())
+
+    session.close()
+    return results
 
 def get_document_by_url(url) -> Document:
     session = Session(engine)
@@ -174,8 +194,8 @@ def get_documenets_by_entity_id(entity_id: int) -> list[Document]:
     session = Session(engine)
     documents = session.scalars(
         select(Document)
-        .join(Entity, Entity.document_id == Document.id)
-        .where(Entity.id == entity_id)
+        .join(Document_Entity_Link, Document_Entity_Link.document_id == Document.id)
+        .where(Document_Entity_Link.entity_id == entity_id)
     ).all()
     session.close()
     return documents
