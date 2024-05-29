@@ -81,6 +81,7 @@ async def validation_exception_handler(request, exc):
             "model": HTTPError,
             "description": "Reporting back errors",
         },
+        404: {"model": HTTPError, "description": "Page is not supported"},
         201: {"model": Bookmark, "description": "Bookmark created successfully"},
     },
 )
@@ -110,7 +111,7 @@ async def create_bookmark(
     if page is None:
         logging.warn(f"Page object not created for {payload.url}")
         raise HTTPException(
-            status_code=400,
+            status_code=404,
             detail="Hmm, I wasn't able to find information on this page. I sent a message to our engineers",
         )
 
@@ -413,6 +414,16 @@ async def generate_subtopics(user_id: str, background_tasks: BackgroundTasks):
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Subtopics generation failed")
+    
+
+@app.get("/entities_names/{user_id}", status_code=200)
+async def get_user_entities_names(user_id: str):
+    try:
+        names = getter.get_entities_names_by_user_id(user_id)
+        return names
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=404, detail="Entities not found")
 
 @app.get("/placeholder_image", 
          responses = {200: {"content": {"image/png": {}}}},

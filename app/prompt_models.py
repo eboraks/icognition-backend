@@ -182,9 +182,10 @@ class DocumentPromptOne(DocumentPrompt):
             }}"""
 
         _user_content_2_task = """Use the examples above to answer the following questions.
-        1. One short sentance explaining what the article is about.
+        1. One short sentance explaining what the article is about, and what can be learned from it. 
         2. Summarize the article in one sentence. Limit the answer to twenty words.
-        3. Summarize the article up to six bullet-points. Each bullet-point need to have betweeen ten to tweenty words. Limit the number of bullet points must below six.
+        3. Summarize the article up to six bullet-points. Weave into the points entities that are the subject of the article and key learnings. Each point should have up to tweenty words. 
+        Keep a ratio of 1:2 between bullet points and paragraphs.
         
         Use the JSON format above to output your answer. Only output valid JSON format. Reduce the length of the answer to make sure the JSON is valid."""
 

@@ -166,13 +166,13 @@ def get_entities_by_document_id(document_id) -> list[Entity]:
     return entities
 
 
-def get_entities_by_user_id(user_id: str) -> list[Entity]:
+def get_entities_names_by_user_id(user_id: str) -> list[str]:
     session = Session(engine)
-    entities = session.scalars(
-        select(Entity)
-        .join(Document, Document.id == Entity.document_id)
-        .join(Bookmark, Bookmark.document_id == Document.id)
-        .where(Bookmark.user_id == user_id)
+    entities = session.scalars( 
+        select(Entity.name)
+        .join(Document_Entity_Link, Document_Entity_Link.entity_id == Entity.id)
+        .join(Bookmark, Bookmark.document_id == Document_Entity_Link.document_id)
+        .where(Bookmark.user_id == user_id).order_by(Entity.name).distinct()
     ).all()
     session.close()
     return entities
