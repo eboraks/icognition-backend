@@ -30,6 +30,7 @@ services:
     env_file: .env
     environment:
       PORT: 8080
+      GOOGLE_APPLICATION_CREDENTIALS: "/app/firebase.json"
     volumes:
       - .:/app
     ports:
