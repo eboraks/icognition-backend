@@ -10,10 +10,10 @@ class TreeNode(BaseModel):
     "Tree Node Model based on primevue Tree data filter"
     key: int
     label: str
-    data: str | None
-    doc_count: int | None
-    doc_ids: list[int] | None
-    children: list["TreeNode"] | None = None
+    data: Optional[str] = None
+    doc_count: Optional[int] = None
+    doc_ids: Optional[list[int]] = None
+    children: Optional[list["TreeNode"]] = None
 
 
 """
@@ -86,22 +86,35 @@ class SubTopic(SQLModel, table=True):
         return results
     
     def to_node(self):
+
+        _docs_ids = [doc.id for doc in self.documents]
+        for entity in self.entities:
+            _docs_ids.extend([doc.id for doc in entity.documents])
+
+        _docs_ids = list(set(_docs_ids))  
         return TreeNode(
             key = self.id,
-            doc_count = len(self.documents),
-            label = f"{self.name} ({len(self.documents)})",
+            doc_count = len(_docs_ids),
+            label = f"{self.name.title()} ({len(_docs_ids)})",
             data = self.description,
-            doc_ids = [doc.id for doc in self.documents],
-            children = [entity.to_node() for entity in self.entities if entity.name is not None]
+            doc_ids = _docs_ids,
+            children = []
         )
     
     def to_display(self) -> "SubTopicDisplay":
+
+        ## Get all the documents ids from the subtopic and its entities
+        _docs_ids = [doc.id for doc in self.documents]
+        for entity in self.entities:
+            _docs_ids.extend([doc.id for doc in entity.documents])
+
+        _docs_ids = list(set(_docs_ids))    
         return SubTopicDisplay(
             id = self.id,
             name = self.name,
             description = self.description,
-            number_of_docs = len(self.documents),
-            docs_ids = [doc.id for doc in self.documents],
+            number_of_docs = len(_docs_ids),
+            docs_ids = _docs_ids,
             ents_ids = [ent.id for ent in self.entities],
             key_words = self.key_words)
 
@@ -136,9 +149,9 @@ class Entity(SQLModel, table=True):
     def to_node(self):
         return TreeNode(
             key = self.id,
-            label = f"{self.name} ({self.type})" if self.type else self.name, 
+            label = f"{self.name.title()} ({len(self.documents)})",
             data =  self.description,
-            doc_count=None,
+            doc_count=len(self.documents),
             doc_ids = [doc.id for doc in self.documents],
             children = [])
     
@@ -208,7 +221,7 @@ class Document(SQLModel, table=True):
     entities: list["Entity"] = Relationship(back_populates="documents", link_model=Document_Entity_Link)
     subtopics: list["SubTopic"] = Relationship(back_populates="documents", link_model=SubTopic_Document_Link)
 
-    def to_display(self, cosine_similarity: float = None) -> "DocumentDisplay":
+    def to_display(self, cosine_similarity: float = None) -> "DocumentDisplay": 
 
         return DocumentDisplay(
             id = self.id,
@@ -424,6 +437,7 @@ class DocumentDisplay(BaseModel):
     is_about: Optional[str] = None
     tldr: Optional[List[str]] = None
     entities_and_concepts: Optional[List[EntityDisplay]] = None
+    tags: Optional[List[str]] = None
     usage: Optional[str] = None
     cosine_similarity: Optional[float] = None
     image_url: Optional[str] = None

@@ -311,3 +311,65 @@ def get_embedding_by_id(embedding_id: int) -> Embedding:
     with Session(engine) as session:
         embedding = session.scalar(select(Embedding).where(Embedding.id == embedding_id))
     return embedding
+
+
+def get_entities_tree_nodes_by_user_id(user_id: str) -> list[TreeNode]:
+    
+    results = []
+    stmt = text("""
+        SELECT a.type, a.ents_count, a.docs_count, a.ents_names, a.docs_ids 
+        FROM (SELECT e.type, 
+            count(distinct e.name) as ents_count, 
+            json_agg(distinct e.name) as ents_names,
+            count(distinct l.document_id) as docs_count,
+            json_agg(distinct l.document_id) as docs_ids
+        FROM public.entity e
+        JOIN public.document_entity_link l ON l.entity_id = e.id
+        JOIN public.bookmark b ON b.document_id = l.document_id
+            WHERE b.user_id = :user_id 
+        GROUP BY 1) a
+        WHERE a.ents_count > 10 AND a.docs_count > 10
+        """)
+
+    with Session(engine) as session:
+        types = session.execute(stmt, {"user_id": user_id}).fetchall()
+
+        for k, t in enumerate(types):
+            top_node = TreeNode(label=t.type.title(), key=k, doc_count=t.docs_count, doc_ids=t.docs_ids, children=[])
+            for e_name in t.ents_names:
+                ent_node = session.scalar(select(Entity).where(Entity.name == e_name)).to_node()
+                if ent_node.doc_count > 1:
+                    top_node.children.append(ent_node)
+            
+            results.append(top_node)
+            
+            
+    return results
+
+
+
+
+def get_filter_nodes_by_user_id(user_id: str) -> list[TreeNode]:
+    
+    filter_nodes = []
+    
+    # Get entities tree nodes by entity.type. Example 'person', 'organization', 'location'
+    filter_nodes.extend(get_entities_tree_nodes_by_user_id(user_id))   
+
+    # Get subtopics tree nodes as children of 'Areas Of Interest'
+    # The reason this operation require session is that to_node() method requires session to load the subtopics related entities and documents
+    with Session(engine) as session:
+        
+        areas_of_interest = TreeNode(label="Areas Of Interest", key=len(filter_nodes), children=[], doc_ids=[])
+        subtopics = get_subtopics(user_id)
+        for subtopic in subtopics:
+            session.add(subtopic)
+            area = subtopic.to_node()
+            areas_of_interest.doc_count = len(area.doc_ids)
+            areas_of_interest.doc_ids.extend(area.doc_ids)
+            areas_of_interest.children.append(area)
+        filter_nodes.append(areas_of_interest)
+
+    filter_nodes.sort(key=lambda x: x.doc_count, reverse=True)
+
+    return filter_nodes

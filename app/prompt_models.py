@@ -165,7 +165,8 @@ class DocumentPromptOne(DocumentPrompt):
 
         Returns:
             list[dict]: The list of messages for the document prompt.
-        """
+        """ 
+
         _system_content = """You are a researcher task with answering questions about an article.  
             Please ensure that your responses are socially unbiased and positive in nature.
             If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
@@ -287,14 +288,15 @@ class RAGPrompt(BaseModel):
             If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
             If you don't know the answer, please don't share false information."""
 
-        _user_instructions = """Using the following article(s), answer the question. If possible answer using multiple artilcess that best fit the question. 
-        Within the answer use Document_Name to report the sources article, do not include Document_IDs in answer, instead use the document_ids_used_for_answer field. 
-        Use the field 'document_ids_used_for_answer' to report Document_ID used to answer the question."""
+        _user_instructions = """Using the following article(s), answer the question. If possible answer using multiple articles that best answer the question. 
+        Format the answer with html tags (p, li, br, href links) make the answer readable in a webpage.  
+        Include the source article(s) in the answer as <a href> link using Article_Name and URL. 
+        Use the field 'document_ids_used_for_answer' to report Article_ID used to answer the question."""
         
         _user_context = "Articles:\n"
         for c in contexts:
-            _user_context += """Document_ID: {ID}, Document_Name: {TITLE}, Article: {CONTEXT}\n""".format(
-                ID=c['doc_id'], TITLE=c['doc_title'], CONTEXT=c['text'])
+            _user_context += """Article_ID: {ID}, Article_Name: {TITLE}, Article: {CONTEXT}\n""".format(
+                ID=c['doc_id'], TITLE=c['doc_title'], CONTEXT=c['text'], URL=c['url'])
 
         _user_question = """Question: {QUESTION}""".format(QUESTION=question)
 

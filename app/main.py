@@ -346,6 +346,14 @@ async def get_user_subtopics_node(user_id: str):
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=404, detail="Subtopics not found")
+    
+@app.get("/filter_nodes/{user_id}", response_model=List[TreeNode], status_code=200)
+async def get_user_filter_nodes(user_id: str):
+    try:
+        return getter.get_filter_nodes_by_user_id(user_id)
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=404, detail="Error getting filter nodes")
 
 @app.get("/subtopics_name_regenerate/{user_id}", status_code=200)
 async def regenerate_user_subtopics(user_id: str, background_tasks: BackgroundTasks):

@@ -103,7 +103,7 @@ class SearchHandler:
         for doc in docs:
             td = getter.get_document_by_id(doc.id)
             summary = self._summarizer(td.original_text)
-            retrieved_contexts.append({"doc_id": td.id, "doc_title": td.title, "text": summary})
+            retrieved_contexts.append({"doc_id": td.id, "doc_title": td.title, "text": summary, "url": td.url})
 
         messages_list = RAGPrompt.get_messages(contexts=retrieved_contexts, question=search_term)
         

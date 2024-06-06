@@ -238,13 +238,13 @@ def insert_entities(entities: list[Entity], doc: Document = None) -> None:
         logging.info(f"{len(entities)} Entities for Document {doc.id} were associated")
 
 
-def  insert_entity_safe(new_entity: Entity) -> Entity:
+def  insert_entity_safe(new_entity: Entity) -> Entity: 
     with Session(engine) as session:
 
-        ## If the entity name is <=4 characters, reduce the levenshtein distance to 1
+        ## If the entity name is <=5 characters, reduce the levenshtein distance to 1
         if len(new_entity.name) <= 2:
             distance = 0
-        elif len(new_entity.name) <= 4:
+        elif len(new_entity.name) <= 5:
             distance = 1
         else:
             distance = 2
