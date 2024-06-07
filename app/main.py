@@ -179,7 +179,7 @@ async def generate_document(bookmark: Bookmark):
         logging.info(f"Background task for document ID: {bookmark.document_id}")
         await app_logic.extract_info_from_doc(document)
         await app_logic.generate_embeddings(bookmark.user_id)
-        await subtopics_util.subtopics_factory(_user_id = bookmark.user_id)
+        ## aawait subtopics_util.subtopics_factory(_user_id = bookmark.user_id)
         logging.info(f"Background task for document ID: {bookmark.document_id} completed")
 
 

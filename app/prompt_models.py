@@ -198,6 +198,78 @@ class DocumentPromptOne(DocumentPrompt):
             {"role": "user", "content": _user_content_2_task},
             {"role": "user", "content": _user_content_3_article}
         ]
+    
+
+class DocumentPromptVerbatim(DocumentPrompt):
+    
+    whatThisArticleIsAbout: Optional[str]
+    oneSentenceSummary: Optional[str] 
+    summaryInNumericBulletPoints: Optional[List[str]]
+    ## bulletPointsSourceLocation: Optional[List[list[int]]]
+    usage: Optional[str]
+
+    def populate_document(self, document: Document) -> Document:
+        """
+        Populate the document with the prompt data.
+
+        Args:
+            document (Document): The document to populate.
+
+        Returns:
+            Document: The populated document.
+        """
+        document.is_about = self.whatThisArticleIsAbout
+        document.short_summary = self.oneSentenceSummary
+        bullet_points = [point.bullet_point.strip() for point in self.summaryInNumericBulletPoints]
+        document.summary_bullet_points = bullet_points
+        document.llm_service_meta = self.usage
+
+        return document
+
+    @classmethod
+    def get_messages(cls, body: str):
+        """
+        Get the list of messages for the document prompt.
+
+        Args:
+            body (str): The body of the document.
+
+        Returns:
+            list[dict]: The list of messages for the document prompt.
+        """ 
+
+        _system_content = """You are a researcher task with answering questions about an article.  
+            Please ensure that your responses are socially unbiased and positive in nature.
+            If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
+            If you don't know the answer, please don't share false information."""
+
+        _user_content_1_examples = """Answers output must confirm to the this JSON format. Insure the JSON is valid. Shorten the answer to make sure the JSON is valid. [/INST] 
+            JSON Output: {{
+                "whatThisArticleIsAbout" : "This blog post is about the importance of mobile game soft launch",
+                "oneSentenceSummary" : "Mobile game soft launch is a process of releasing a game to a limited audience for testing.",
+                "summaryInNumericBulletPoints" : [
+                    "Mobile game soft launch is a process of releasing a game to a limited audience for testing.",
+                    "bullet_point": "Getting soft launch require planning, strategy and expirements.",
+                    ],
+            }}"""
+
+        _user_content_2_task = """Use the examples above to answer the following questions.
+        1. One short sentance explaining what the article is about, and what can be learned from it. 
+        2. Summarize the article in one sentence. Limit the answer to twenty words.
+        3. Summarize the article up to six bullet-points. Weave into the points entities that are the subject of the article and key learnings. 
+        Include the source_location of the bullet points in the artilce with the index of where the text start and end. Each point should have up to tweenty words.
+        Each point should have up to tweenty words. Keep a ratio of 1:2 between bullet points and paragraphs.
+        
+        Use the JSON format above to output your answer. Only output valid JSON format. Reduce the length of the answer to make sure the JSON is valid."""
+
+        _user_content_3_article = """Article: {BODY}""".format(BODY=body)
+
+        return [
+            {"role": "system", "content": _system_content},
+            {"role": "user", "content": _user_content_1_examples},
+            {"role": "user", "content": _user_content_2_task},
+            {"role": "user", "content": _user_content_3_article}
+        ]
 
 class SubTopicPrompt(BaseModel):
     """

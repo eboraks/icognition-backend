@@ -24,7 +24,7 @@ from app.models import (
     SubTopicDisplay,
     TreeNode,
 )
-from app.prompt_models import DocumentPromptOne, DocumentPromptTwo
+from app.prompt_models import DocumentPromptOne, DocumentPromptTwo, DocumentPromptVerbatim
 from app.together_api_client import (
     TogetherMixtralClient,
     ApiCallException,
