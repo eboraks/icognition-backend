@@ -9,18 +9,31 @@ The backend application for icognition
 
 
 # Running with Docker
-1. Build icogapi image using `docker build -t icogapi:latest .`
 1. Spin-up containers `docker-compose up -d` 
+2. DO NOT USE: Build icogapi image using `docker build -t icogapi:latest .`
 
+# Run database migration
+* Load env variable from .env in local. Ths mostly use for testing 
+* export $(cat .env | xargs) && env
 
-# GCP Proxy Connection (not needed if using docker-databases)
+* For local develop: See instructions in migration-local
+
+* For stg on GCP: See instruction on in migration-stg and run the GCP DB proxy.  
+
+## GCP Proxy Connection (not needed if using docker-databases)
 * path '/home/eboraks/Projects/gcp-sql-proxy'
 * Command ./cloud-sql-proxy --port 3306 {connection_name}
 * Connect to DB: psql -h 127.0.0.1 -p 3306 -d icog_db -U icog-db-user -W Case2214 
 
-# Load env variable from .env in local. Ths mostly use for testing 
-* export $(cat .env | xargs) && env
+# Run application in VSCode
+1. Associate the vscode with the python env created above. 
+1.1 Within VSCode, press crtl + shift + p
+1.2 Select: Python: Select Interpreter
+1.3 Select the conda python envrionment create above. 
 
+2. Make sure you have .vscode directory with launch.json and settings.json share from Google Drive. 
+
+3. Run application (F5)
 
 
 ## GCP
