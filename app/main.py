@@ -313,6 +313,18 @@ async def get_document(id: int, response: Response):
     else:
         response.status_code = status.HTTP_200_OK
         return document
+    
+@app.get("/bookmark/{id}/keysentences")
+async def get_bookmark_keysentences(id: int, response: Response):
+
+    try:
+        sentences = app_logic.document_key_sentences(id)
+        response.status_code = status.HTTP_200_OK
+        return sentences
+
+    except ValueError as e:
+        logging.error(e)
+        raise HTTPException(status_code=404, detail=e)
 
 
 

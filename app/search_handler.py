@@ -41,7 +41,7 @@ class MatchedDocument(BaseModel):
 class SearchHandler:
     def __init__(self):
         self._db_engine = get_engine()
-        self._question_regex = r"(?:What|How|Tell me|Find|Who).*\?"
+        self._question_regex = r"(?:What|How|Tell me|Find|Who|Explain|Give).*\?"
         self._summarizer = DocSummarizer()
         self._mixtralClient = TogetherMixtralClient()
 
@@ -102,7 +102,7 @@ class SearchHandler:
         retrieved_contexts = []
         for doc in docs:
             td = getter.get_document_by_id(doc.id)
-            summary = self._summarizer(td.original_text)
+            summary = self._summarizer(td.original_text).toStr()
             retrieved_contexts.append({"doc_id": td.id, "doc_title": td.title, "text": summary, "url": td.url})
 
         messages_list = RAGPrompt.get_messages(contexts=retrieved_contexts, question=search_term)

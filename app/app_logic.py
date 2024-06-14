@@ -7,7 +7,7 @@ import app.subtopics_util as subtopics_util
 import app.getters as getter
 from app import html_parser
 from app.db_connector import get_engine
-from app.icog_util import DocSummarizer
+from app.icog_util import DocSummarizer, original_text_to_sentences
 from app.models import (
     Bookmark,
     Entity,
@@ -299,7 +299,7 @@ async def extract_info_from_doc(doc: Document, testing: bool = False):
                 logging.info(f"Response loaded from file for document {doc.id}")
         else:
 
-            summary = summarizer(doc.original_text)
+            summary = summarizer(doc.original_text).toStr()
             response = await mixtralClient.generate(messages=DocumentPromptOne.get_messages(summary), model=DocumentPromptOne)
             ## Save response in json file
             if testing:
@@ -345,7 +345,7 @@ async def extract_info_from_doc(doc: Document, testing: bool = False):
                 response = pickle.load(f)
                 logging.info(f"Response loaded from file for document {doc.id}")
         else:
-            summary = summarizer(doc.original_text)
+            summary = summarizer(doc.original_text).toStr()
             response = await mixtralClient.generate(
                 messages=DocumentPromptTwo.get_messages(summary), 
                 model=DocumentPromptTwo)
@@ -474,3 +474,29 @@ def update_entity_embedding(entity: Entity):
         session.add(embedding)
         session.commit()
         logging.info(f"Embedding for entity {entity.id} was updated")
+
+
+def document_key_sentences(bookmark_id: int):
+    """
+    This function returns the key sentences of a document
+    """
+    with Session(engine) as session:
+        doc = session.scalar(select(Document).join(Bookmark, Bookmark.document_id == Document.id).where(Bookmark.id == bookmark_id))
+        if doc is None:
+            logging.error(f"Document for bookmark ID {bookmark_id} not found")
+            raise ValueError(f"Document for bookmark ID {bookmark_id} not found")
+
+        if doc.original_text == None:
+            logging.error(f"Document for bookmark ID {bookmark_id} has no text")
+            raise ValueError(f"Document for bookmark ID {bookmark_id} has no text")
+        
+        summary = summarizer(doc.original_text).toStr()
+    
+    sentences = original_text_to_sentences(doc.original_text)
+
+    key_sentences = []
+    for sentence in sentences:
+        if sentence in summary:
+            key_sentences.append(sentence)
+    
+    return key_sentences

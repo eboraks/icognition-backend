@@ -13,7 +13,9 @@ The backend application for icognition
 1. Spin-up containers `docker-compose up -d` 
 
 
-# GCP Proxy Connection (not needed if using docker-databases)
+
+
+# GCP Proxy Connection (needed if using database on GCP)
 * path '/home/eboraks/Projects/gcp-sql-proxy'
 * Command ./cloud-sql-proxy --port 3306 {connection_name}
 * Connect to DB: psql -h 127.0.0.1 -p 3306 -d icog_db -U icog-db-user -W Case2214 
