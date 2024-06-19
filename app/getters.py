@@ -340,8 +340,9 @@ def get_entities_tree_nodes_by_user_id(user_id: str) -> list[TreeNode]:
                 ent_node = session.scalar(select(Entity).where(Entity.name == e_name)).to_node()
                 if ent_node.doc_count > 1:
                     top_node.children.append(ent_node)
-            
-            results.append(top_node)
+            # Only add the top node if it has children
+            if len(top_node.children) > 0:
+                results.append(top_node)
             
             
     return results
