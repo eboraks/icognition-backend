@@ -200,11 +200,20 @@ class DocumentPromptOne(DocumentPrompt):
         ]
     
 
+class ResponseWithIndex(BaseModel):
+    """
+    Model for responses with index.
+    """
+
+    answer: str
+    sentences_indcies: List[int]
+
+
 class DocumentPromptVerbatim(DocumentPrompt):
     
-    whatThisArticleIsAbout: Optional[str]
-    oneSentenceSummary: Optional[str] 
-    summaryInNumericBulletPoints: Optional[List[str]]
+    whatThisArticleIsAbout: Optional[ResponseWithIndex]
+    learningsFromTheArticle: Optional[ResponseWithIndex] 
+    summaryInBulletPoints: Optional[List[ResponseWithIndex]]
     ## bulletPointsSourceLocation: Optional[List[list[int]]]
     usage: Optional[str]
 
@@ -245,17 +254,17 @@ class DocumentPromptVerbatim(DocumentPrompt):
 
         _user_content_1_examples = """Answers output must confirm to the this JSON format. Insure the JSON is valid. Shorten the answer to make sure the JSON is valid. [/INST] 
             JSON Output: {{
-                "whatThisArticleIsAbout" : "This blog post is about the importance of mobile game soft launch",
-                "oneSentenceSummary" : "Mobile game soft launch is a process of releasing a game to a limited audience for testing.",
-                "summaryInNumericBulletPoints" : [
-                    "Mobile game soft launch is a process of releasing a game to a limited audience for testing.",
-                    "bullet_point": "Getting soft launch require planning, strategy and expirements.",
+                "whatThisArticleIsAbout" : {"This blog post is about the importance of mobile game soft launch", "sentences_indcies": [0, 1]},
+                "learningsFromTheArticle" : {"Mobile game soft launch is a process of releasing a game to a limited audience for testing.", "sentences_indcies": [1, 2]},   
+                "summaryInBulletPoints" : [
+                    {"Mobile game soft launch is a process of releasing a game to a limited audience for testing.", "sentences_indcies": [1, 2]},
+                    {"bullet_point": "Getting soft launch require planning, strategy and expirements.", "sentences_indcies": [3,4,..]},
                     ],
             }}"""
 
         _user_content_2_task = """Use the examples above to answer the following questions.
         1. One short sentance explaining what the article is about, and what can be learned from it. 
-        2. Summarize the article in one sentence. Limit the answer to twenty words.
+        2. Summarize the key learning from the article. 
         3. Summarize the article up to six bullet-points. Weave into the points entities that are the subject of the article and key learnings. 
         Include the source_location of the bullet points in the artilce with the index of where the text start and end. Each point should have up to tweenty words.
         Each point should have up to tweenty words. Keep a ratio of 1:2 between bullet points and paragraphs.

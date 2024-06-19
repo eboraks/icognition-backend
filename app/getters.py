@@ -341,7 +341,8 @@ def get_entities_tree_nodes_by_user_id(user_id: str) -> list[TreeNode]:
                 if ent_node.doc_count > 1:
                     top_node.children.append(ent_node)
             
-            results.append(top_node)
+            if len(top_node.children) > 0:
+                results.append(top_node)
             
             
     return results

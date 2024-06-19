@@ -131,7 +131,7 @@ class DocSummarizer():
 
     
     
-def original_text_to_sentences(text: str) -> list:
+def original_text_to_sentences(text: str) -> list[str]:
 
     lines = text.split("\n")
     sentences = []
@@ -141,6 +141,15 @@ def original_text_to_sentences(text: str) -> list:
 
     return sentences
 
+
+def sentences_to_text(sentences: list[str], include_sentence_index = True) -> str:
+    text = ""
+    for i, sentence in enumerate(sentences):
+        if include_sentence_index:
+            text += f"[{i}] {sentence} "
+        else:
+            text += f"{sentence} "
+    return text
 
 def deduplicate_objects_list(l: list) -> list:
     """

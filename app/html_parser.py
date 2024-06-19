@@ -271,6 +271,19 @@ def get_paragraphs(soup: BeautifulSoup) -> list[str]:
             None
     return text_elements
 
+def get_elements(soup: BeautifulSoup) -> list[str]:
+    header_pattern = re.compile(r"h\d")
+    elements = []
+    for element in soup.find_all(["p", "h1", "h2", "h3"]):
+        ## Collect only paragraph and headers with enough content
+        if element.name == "p" and len(element.text.split(" ")) > 8:
+            elements.append(element)
+        elif header_pattern.match(element.name) and len(element.text.split(" ")) > 3:
+            elements.append(element)
+        else:
+            None
+    return elements
+
 
 def clean_url(url: str) -> str:
     """Clean URL from trailing characters
@@ -313,6 +326,7 @@ def create_page(payload: PagePayload) -> Page:
         return None
 
     paragraphs = get_paragraphs(article_element)
+    elements = get_elements(article_element)
 
     if paragraphs is None:
         logging.error("No paragraphs found in webpage")
