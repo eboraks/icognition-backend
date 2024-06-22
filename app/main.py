@@ -16,7 +16,7 @@ from app.models import (
     TreeNode,
 )
 import logging
-import sys
+import sys, json
 import app.app_logic as app_logic
 import app.subtopics_util as subtopics_util
 import app.html_parser as html_parser
@@ -232,6 +232,16 @@ async def get_documents_plus_by_user_id(user_id: str):
     logging.info(f"Icognition return {len(documents)} documents_plus")
     return documents
 
+@app.get('/document/{id}/html_elements', status_code=200)
+async def get_document_html_elements(id: int):
+    try:
+        doc = getter.get_document_by_id(id)
+        return json.loads(doc.html_elements)
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=404, detail="Document not found")
+
+
 
 @app.get("/bookmark", response_model=Bookmark, status_code=200)
 async def get_bookmark_by_url(url: str):
@@ -314,6 +324,36 @@ async def get_document(id: int, response: Response):
         response.status_code = status.HTTP_200_OK
         return document
     
+@app.get("/document_display/{id}")
+async def get_document_display(id: int, response: Response):
+
+    logging.info(f"Icognition document display endpoint called on {id}")
+    document = getter.get_document_display_by_id(id)
+
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # If document is still in processing, let the client know
+    if document.status == "Processing":
+        response.status_code = status.HTTP_206_PARTIAL_CONTENT
+        return document
+    else:
+        response.status_code = status.HTTP_200_OK
+        return document
+    
+@app.get("/document/{id}/xray")
+async def get_document_summary(id: int, response: Response):
+    
+        try:
+            res = await app_logic.generate_xray_summary(id)
+            response.status_code = status.HTTP_200_OK
+            return res
+    
+        except ValueError as e:
+            logging.error(e)
+            raise HTTPException(status_code=404, detail=e)
+
+
 @app.get("/bookmark/{id}/keysentences")
 async def get_bookmark_keysentences(id: int, response: Response):
 

@@ -303,6 +303,10 @@ def get_documents_by_entity_id(entity_id: int) -> list[Document]:
     return documents
 
 def get_document_display_by_id(document_id: int, cosine_similarity: float = None) -> DocumentDisplay:
+    """
+        Method that retrieves a document display by ID.
+        cosine_similarity: The cosine similarity value to be used find the document. This is mostly for testing purposes.
+    """
     doc = get_document_by_id(document_id)
     display = doc.to_display(cosine_similarity=cosine_similarity)
     return display

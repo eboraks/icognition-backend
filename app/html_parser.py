@@ -2,6 +2,7 @@ from datetime import datetime
 import requests
 import logging
 import re
+import json
 from bs4 import BeautifulSoup
 from app.models import Page, PagePayload
 import urllib.parse as urlparse
@@ -271,15 +272,15 @@ def get_paragraphs(soup: BeautifulSoup) -> list[str]:
             None
     return text_elements
 
-def get_elements(soup: BeautifulSoup) -> list[str]:
+def get_elements(soup: BeautifulSoup) -> list[dict]:
     header_pattern = re.compile(r"h\d")
     elements = []
     for element in soup.find_all(["p", "h1", "h2", "h3"]):
         ## Collect only paragraph and headers with enough content
         if element.name == "p" and len(element.text.split(" ")) > 8:
-            elements.append(element)
+            elements.append({'element': element.name, 'text': element.text})
         elif header_pattern.match(element.name) and len(element.text.split(" ")) > 3:
-            elements.append(element)
+            elements.append({'element': element.name, 'text': element.text})
         else:
             None
     return elements
@@ -326,7 +327,7 @@ def create_page(payload: PagePayload) -> Page:
         return None
 
     paragraphs = get_paragraphs(article_element)
-    elements = get_elements(article_element)
+    elements = json.dumps(get_elements(article_element))
 
     if paragraphs is None:
         logging.error("No paragraphs found in webpage")
@@ -337,6 +338,7 @@ def create_page(payload: PagePayload) -> Page:
     page = Page()
     page.paragraphs = paragraphs
     page.authors = get_authors(metatags)
+    page.html_elements = elements
     page.full_text = "\n".join(paragraphs)
     page.title = get_title(metatags)
     page.keywords = get_keywords(metatags)
