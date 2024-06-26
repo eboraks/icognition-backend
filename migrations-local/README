@@ -4,7 +4,7 @@ This Alembic migration was created following the example in https://testdriven.i
 
 ## Iniation Steps
 
-1. Initiate the migration configuration - `alembic init migrations`
+1. Initiate the migration configuration - `alembic init migrations`  # not needed
 2. Edits:
 
 - In script.py.mako added:

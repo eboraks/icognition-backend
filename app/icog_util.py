@@ -7,6 +7,7 @@ import nltk
 
 from stop_words import get_stop_words
 from nltk.tokenize import word_tokenize
+from nltk.tokenize import sent_tokenize
 from sumy.parsers.plaintext import PlaintextParser
 from sumy.nlp.tokenizers import Tokenizer
 from sumy.summarizers.lsa import LsaSummarizer
@@ -94,13 +95,24 @@ def truncate_text(
         logging.info("Text is short enough. No need to summarizing.")
         return text
 
+class SummaryResults():
+    def __init__(self, sentences: list):
+        self.sentences = sentences
+    
+    def toStr(self):
+        return " ".join(self.sentences)
+    
+    def toList(self):
+        return self.sentences
+
+
 class DocSummarizer():
     
     def __init__(self):
         self._summarizer = LsaSummarizer()
         self._LANGUAGE = "english"
     
-    def __call__(self, text: str, reduce_by: int = 0.6) -> str:
+    def __call__(self, text: str, reduce_by: int = 0.6) -> SummaryResults:
         """
         Summarize the text using LSA summarizer
 
@@ -109,15 +121,35 @@ class DocSummarizer():
             reduce_by (float, optional): The ratio of the summary to the original text. Defaults to 0.6.
 
         Returns:
-            Summary (str)
+            SummaryResults: The summarized text
         """
         parser = PlaintextParser.from_string(text, Tokenizer(self._LANGUAGE))
         num_sentences = len(parser.document.sentences)
         num_sentences_to_summarize = int(num_sentences * reduce_by)
         summary = self._summarizer(parser.document, num_sentences_to_summarize)
-        summary_text = " ".join([sentence._text for sentence in summary])
-        return summary_text
+        return SummaryResults([sentence._text for sentence in summary])
 
+    
+    
+def original_text_to_sentences(text: str) -> list[str]:
+
+    lines = text.split("\n")
+    sentences = []
+    for line in lines:
+        if len(line) > 0:
+            sentences.extend(sent_tokenize(line))
+
+    return sentences
+
+
+def sentences_to_text(sentences: list[str], include_sentence_index = True) -> str:
+    text = ""
+    for i, sentence in enumerate(sentences):
+        if include_sentence_index:
+            text += f"[{i}] {sentence} "
+        else:
+            text += f"{sentence} "
+    return text
 
 def deduplicate_objects_list(l: list) -> list:
     """

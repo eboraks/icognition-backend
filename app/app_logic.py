@@ -1,4 +1,5 @@
 import datetime
+import json
 import sys
 import logging
 import os, pickle
@@ -7,22 +8,18 @@ import app.subtopics_util as subtopics_util
 import app.getters as getter
 from app import html_parser
 from app.db_connector import get_engine
-from app.icog_util import DocSummarizer
+from app.icog_util import DocSummarizer, original_text_to_sentences, sentences_to_text
 from app.models import (
     Bookmark,
     Entity,
     Page,
     Document,
     PagePayload,
-    DocumentDisplay,
     Embedding,
     Document_Entity_Link,
-    SubTopic,
     SubTopic_Document_Link,
     SubTopic_Embedding_Link,
-    SubTopic_Entity_Link,
-    SubTopicDisplay,
-    TreeNode,
+    Answer
 )
 from app.prompt_models import DocumentPromptOne, DocumentPromptTwo, DocumentPromptVerbatim
 from app.together_api_client import (
@@ -155,6 +152,7 @@ def create_document(page: Page):
     doc.image_url = page.image_url
     doc.site_name = page.site_name
     doc.metadata_description = page.metadata_description
+    doc.html_elements = page.html_elements
 
     session.add(doc)
     session.commit()
@@ -299,7 +297,7 @@ async def extract_info_from_doc(doc: Document, testing: bool = False):
                 logging.info(f"Response loaded from file for document {doc.id}")
         else:
 
-            summary = summarizer(doc.original_text)
+            summary = summarizer(doc.original_text).toStr()
             response = await mixtralClient.generate(messages=DocumentPromptOne.get_messages(summary), model=DocumentPromptOne)
             ## Save response in json file
             if testing:
@@ -345,7 +343,7 @@ async def extract_info_from_doc(doc: Document, testing: bool = False):
                 response = pickle.load(f)
                 logging.info(f"Response loaded from file for document {doc.id}")
         else:
-            summary = summarizer(doc.original_text)
+            summary = summarizer(doc.original_text).toStr()
             response = await mixtralClient.generate(
                 messages=DocumentPromptTwo.get_messages(summary), 
                 model=DocumentPromptTwo)
@@ -474,3 +472,54 @@ def update_entity_embedding(entity: Entity):
         session.add(embedding)
         session.commit()
         logging.info(f"Embedding for entity {entity.id} was updated")
+
+
+def document_key_sentences(bookmark_id: int):
+    """
+    This function returns the key sentences of a document
+    """
+    with Session(engine) as session:
+        doc = session.scalar(select(Document).join(Bookmark, Bookmark.document_id == Document.id).where(Bookmark.id == bookmark_id))
+        if doc is None:
+            logging.error(f"Document for bookmark ID {bookmark_id} not found")
+            raise ValueError(f"Document for bookmark ID {bookmark_id} not found")
+
+        if doc.original_text == None:
+            logging.error(f"Document for bookmark ID {bookmark_id} has no text")
+            raise ValueError(f"Document for bookmark ID {bookmark_id} has no text")
+        
+        summary = summarizer(doc.original_text).toStr()
+    
+    sentences = original_text_to_sentences(doc.original_text)
+
+    key_sentences = []
+    for sentence in sentences:
+        if sentence in summary:
+            key_sentences.append(sentence)
+    
+    return key_sentences
+
+async def generate_xray_summary(document_id: int) -> dict:
+    """
+    This function generates a summary with verbatim sentences
+    """
+    doc = getter.get_document_by_id(document_id) 
+    
+    if doc.raw_answer == None:
+
+        sentences = original_text_to_sentences(summarizer(doc.original_text).toStr())
+        llmresp = await mixtralClient.generate(DocumentPromptVerbatim, DocumentPromptVerbatim.get_messages(sentences_to_text(sentences)))
+        
+        if (llmresp is None):
+            logging.error(f"Error generating summary with verbatim for document {document_id}")
+            return None
+        
+        results = llmresp.to_display(sentences)
+        doc.raw_answer = json.dumps(results, default=vars)
+        update_document(doc)
+    else:
+        results = json.loads(doc.raw_answer)
+
+    docDisplay = getter.get_document_display_by_id(document_id)
+    
+    return {"results": results, "doc": docDisplay}

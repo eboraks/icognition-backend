@@ -1,3 +1,4 @@
+import json
 from sqlmodel import SQLModel, Field, Float, JSON, Integer, Relationship, String
 from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import TEXT, JSONB, ARRAY
@@ -202,6 +203,7 @@ class Document(SQLModel, table=True):
     title: str = Field(default=None, nullable=True)
     url: str = Field(default=None, nullable=True)
     original_text: str = Field(default=None, nullable=True)
+    html_elements: List[str] = Field(default=[], sa_column=Column(JSON))
     authors: str = Field(default=None, nullable=True)
     metadata_keywords: str = Field(default=None, nullable=True)
     metadata_description: str = Field(default=None, nullable=True)
@@ -238,7 +240,8 @@ class Document(SQLModel, table=True):
             entities_and_concepts= [ent.to_display() for ent in self.entities] ,
             cosine_similarity=cosine_similarity,
             image_url=self.image_url,
-            site_name=self.site_name
+            site_name=self.site_name,
+            html_elements=json.loads(self.html_elements) if self.html_elements else None
         )
 
 
@@ -343,6 +346,7 @@ class Page(SQLModel, table=False):
     authors: Optional[List[str]] = Field(default=None)
     paragraphs: Optional[List[str]] = Field(default=None)
     full_text: Optional[str] = Field(default=None)
+    html_elements: Optional[str] = Field(default=None)
     keywords: Optional[List[str]] = Field(default=None)
     locale: Optional[str] = Field(default=None)
     publish_date: Optional[datetime] = Field(default=None)
@@ -442,12 +446,19 @@ class DocumentDisplay(BaseModel):
     cosine_similarity: Optional[float] = None
     image_url: Optional[str] = None
     site_name: Optional[str] = None
+    html_elements: Optional[List[dict]] = None
 
 
 class RagAnswerDisplay(BaseModel):
     answer: Optional[str]
     documents_used: Optional[List[int]]
     llm_service_meta: Optional[Dict]
+
+
+class Answer(BaseModel):
+    question: str
+    answer: str
+    sources: List[str]
 
 
 class SearchResults(BaseModel):

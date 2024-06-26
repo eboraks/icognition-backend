@@ -303,6 +303,10 @@ def get_documents_by_entity_id(entity_id: int) -> list[Document]:
     return documents
 
 def get_document_display_by_id(document_id: int, cosine_similarity: float = None) -> DocumentDisplay:
+    """
+        Method that retrieves a document display by ID.
+        cosine_similarity: The cosine similarity value to be used find the document. This is mostly for testing purposes.
+    """
     doc = get_document_by_id(document_id)
     display = doc.to_display(cosine_similarity=cosine_similarity)
     return display
@@ -341,6 +345,7 @@ def get_entities_tree_nodes_by_user_id(user_id: str) -> list[TreeNode]:
                 if ent_node.doc_count > 1:
                     top_node.children.append(ent_node)
             # Only add the top node if it has children
+            
             if len(top_node.children) > 0:
                 results.append(top_node)
             

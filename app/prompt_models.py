@@ -2,7 +2,7 @@ import re
 from typing import Optional, List, Dict
 from pydantic import BaseModel
 
-from app.models import Document, Entity, IdentifyEntity
+from app.models import Answer, Document, Entity, IdentifyEntity
 
 class DocumentPrompt(BaseModel):
     """
@@ -200,31 +200,46 @@ class DocumentPromptOne(DocumentPrompt):
         ]
     
 
+class ResponseWithIndex(BaseModel):
+    """
+    Model for responses with index.
+    """
+
+    answer: str
+    sentences_indicies: List[int]
+
+
 class DocumentPromptVerbatim(DocumentPrompt):
     
-    whatThisArticleIsAbout: Optional[str]
-    oneSentenceSummary: Optional[str] 
-    summaryInNumericBulletPoints: Optional[List[str]]
+    whatThisArticleIsAbout: Optional[ResponseWithIndex]
+    learningsFromTheArticle: Optional[ResponseWithIndex] 
+    summaryInBulletPoints: Optional[List[ResponseWithIndex]]
     ## bulletPointsSourceLocation: Optional[List[list[int]]]
     usage: Optional[str]
 
-    def populate_document(self, document: Document) -> Document:
-        """
-        Populate the document with the prompt data.
+    def to_display(self, sentences: List[str]):
+        results = {}
 
-        Args:
-            document (Document): The document to populate.
+        if self.whatThisArticleIsAbout:
 
-        Returns:
-            Document: The populated document.
-        """
-        document.is_about = self.whatThisArticleIsAbout
-        document.short_summary = self.oneSentenceSummary
-        bullet_points = [point.bullet_point.strip() for point in self.summaryInNumericBulletPoints]
-        document.summary_bullet_points = bullet_points
-        document.llm_service_meta = self.usage
+            sents = [sentences[index] for index in self.whatThisArticleIsAbout.sentences_indicies] 
+            answer = Answer(question="What is this article about?", answer=self.whatThisArticleIsAbout.answer, sources=sents)
+            results["whatThisArticleIsAbout"] = answer
+        
+        if self.learningsFromTheArticle:
+            sents = [sentences[index] for index in self.learningsFromTheArticle.sentences_indicies] 
+            answer = Answer(question="What are the learnings from this article?", answer=self.learningsFromTheArticle.answer, sources=sents)
+            results["learningsFromTheArticle"] = answer
 
-        return document
+        if self.summaryInBulletPoints:
+            points = []
+            for key, point in enumerate(self.summaryInBulletPoints):
+                sents = [sentences[index] for index in point.sentences_indicies] 
+                answer = Answer(question=f"Point {key + 1}", answer=point.answer, sources=sents)
+                points.append(answer)
+            results["summaryInBulletPoints"] = points
+
+        return results
 
     @classmethod
     def get_messages(cls, body: str):
@@ -245,18 +260,19 @@ class DocumentPromptVerbatim(DocumentPrompt):
 
         _user_content_1_examples = """Answers output must confirm to the this JSON format. Insure the JSON is valid. Shorten the answer to make sure the JSON is valid. [/INST] 
             JSON Output: {{
-                "whatThisArticleIsAbout" : "This blog post is about the importance of mobile game soft launch",
-                "oneSentenceSummary" : "Mobile game soft launch is a process of releasing a game to a limited audience for testing.",
-                "summaryInNumericBulletPoints" : [
-                    "Mobile game soft launch is a process of releasing a game to a limited audience for testing.",
-                    "bullet_point": "Getting soft launch require planning, strategy and expirements.",
+                "whatThisArticleIsAbout" : {"This blog post is about the importance of mobile game soft launch", "sentences_indicies": [0, 1,5,14,15]},
+                "learningsFromTheArticle" : {"Mobile game soft launch is a process of releasing a game to a limited audience for testing.", "sentences_indicies": [1, 2,4,8,9]},   
+                "summaryInBulletPoints" : [
+                    {"Mobile game soft launch is a process of releasing a game to a limited audience for testing.", "sentences_indicies": [1, 2]},
+                    {"bullet_point": "Getting soft launch require planning, strategy and expirements.", "sentences_indicies": [3,4,..]},
                     ],
             }}"""
 
-        _user_content_2_task = """Use the examples above to answer the following questions.
-        1. One short sentance explaining what the article is about, and what can be learned from it. 
-        2. Summarize the article in one sentence. Limit the answer to twenty words.
-        3. Summarize the article up to six bullet-points. Weave into the points entities that are the subject of the article and key learnings. 
+        _user_content_2_task = """Use the examples above to answer the following questions. 
+        Use the sentences_indicies to identify all the sentences used to answer the question.
+        1. One short sentance explaining what the article is about, and what can be learned from it. Limit the answer to thirty words. Include at least five sentences_indicies. 
+        2. Summarize the key learning from the article. Limit the answer to thirty words. Include at least five sentences_indicies.
+        3. Summarize the article up to six bullet-points. Weave into the points entities that are the subject of the article and key learnings. Limit the answer to tweenty words for each point.  
         Include the source_location of the bullet points in the artilce with the index of where the text start and end. Each point should have up to tweenty words.
         Each point should have up to tweenty words. Keep a ratio of 1:2 between bullet points and paragraphs.
         
