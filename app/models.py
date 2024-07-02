@@ -5,7 +5,7 @@ from sqlalchemy.dialects.postgresql import TEXT, JSONB, ARRAY
 from pgvector.sqlalchemy import Vector
 from typing import Optional, List, Dict
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, model_serializer
 
 class TreeNode(BaseModel):
     "Tree Node Model based on primevue Tree data filter"
@@ -318,6 +318,14 @@ class PagePayload(SQLModel, table=False):
     html: Optional[str] = Field(default=None)
     user_id: str = Field(default=None, nullable=True)
 
+class QuestionPlayload(SQLModel, table=False):
+    """
+    Represents the payload for a question, including the question and user ID.
+    """
+
+    question: Optional[str] = Field(default=None)
+    document_id: Optional[int] = Field(default=None)
+
 
 class HTTPError(SQLModel, table=False):
     """
@@ -458,7 +466,8 @@ class RagAnswerDisplay(BaseModel):
 class Answer(BaseModel):
     question: str
     answer: str
-    sources: List[str]
+    sources: Optional[List[str]] = None
+    relevance_score: Optional[list[float]] = None
 
 
 class SearchResults(BaseModel):

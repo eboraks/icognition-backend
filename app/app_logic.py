@@ -6,9 +6,11 @@ import os, pickle
 import app.transformers_util as transformers_util
 import app.subtopics_util as subtopics_util
 import app.getters as getter
+from types import SimpleNamespace
 from app import html_parser
 from app.db_connector import get_engine
 from app.icog_util import DocSummarizer, original_text_to_sentences, sentences_to_text
+from pydantic.json import pydantic_encoder
 from app.models import (
     Bookmark,
     Entity,
@@ -18,10 +20,9 @@ from app.models import (
     Embedding,
     Document_Entity_Link,
     SubTopic_Document_Link,
-    SubTopic_Embedding_Link,
-    Answer
+    SubTopic_Embedding_Link
 )
-from app.prompt_models import DocumentPromptOne, DocumentPromptTwo, DocumentPromptVerbatim
+from app.prompt_models import CustomQuestionPrompt, DocumentPromptOne, DocumentPromptTwo, DocumentPromptVerbatim
 from app.together_api_client import (
     TogetherMixtralClient,
     ApiCallException,
@@ -507,15 +508,25 @@ async def generate_xray_summary(document_id: int) -> dict:
     
     if doc.raw_answer == None:
 
-        sentences = original_text_to_sentences(summarizer(doc.original_text).toStr())
-        llmresp = await mixtralClient.generate(DocumentPromptVerbatim, DocumentPromptVerbatim.get_messages(sentences_to_text(sentences)))
+        sentences = []
+        for element in json.loads(doc.html_elements, object_hook=lambda d: SimpleNamespace(**d)):
+
+            if (element.element == 'p'):
+                temp = original_text_to_sentences(element.text)
+                sentences.extend(temp)
+            else:
+                sentences.append(element.text)
+        
+        text_to_process = sentences_to_text(sentences)
+
+        llmresp = await mixtralClient.generate(DocumentPromptVerbatim, DocumentPromptVerbatim.get_messages(text_to_process))
         
         if (llmresp is None):
             logging.error(f"Error generating summary with verbatim for document {document_id}")
             return None
         
-        results = llmresp.to_display(sentences)
-        doc.raw_answer = json.dumps(results, default=vars)
+        results = llmresp.to_answers(sentences)
+        doc.raw_answer = json.dumps(results, default=pydantic_encoder) 
         update_document(doc)
     else:
         results = json.loads(doc.raw_answer)
@@ -523,3 +534,31 @@ async def generate_xray_summary(document_id: int) -> dict:
     docDisplay = getter.get_document_display_by_id(document_id)
     
     return {"results": results, "doc": docDisplay}
+
+
+
+
+async def custom_question(document_id: int, question: str) -> dict:
+    """
+    This function generates a summary with verbatim sentences
+    """
+    doc = getter.get_document_by_id(document_id) 
+    
+    sentences = []
+    for element in json.loads(doc.html_elements, object_hook=lambda d: SimpleNamespace(**d)):
+
+        if (element.element == 'p'):
+            temp = original_text_to_sentences(element.text)
+            sentences.extend(temp)
+        else:
+            sentences.append(element.text)
+    
+    text_to_process = sentences_to_text(sentences)
+
+    llmresp = await mixtralClient.generate(CustomQuestionPrompt, CustomQuestionPrompt.get_messages(text_to_process, question))
+    
+    if (llmresp is None):
+        logging.error(f"Error generating summary with verbatim for document {document_id}")
+        return None
+    
+    return llmresp.to_answer(sentences)

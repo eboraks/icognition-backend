@@ -5,11 +5,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from typing import List
 from app.models import (
+    Answer,
     Bookmark,
     Document,
     PagePayload,
     DocumentDisplay,
     HTTPError,
+    QuestionPlayload,
     SearchPayload,
     SearchResults,
     SubTopicDisplay,
@@ -72,6 +74,19 @@ async def validation_exception_handler(request, exc):
     logging.error(request)
     logging.error(exc)
     return PlainTextResponse(str(request), status_code=400)
+
+
+@app.post("/document/question", response_model=Answer, status_code=200)
+async def post_document_question(payload: QuestionPlayload):
+    try:
+        logging.info(f"Question endpoint called on {payload.document_id} with question {payload.question}")
+        answer = await app_logic.custom_question(question=payload.question, document_id=payload.document_id)
+        logging.info(f"Question endpoint called on {payload.document_id} with answer {answer.answer}")
+        return answer
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Answer generation failed")
+
 
 
 @app.post(

@@ -207,7 +207,18 @@ class ResponseWithIndex(BaseModel):
 
     answer: str
     sentences_indicies: List[int]
+    sentences_relevance_score: Optional[List[float]]
 
+class SourceSentence(BaseModel):
+    """
+    Model for source sentences.
+    """
+
+    indix: int = None
+    sentence: str = None
+    questions: set[str] = None
+    relevance_score: Optional[float] = None
+    
 
 class DocumentPromptVerbatim(DocumentPrompt):
     
@@ -217,27 +228,47 @@ class DocumentPromptVerbatim(DocumentPrompt):
     ## bulletPointsSourceLocation: Optional[List[list[int]]]
     usage: Optional[str]
 
-    def to_display(self, sentences: List[str]):
+    def to_answers(self, sentences: List[str]):
         results = {}
+        sents = {}
 
         if self.whatThisArticleIsAbout:
 
-            sents = [sentences[index] for index in self.whatThisArticleIsAbout.sentences_indicies] 
-            answer = Answer(question="What is this article about?", answer=self.whatThisArticleIsAbout.answer, sources=sents)
+            for sent_index in self.whatThisArticleIsAbout.sentences_indicies:
+                if sent_index in sents:
+                    sents[sent_index].questions.add("whatThisArticleIsAbout")
+                else:
+                    sents[sent_index] = SourceSentence(indix=sent_index, sentence=sentences[sent_index], questions={"whatThisArticleIsAbout"})
+ 
+            answer = Answer(question="What is this article about?", answer=self.whatThisArticleIsAbout.answer)
             results["whatThisArticleIsAbout"] = answer
         
         if self.learningsFromTheArticle:
-            sents = [sentences[index] for index in self.learningsFromTheArticle.sentences_indicies] 
-            answer = Answer(question="What are the learnings from this article?", answer=self.learningsFromTheArticle.answer, sources=sents)
+
+            for sent_index in self.learningsFromTheArticle.sentences_indicies:
+                if sent_index in sents:
+                    sents[sent_index].questions.add("learningsFromTheArticle")
+                else:
+                    sents[sent_index] = SourceSentence(indix=sent_index, sentence=sentences[sent_index], questions={"learningsFromTheArticle"})
+ 
+            answer = Answer(question="What are the learnings from this article?", answer=self.learningsFromTheArticle.answer)
             results["learningsFromTheArticle"] = answer
 
         if self.summaryInBulletPoints:
             points = []
             for key, point in enumerate(self.summaryInBulletPoints):
-                sents = [sentences[index] for index in point.sentences_indicies] 
-                answer = Answer(question=f"Point {key + 1}", answer=point.answer, sources=sents)
+
+                for sent_index in point.sentences_indicies:
+                    if sent_index in sents:
+                        sents[sent_index].questions.add(f"Point {key + 1}")
+                    else:
+                        sents[sent_index] = SourceSentence(indix=sent_index, sentence=sentences[sent_index], questions={f"Point {key + 1}"})
+
+                answer = Answer(question=f"Point {key + 1}", answer=point.answer)
                 points.append(answer)
             results["summaryInBulletPoints"] = points
+
+        results["source_sentences"] = sents
 
         return results
 
@@ -277,6 +308,58 @@ class DocumentPromptVerbatim(DocumentPrompt):
         Each point should have up to tweenty words. Keep a ratio of 1:2 between bullet points and paragraphs.
         
         Use the JSON format above to output your answer. Only output valid JSON format. Reduce the length of the answer to make sure the JSON is valid."""
+
+        _user_content_3_article = """Article: {BODY}""".format(BODY=body)
+
+        return [
+            {"role": "system", "content": _system_content},
+            {"role": "user", "content": _user_content_1_examples},
+            {"role": "user", "content": _user_content_2_task},
+            {"role": "user", "content": _user_content_3_article}
+        ]
+
+
+class CustomQuestionPrompt(DocumentPrompt):
+    
+    question: str
+    answer: Optional[ResponseWithIndex]
+    usage: Optional[str]
+
+    def to_answer(self, sentences: List[str]):
+        if self.answer:
+            sents = [sentences[index] for index in self.answer.sentences_indicies] 
+            return Answer(question=self.question, answer=self.answer.answer, sources=sents, relevance_score=self.answer.sentences_relevance_score)
+        return None
+
+
+    @classmethod
+    def get_messages(cls, body: str, question: str):
+        """
+        Get the list of messages for the document prompt.
+
+        Args:
+            body (str): The body of the document.
+            question (str): The question to answer.
+
+        Returns:
+            JSON Output: {{quesion: "What is the question?", answer: "The answer to the question."}}
+        """ 
+
+        _system_content = """You are a researcher task with answering questions about an article.  
+            Please ensure that your responses are socially unbiased and positive in nature.
+            If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
+            If you don't know the answer, please don't share false information."""
+
+        _user_content_1_examples = """Answers output must confirm to the this JSON format. Insure the JSON is valid. 
+            Shorten the answer to make sure the JSON is valid. Using sentences_indicies, the top 10 sentences used to answer the question. [/INST] 
+            JSON Output: {{
+                "question" : "What is the question?",
+                "answer" : {"answer": "The answer to the question.", "sentences_indicies": [1, 2, 4, 8, 9], "sentences_relevance_score": [0.9, 0.8, 0.7, 0.6, 0.5]}
+            }}"""
+
+        _user_content_2_task = """Answer the following question using the article below.
+        Only output valid JSON format. Reduce the length of the answer to make sure the JSON is valid.
+        Question: {QUESTION}""".format(QUESTION=question)
 
         _user_content_3_article = """Article: {BODY}""".format(BODY=body)
 
