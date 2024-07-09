@@ -167,6 +167,9 @@ cython_debug/
 #.idea/
 
 # Alembic stuff
-migration*/versions/
+migrations*/versions/
+migrations-local/versions/
+migrations-dev/versions/
+migrations-stg/versions/
 
 *.ipynb
