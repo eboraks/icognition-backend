@@ -357,10 +357,10 @@ async def get_document_display(id: int, response: Response):
         return document
     
 @app.get("/document/{id}/xray")
-async def get_document_summary(id: int, response: Response):
+async def get_document_summary(id: int, response: Response, force: str | None = None):
     
         try:
-            res = await app_logic.generate_xray_summary(id)
+            res = await app_logic.generate_xray_summary(id, bool(force))
             response.status_code = status.HTTP_200_OK
             return res
     

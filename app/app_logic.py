@@ -500,13 +500,14 @@ def document_key_sentences(bookmark_id: int):
     
     return key_sentences
 
-async def generate_xray_summary(document_id: int) -> dict:
+async def generate_xray_summary(document_id: int, force: bool) -> dict:
     """
     This function generates a summary with verbatim sentences
     """
     doc = getter.get_document_by_id(document_id) 
     
-    if doc.raw_answer == None:
+    ## If raw_answer is None or force is True, generate the summary
+    if doc.raw_answer == None or force == True:
 
         sentences = []
         for element in json.loads(doc.html_elements, object_hook=lambda d: SimpleNamespace(**d)):
