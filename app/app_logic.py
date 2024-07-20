@@ -22,7 +22,7 @@ from app.models import (
     SubTopic_Document_Link,
     SubTopic_Embedding_Link
 )
-from app.prompt_models import CustomQuestionPrompt, DocumentPromptOne, DocumentPromptTwo, DocumentPromptVerbatim
+from app.prompt_models import CustomQuestionPrompt, DocumentPromptTwo, DocumentPromptVerbatim
 from app.together_api_client import (
     TogetherMixtralClient,
     ApiCallException,
@@ -298,8 +298,10 @@ async def extract_info_from_doc(doc: Document, testing: bool = False):
                 logging.info(f"Response loaded from file for document {doc.id}")
         else:
 
-            summary = summarizer(doc.original_text).toStr()
-            response = await mixtralClient.generate(messages=DocumentPromptOne.get_messages(summary), model=DocumentPromptOne)
+            ## summary = summarizer(doc.original_text).toStr() Remove this on 7/15/24 when implemented Verbatim Prompt with sentences indexes
+            _sentences = summarizer(doc.original_text).toList()
+            text = doc.get_text_with_sentences_index(sentences=_sentences)
+            response = await mixtralClient.generate(messages=DocumentPromptVerbatim.get_messages(text), model=DocumentPromptVerbatim)
             ## Save response in json file
             if testing:
                 with open(filename, "wb") as f:
@@ -313,7 +315,7 @@ async def extract_info_from_doc(doc: Document, testing: bool = False):
         doc.status = "Api Failure"
         update_document(doc)
         return None
-
+ 
     except Exception as e:
         logging.error(f"Error generating with LLM {e}")
         doc.status = "Failure"
@@ -321,6 +323,9 @@ async def extract_info_from_doc(doc: Document, testing: bool = False):
         return None
 
     try:
+        ## raw_answer is the response from LLM with the support sentences.
+        raw_answer = response.to_answers(_sentences)
+        doc.raw_answer = json.dumps(raw_answer, default=pydantic_encoder)
         doc = response.populate_document(doc)
         doc.status = "Done"
         doc.update_at = datetime.datetime.now()
@@ -509,24 +514,15 @@ async def generate_xray_summary(document_id: int, force: bool) -> dict:
     ## If raw_answer is None or force is True, generate the summary
     if doc.raw_answer == None or force == True:
 
-        sentences = []
-        for element in json.loads(doc.html_elements, object_hook=lambda d: SimpleNamespace(**d)):
+        _sentences = doc.get_sentences()
 
-            if (element.element == 'p'):
-                temp = original_text_to_sentences(element.text)
-                sentences.extend(temp)
-            else:
-                sentences.append(element.text)
-        
-        text_to_process = sentences_to_text(sentences)
-
-        llmresp = await mixtralClient.generate(DocumentPromptVerbatim, DocumentPromptVerbatim.get_messages(text_to_process))
+        llmresp = await mixtralClient.generate(DocumentPromptVerbatim, DocumentPromptVerbatim.get_messages(doc.get_text_with_sentences_index(sentences=_sentences)))
         
         if (llmresp is None):
             logging.error(f"Error generating summary with verbatim for document {document_id}")
             return None
         
-        results = llmresp.to_answers(sentences)
+        results = llmresp.to_answers(_sentences)
         doc.raw_answer = json.dumps(results, default=pydantic_encoder) 
         update_document(doc)
     else:

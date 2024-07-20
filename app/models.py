@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 from sqlmodel import SQLModel, Field, Float, JSON, Integer, Relationship, String
 from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import TEXT, JSONB, ARRAY
@@ -6,6 +7,8 @@ from pgvector.sqlalchemy import Vector
 from typing import Optional, List, Dict
 from datetime import datetime
 from pydantic import BaseModel, model_serializer
+
+from app.icog_util import original_text_to_sentences, sentences_to_text
 
 class TreeNode(BaseModel):
     "Tree Node Model based on primevue Tree data filter"
@@ -212,6 +215,7 @@ class Document(SQLModel, table=True):
     site_name: str = Field(default=None, nullable=True)
     short_summary: str = Field(default=None, nullable=True)
     is_about: str = Field(default=None, nullable=True)
+    learning_from_document: str = Field(default=None, nullable=True)
     summary_bullet_points: List[str] = Field(default=[], sa_column=Column(JSON))
     raw_answer: str = Field(default=None, nullable=True)
     publication_date: datetime = Field(default=None, nullable=True)
@@ -307,7 +311,25 @@ class Document(SQLModel, table=True):
                 )
 
         return results
+    
+    def get_sentences(self): 
+        sentences = []
+        for element in json.loads(self.html_elements, object_hook=lambda d: SimpleNamespace(**d)):
 
+            if (element.element == 'p'):
+                temp = original_text_to_sentences(element.text)
+                sentences.extend(temp)
+            else:
+                sentences.append(element.text)
+
+        return sentences
+
+    def get_text_with_sentences_index(self, sentences: list[str] = None):
+
+        if sentences is None:
+            sentences = self.get_sentences()
+
+        return sentences_to_text(sentences)
 
 class PagePayload(SQLModel, table=False):
     """

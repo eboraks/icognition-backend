@@ -221,12 +221,33 @@ class SourceSentence(BaseModel):
     
 
 class DocumentPromptVerbatim(DocumentPrompt):
-    
+
+    ## Model schema that us used by the json schema
     whatThisArticleIsAbout: Optional[ResponseWithIndex]
     learningsFromTheArticle: Optional[ResponseWithIndex] 
     summaryInBulletPoints: Optional[List[ResponseWithIndex]]
-    ## bulletPointsSourceLocation: Optional[List[list[int]]]
     usage: Optional[str]
+
+
+    
+    def populate_document(self, document: Document) -> Document:
+        """
+        Populate the document with the prompt data.
+
+        Args:
+            document (Document): The document to populate.
+
+        Returns:
+            Document: The populated document.
+        """
+        document.is_about = self.whatThisArticleIsAbout.answer
+        document.learning_from_document = self.learningsFromTheArticle.answer
+        bullet_points = [re.sub(r"[1-9]{,2}\.", "", bullet_point.answer).strip() for bullet_point in self.summaryInBulletPoints]
+        document.summary_bullet_points = bullet_points
+        document.llm_service_meta = self.usage
+
+
+        return document
 
     def to_answers(self, sentences: List[str]):
         results = {}
@@ -357,7 +378,7 @@ class CustomQuestionPrompt(DocumentPrompt):
                 "answer" : {"answer": "The answer to the question.", "sentences_indicies": [1, 2, 4, 8, 9], "sentences_relevance_score": [0.9, 0.8, 0.7, 0.6, 0.5]}
             }}"""
 
-        _user_content_2_task = """Answer the following question using the article below.
+        _user_content_2_task = """Answer the following question using the article below. Keep the answer to the question short and concise.
         Only output valid JSON format. Reduce the length of the answer to make sure the JSON is valid.
         Question: {QUESTION}""".format(QUESTION=question)
 
@@ -369,6 +390,62 @@ class CustomQuestionPrompt(DocumentPrompt):
             {"role": "user", "content": _user_content_2_task},
             {"role": "user", "content": _user_content_3_article}
         ]
+
+
+class AnswerEntity(BaseModel):
+    """
+    Model for answer entities.
+    """
+
+    name: str
+    type: str
+    description: str
+    synonymEntities: List[str]
+
+
+class IdentifySynonymEntitiesPrompt(BaseModel):
+
+    sameEntities: List[AnswerEntity]
+    entityName: str
+
+    @classmethod
+    def get_messages(cls, entities: List[Entity]):
+        """
+        Get the prompt message for the identify synonym entities task.
+
+        Args:
+            list of entities: The list of entities to identify synonyms for.
+
+        Returns:
+            list[AnswerEntity]: The list of synonym entities.
+        """ 
+
+        _entities = list(dict)
+        for entity in entities:
+            _entities.append({"name": entity.name, "type": entity.type, "description": entity.description})
+
+        _system_content = """You are a language expert task with identifying entities that are the same, or very similar in meaning.  
+            Please ensure that your responses are socially unbiased and positive in nature.
+            If entities are not similar, don't inlcude them in the answer."""
+
+        _user_content_1_examples = """Answers output must confirm to the this JSON format. Insure the JSON is valid. Shorten the answer to make sure the JSON is valid. [/INST] 
+            JSON Output: [{
+                "name" : "Artificial Intelligence",
+                "type" : "technology",
+                "description" : "The branch of computer science that deal with writing computer programs that can solve problems creatively",
+                "synonymEntities" : ["AI", "AI Tech", "Deep Learning"]
+            }]"""
+
+        _user_content_2_task = """Identify the synonyms for the entity provided. Use the examples above to identify the synonyms for the entity. 
+        Only output valid JSON format. Reduce the length of the answer to make sure the JSON is valid. Entities: {ENTITIES}""".format(ENTITIES=_entities)
+
+        return [
+            {"role": "system", "content": _system_content},
+            {"role": "user", "content": _user_content_1_examples},
+            {"role": "user", "content": _user_content_2_task}
+        ]
+
+
 
 class SubTopicPrompt(BaseModel):
     """

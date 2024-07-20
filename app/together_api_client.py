@@ -1,3 +1,4 @@
+import asyncio
 import os
 import logging
 import sys
@@ -68,17 +69,19 @@ class TogetherMixtralClient:
     async def getClientSession(self) -> aiohttp.ClientSession:
         
         if self._client_session is None:
+            _timeout = aiohttp.ClientTimeout(total=15)
             self._client_session = aiohttp.ClientSession(
             headers={
                 "Authorization": f"Bearer {self._api_token}",
                 "content-type": "application/json",
                 "accept": "application/json",
                 "User-Agent": "Icognition App",
-            }
+            },
+            timeout=_timeout,
         )
         return self._client_session
 
-    async def api_call(self, payload) -> dict:
+    async def api_call(self, payload, attempts = 3) -> dict:
         API_URL = self._api_url
         await self.getClientSession()
         try:
@@ -92,6 +95,15 @@ class TogetherMixtralClient:
                         message= f"Error during API call. Status code: {status}. Reason: {res.reason}",
                         response={"status": status, "reason": res.reason}
                         )
+        except asyncio.exceptions.TimeoutError as e:
+            logging.error(f"Timeout calling API: {e}")
+
+            if (attempts > 0):
+                logging.info(f"Retrying API call. Attempts left: {attempts}")
+                return await self.api_call(payload, attempts - 1)
+            else:
+                raise ApiCallException("Timeout during API call", {"error": str(e)})
+
         except Exception as e:
             logging.error(f"Error calling API: {e}")
             raise ApiCallException("Error during API call", {"error": str(e)})
