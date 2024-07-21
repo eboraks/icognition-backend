@@ -97,12 +97,11 @@ def test_get_document():
         assert ent.name != None
         assert ent.type != None
 
-
 def test_insert_entities():
     
-    doc = getter.get_document_by_id(127)
+    doc = getter.get_document_by_id(65)
     
-
+    user_id = 'HqAXhad3jrUWmPibnMf1xZczNIq2'
     entities_one = [
         Entity(name="Larry David", description="Comedian, writer, actor, and television producer", type="person"),
         Entity(name="Jerry Seinfeld", description="Comedian, actor, and writer", type="person"),
@@ -129,9 +128,9 @@ def test_insert_entities():
     existing_entities = getter.get_entities_by_document_id(doc.id)
     num_existing_entities = len(existing_entities)
 
-    app_logic.insert_entities(entities_one, doc)
+    app_logic.insert_entities(user_id, entities_one, doc)
 
-    app_logic.insert_entities(entities_two, doc)
+    app_logic.insert_entities(user_id, entities_two, doc)
 
     entities = getter.get_entities_by_document_id(doc.id)
     assert len(entities) == num_existing_entities + 5

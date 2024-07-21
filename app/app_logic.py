@@ -220,13 +220,27 @@ def reassociate_bookmark_with_document(old_document_id, new_document_id):
         )
         return bookmark
 
-def insert_entities(entities: list[Entity], doc: Document = None) -> None:
+def generate_entities_vectors():
+    with Session(engine) as session:
+        entities = session.scalars(select(Entity).where(Entity.name_vector == None)).all()
 
+        for entity in entities:
+            
+            entity.name_vector = transformers_util.generate_embeddings(entity.name)
+            session.add(entity)
+        
+        session.commit()
+        logging.info(f"Vector names for {len(entities)} entities were generated")
+
+
+def insert_entities(user_id, entities: list[Entity], doc: Document) -> None:
+
+    generate_entities_vectors()
     
     session_entities = []
     for entity in entities:
         ## Safe insert, return existing entity if it already exists or the new one
-        session_entities.append(insert_entity_safe(entity))
+        session_entities.append(insert_entity_safe(user_id, entity))
     
     with Session(engine) as session:
         for entity in session_entities:
@@ -237,28 +251,17 @@ def insert_entities(entities: list[Entity], doc: Document = None) -> None:
         logging.info(f"{len(entities)} Entities for Document {doc.id} were associated")
 
 
-def  insert_entity_safe(new_entity: Entity) -> Entity: 
+def insert_entity_safe(user_id: str, new_entity: Entity) -> Entity: 
+    
+
+    needle_vector = transformers_util.generate_embeddings(new_entity.name)
+    matched = getter.get_similar_entity_by_name_vector(user_id=user_id, vector=needle_vector)
+    
     with Session(engine) as session:
-
-        ## If the entity name is <=5 characters, reduce the levenshtein distance to 1
-        if len(new_entity.name) <= 2:
-            distance = 0
-        elif len(new_entity.name) <= 5:
-            distance = 1
-        else:
-            distance = 2
-
-        query = text("""
-            SELECT e.id
-                FROM entity e 
-                WHERE (levenshtein_less_equal(LOWER(e.name), LOWER(:search), :dist) <=:dist)
-                LIMIT 1
-            """).bindparams(search=new_entity.name, dist=distance)
         
-        exist_entity = session.execute(query).scalar_one_or_none()
-        if exist_entity:
-            logging.info(f"Entity {new_entity.name} already exists")
-            ent = session.scalar(select(Entity).where(Entity.id == exist_entity))
+        if matched:
+            logging.info(f"Entity {new_entity.name} already exists, adding synonyms to it.")
+            ent = session.scalar(select(Entity).where(Entity.id == matched["entity_id"]))
             
             if ent.descriptions_bank == None:   
                 ent.descriptions_bank = f"{new_entity.description}"
@@ -271,6 +274,7 @@ def  insert_entity_safe(new_entity: Entity) -> Entity:
             session.refresh(ent)
             return ent
         else:
+            new_entity.name_vector = needle_vector
             session.add(new_entity)
             session.commit()
             session.refresh(new_entity)
@@ -278,7 +282,7 @@ def  insert_entity_safe(new_entity: Entity) -> Entity:
 
 
 
-async def extract_info_from_doc(doc: Document, testing: bool = False):
+async def extract_info_from_doc(user_id: str, doc: Document, testing: bool = False):
     """
     Function that takes pages and return a document with the generated summary,
     bullet points and entities generate by LLM
@@ -362,7 +366,7 @@ async def extract_info_from_doc(doc: Document, testing: bool = False):
         # Using DocumentPromptTwo generate entities methods to create entities    
         entities = response.generate_entities()
 
-        insert_entities(entities, doc)
+        insert_entities(user_id, entities, doc)
 
         return doc # to indicate process completed.   
 

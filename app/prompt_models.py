@@ -110,7 +110,7 @@ class DocumentPromptTwo(DocumentPrompt):
             ]}"""
 
         _user_content_2_task = """Use the examples above to identify the ten most important entities and topic 
-            mentioned in the article. Include short description of each. Deduplicate entities and topics using the name field. 
+            mentioned in the article. Include general concise description that isn't specific for this article. Deduplicate entities and topics using the name field. 
             Here are some examples of entities and topics types:  
                 entities: (companies, people, location, event, products....), 
                 topics: (marketing, politics, business strategy)

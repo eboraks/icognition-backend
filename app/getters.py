@@ -111,6 +111,38 @@ def get_entities_by_ids(entity_ids: set[int]) -> list[Entity]:
 
     return entities   
 
+def get_similar_entity_by_name_vector(user_id: str, vector, threshold: float = 0.78) -> Entity:
+    
+    with Session(engine) as session:
+        query = text(
+            """SELECT a.entity_id, a.cosine_similarity
+                FROM (SELECT e.id AS entity_id, MAX(1 - (e.name_vector <=> :vector)) AS cosine_similarity 
+                        FROM entity AS e
+                        JOIN document_entity_link del ON del.entity_id = e.id
+                        JOIN bookmark b ON b.document_id = del.document_id
+                        WHERE b.user_id = :user_id
+                        GROUP BY 1) a
+            WHERE a.cosine_similarity >= :threshold
+            ORDER BY a.cosine_similarity DESC
+            LIMIT 1"""
+        )
+        result = session.execute(query, {
+            'vector':  str(vector.tolist()),
+            'user_id': user_id,
+            'threshold': threshold
+        }).all()
+
+        if len(result) > 0:
+            entity_id = result[0][0]
+            cosine_similarity = result[0][1]
+            return {"entity_id": entity_id, "cosine_similarity": cosine_similarity}
+            
+        return None
+
+    
+
+
+
 
 def get_bookmarks_by_user_id(user_id: str) -> list[Bookmark]:
     session = Session(engine)

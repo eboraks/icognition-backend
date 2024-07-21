@@ -169,6 +169,7 @@ cython_debug/
 # Alembic stuff
 migrations*/versions/
 migrations-local/versions/
+migrations-local/bu_version/
 migrations-dev/versions/
 migrations-stg/versions/
 

@@ -138,6 +138,7 @@ class Entity(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     version: int = Field(default=1, nullable=True)
     name: str = Field(default=None, nullable=True)
+    name_vector: List[float] | None = Field(sa_column=Column(Vector(384)))
     description: str = Field(default=None, nullable=True)
     descriptions_bank: Optional[str] = Field(default=None)
     source: str = Field(default=None, nullable=True)
@@ -145,6 +146,7 @@ class Entity(SQLModel, table=True):
     wikidata_id: str = Field(default=None, nullable=True)
     score: Optional[float] = Field(default=None, nullable=True)
     update_at: datetime = Field(default=datetime.now(), nullable=True)
+    synonyms: List[str] = Field(default=[], sa_column=Column(JSON))
 
     ## Many to Many relationships between entities documents
     documents: list["Document"] = Relationship(back_populates="entities", link_model=Document_Entity_Link)
