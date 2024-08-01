@@ -445,12 +445,6 @@ Why I used Pydantic instead of SQLModel? Good question, in my testing I was not 
 
 
 
-class IdentifyEntity(BaseModel):
-    name: Optional[str]
-    type: Optional[str]
-    description: Optional[str]
-
-
 class EntityDisplay(BaseModel):
     id: Optional[int]
     name: Optional[str]
