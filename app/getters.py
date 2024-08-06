@@ -1,5 +1,5 @@
 from app.db_connector import get_engine
-from app.models import Bookmark, Document, Document_Entity_Link, DocumentDisplay, Entity, SubTopic, SubTopic_Document_Link, SubTopic_Embedding_Link, Embedding, SubTopic_Entity_Link, SubTopicDisplay, TreeNode
+from app.models import Bookmark, Document, Document_Entity_Link, DocumentDisplay, Entity, Question_Answer, SubTopic, SubTopic_Document_Link, SubTopic_Embedding_Link, Embedding, SubTopic_Entity_Link, SubTopicDisplay, TreeNode
 from sqlalchemy.orm import Session
 from sqlalchemy import (
     and_,
@@ -95,10 +95,18 @@ def get_documents_ids() -> list[int]:
 def get_entities_by_document_id(document_id) -> Entity:
     session = Session(engine)
     entities = session.scalars(
-        select(Entity).where(Entity.document_id == document_id)
+        select(Entity).join(Document_Entity_Link, Document_Entity_Link.entity_id == Entity.id).where(Document_Entity_Link.document_id == document_id)
     ).all()
     session.close()
     return entities
+
+def get_entities_ids_by_document_id(document_id) -> list[int]:
+    session = Session(engine)
+    entities_ids = session.scalars(
+        select(Document_Entity_Link.entity_id).where(Document_Entity_Link.document_id == document_id)
+    ).all()
+    session.close()
+    return entities_ids
 
 def get_entities_by_ids(entity_ids: set[int]) -> list[Entity]:
     """Method that retrieves entities from the database by ID.
@@ -140,7 +148,11 @@ def get_similar_entity_by_name_vector(user_id: str, vector, threshold: float = 0
         return None
 
     
-
+def get_question_answer_by_document_id(document_id: int) -> list[Question_Answer]:
+    session = Session(engine)
+    qas = session.scalars(select(Question_Answer).where(Question_Answer.document_id == document_id)).all()
+    session.close()
+    return qas
 
 
 

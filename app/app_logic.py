@@ -19,14 +19,12 @@ from app.models import (
     PagePayload,
     Embedding,
     Document_Entity_Link,
+    Question_Answer,
     SubTopic_Document_Link,
     SubTopic_Embedding_Link
 )
 from app.prompt_models import CustomQuestionPrompt, DocumentPromptTwo, DocumentPromptVerbatim
-from app.together_api_client import (
-    TogetherMixtralClient,
-    ApiCallException,
-)
+from app.genimi_client import generate_response
 from sqlalchemy import (
     select,
     delete,
@@ -36,6 +34,8 @@ from sqlalchemy import (
     exc,
 )
 from sqlalchemy.orm import Session
+
+from app.gemini_prompts_models import AskQuestionPrompt, EntitiesPrompt, FoundQuestionAnswer, IdentifyQuestionsAnswerPrompt, SummarizePrompt, TopicPrompt
 
 logging.basicConfig(
     stream=sys.stdout,
@@ -47,9 +47,6 @@ logging.basicConfig(
 env_vers = os.environ
 
 engine = get_engine()
-
-mixtralClient = TogetherMixtralClient()
-summarizer = DocSummarizer()
 
 doc_counter_for_subtopics = 0
 
@@ -233,23 +230,31 @@ def generate_entities_vectors():
         logging.info(f"Vector names for {len(entities)} entities were generated")
 
 
-def insert_entities(user_id, entities: list[Entity], doc: Document) -> None:
+def insert_entities(user_id, entities: list[Entity], doc: Document) -> bool:
 
     generate_entities_vectors()
     
-    session_entities = []
-    for entity in entities:
-        ## Safe insert, return existing entity if it already exists or the new one
-        session_entities.append(insert_entity_safe(user_id, entity))
-    
-    with Session(engine) as session:
-        for entity in session_entities:
-            session.merge(Document_Entity_Link(document_id=doc.id, entity_id=entity.id))
-        session.commit()
-       
+    try:
+        session_entities = []
+        for entity in entities:
+            ## Safe insert, return existing entity if it already exists or the new one
+            session_entities.append(insert_entity_safe(user_id, entity))
+        
+        with Session(engine) as session:
+            for entity in session_entities:
+                session.merge(Document_Entity_Link(document_id=doc.id, entity_id=entity.id))
+            session.commit()
         
         logging.info(f"{len(entities)} Entities for Document {doc.id} were associated")
 
+        return True
+    except Exception as e:
+        logging.error(f"Error inserting entities {e}")
+        return False   
+        
+    
+
+       
 
 def insert_entity_safe(user_id: str, new_entity: Entity) -> Entity: 
     
@@ -282,7 +287,7 @@ def insert_entity_safe(user_id: str, new_entity: Entity) -> Entity:
 
 
 
-async def extract_info_from_doc(user_id: str, doc: Document, testing: bool = False):
+async def generate_summary(doc: Document, testing: bool = False) -> Document:
     """
     Function that takes pages and return a document with the generated summary,
     bullet points and entities generate by LLM
@@ -302,10 +307,9 @@ async def extract_info_from_doc(user_id: str, doc: Document, testing: bool = Fal
                 logging.info(f"Response loaded from file for document {doc.id}")
         else:
 
-            ## summary = summarizer(doc.original_text).toStr() Remove this on 7/15/24 when implemented Verbatim Prompt with sentences indexes
-            _sentences = summarizer(doc.original_text).toList()
-            text = doc.get_text_with_sentences_index(sentences=_sentences)
-            response = await mixtralClient.generate(messages=DocumentPromptVerbatim.get_messages(text), model=DocumentPromptVerbatim)
+            response = await generate_response(
+                SummarizePrompt.build_prompt(doc.original_text), 
+                SummarizePrompt)
             ## Save response in json file
             if testing:
                 with open(filename, "wb") as f:
@@ -313,13 +317,6 @@ async def extract_info_from_doc(user_id: str, doc: Document, testing: bool = Fal
 
         logging.info(f"Response from LLM {response}")
 
-    except ApiCallException as e:
-        logging.error(f"Error generating answer with LLM API {e}")
-        ## TODO store exception in DB
-        doc.status = "Api Failure"
-        update_document(doc)
-        return None
- 
     except Exception as e:
         logging.error(f"Error generating with LLM {e}")
         doc.status = "Failure"
@@ -328,21 +325,30 @@ async def extract_info_from_doc(user_id: str, doc: Document, testing: bool = Fal
 
     try:
         ## raw_answer is the response from LLM with the support sentences.
-        raw_answer = response.to_answers(_sentences)
-        doc.raw_answer = json.dumps(raw_answer, default=pydantic_encoder)
         doc = response.populate_document(doc)
         doc.status = "Done"
         doc.update_at = datetime.datetime.now()
         update_document(doc)
         logging.info(f"Document {doc.id} was updated with summary and bullet points")
+        return doc
 
     except Exception as e:
         doc.status = "Failure"
         logging.error(f"Error generating with LLM {e}")
         update_document(doc)
+        return None
 
 
-    # Generate entities
+
+async def generate_entities(user_id: str, doc: Document, testing: bool = False) -> bool:
+    """
+    Generate entities for a document
+
+    args:
+        user_id: str
+        doc: Document
+        testing: bool
+    """
     try:
         logging.info(f"Generating entities for document {doc.id}")
         
@@ -353,35 +359,85 @@ async def extract_info_from_doc(user_id: str, doc: Document, testing: bool = Fal
                 response = pickle.load(f)
                 logging.info(f"Response loaded from file for document {doc.id}")
         else:
-            summary = summarizer(doc.original_text).toStr()
-            response = await mixtralClient.generate(
-                messages=DocumentPromptTwo.get_messages(summary), 
-                model=DocumentPromptTwo)
+            response = await generate_response(
+                EntitiesPrompt.build_prompt(doc.original_text), 
+                EntitiesPrompt)
             logging.info(f"Response from LLM {response}")
             
             if testing:
                 with open(filename, "wb") as f:
                     pickle.dump(response, f)
 
-        # Using DocumentPromptTwo generate entities methods to create entities    
-        entities = response.generate_entities()
+        # Using the entities builder to get the entities from the response    
+        entities = response.entities_builder()
 
-        insert_entities(user_id, entities, doc)
-
-        return doc # to indicate process completed.   
-
-    except ApiCallException as e:
-        logging.error(f"Error generating entities with LLM {e}")
-        ## TODO store exception in DB
-        #doc.status = "Api Failure"
-        #update_document(doc)
-        return
+        results = insert_entities(user_id, entities, doc)  
+        return results
 
     except Exception as e:
         logging.error(f"Error generating entities from LLM API {e}")
-        #doc.status = "Failure"
-        #update_document(doc)
-        return
+        return False
+
+
+async def generate_topics(user_id: str, doc: Document, testing: bool = False) -> bool:
+    """
+    # Generate topics for a document
+    """
+    try:
+        logging.info(f"Generating entities for document {doc.id}")
+        
+        ## If file exists, load it and return payload
+        filename = f"response_two_{doc.id}.json"
+        if os.path.exists(filename):
+            with open(filename, "rb") as f:
+                response = pickle.load(f)
+                logging.info(f"Response loaded from file for document {doc.id}")
+        else:
+            response = await generate_response(
+                TopicPrompt.build_prompt(doc.original_text), 
+                TopicPrompt)
+            logging.info(f"Response from LLM {response}")
+            
+            if testing:
+                with open(filename, "wb") as f:
+                    pickle.dump(response, f)
+
+        # Using the entities builder to get the topics (also entities) from the response
+        entities = response.entities_builder()
+
+        results = insert_entities(user_id, entities, doc)  
+        return results
+
+    except Exception as e:
+        logging.error(f"Error generating entities from LLM API {e}")
+        return False
+
+
+async def generate_doc_quesions_answers(user_id: str, doc: Document, testing: bool = False) -> bool:
+
+    try:
+        logging.info(f"Generating questions and answers for document {doc.id}")
+        
+        ## If file exists, load it and return payload
+        prompt = IdentifyQuestionsAnswerPrompt.build_prompt(doc.original_text)
+        response = await generate_response(prompt, IdentifyQuestionsAnswerPrompt)
+        ## Using the entities builder to get the entities from the response    
+        qans = response.questions_answers_builder(document_id = doc.id)
+ 
+
+    except Exception as e:
+        logging.error(f"Error generating entities from LLM API {e}")
+
+
+    try:
+        with Session(engine) as session:
+            session.add_all(qans)
+            session.commit()
+        return True
+    except Exception as e:
+        logging.error(f"Error saving questions and answers {e}")
+
+        return False
 
 
 
@@ -484,82 +540,16 @@ def update_entity_embedding(entity: Entity):
         logging.info(f"Embedding for entity {entity.id} was updated")
 
 
-def document_key_sentences(bookmark_id: int):
-    """
-    This function returns the key sentences of a document
-    """
-    with Session(engine) as session:
-        doc = session.scalar(select(Document).join(Bookmark, Bookmark.document_id == Document.id).where(Bookmark.id == bookmark_id))
-        if doc is None:
-            logging.error(f"Document for bookmark ID {bookmark_id} not found")
-            raise ValueError(f"Document for bookmark ID {bookmark_id} not found")
 
-        if doc.original_text == None:
-            logging.error(f"Document for bookmark ID {bookmark_id} has no text")
-            raise ValueError(f"Document for bookmark ID {bookmark_id} has no text")
-        
-        summary = summarizer(doc.original_text).toStr()
-    
-    sentences = original_text_to_sentences(doc.original_text)
 
-    key_sentences = []
-    for sentence in sentences:
-        if sentence in summary:
-            key_sentences.append(sentence)
-    
-    return key_sentences
 
-async def generate_xray_summary(document_id: int, force: bool) -> dict:
+async def custom_question(document_id: int, question: str) -> list[FoundQuestionAnswer]:
     """
     This function generates a summary with verbatim sentences
     """
     doc = getter.get_document_by_id(document_id) 
     
-    ## If raw_answer is None or force is True, generate the summary
-    if doc.raw_answer == None or force == True:
-
-        _sentences = doc.get_sentences()
-
-        llmresp = await mixtralClient.generate(DocumentPromptVerbatim, DocumentPromptVerbatim.get_messages(doc.get_text_with_sentences_index(sentences=_sentences)))
-        
-        if (llmresp is None):
-            logging.error(f"Error generating summary with verbatim for document {document_id}")
-            return None
-        
-        results = llmresp.to_answers(_sentences)
-        doc.raw_answer = json.dumps(results, default=pydantic_encoder) 
-        update_document(doc)
-    else:
-        results = json.loads(doc.raw_answer)
-
-    docDisplay = getter.get_document_display_by_id(document_id)
+    prompt = AskQuestionPrompt.build_prompt([doc], question)
+    generated_response = await generate_response(prompt, AskQuestionPrompt)
     
-    return {"results": results, "doc": docDisplay}
-
-
-
-
-async def custom_question(document_id: int, question: str) -> dict:
-    """
-    This function generates a summary with verbatim sentences
-    """
-    doc = getter.get_document_by_id(document_id) 
-    
-    sentences = []
-    for element in json.loads(doc.html_elements, object_hook=lambda d: SimpleNamespace(**d)):
-
-        if (element.element == 'p'):
-            temp = original_text_to_sentences(element.text)
-            sentences.extend(temp)
-        else:
-            sentences.append(element.text)
-    
-    text_to_process = sentences_to_text(sentences)
-
-    llmresp = await mixtralClient.generate(CustomQuestionPrompt, CustomQuestionPrompt.get_messages(text_to_process, question))
-    
-    if (llmresp is None):
-        logging.error(f"Error generating summary with verbatim for document {document_id}")
-        return None
-    
-    return llmresp.to_answer(sentences)
+    return generated_response.questions_answers

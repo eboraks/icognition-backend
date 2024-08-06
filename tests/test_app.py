@@ -1,12 +1,14 @@
 from app.db_connector import get_engine
 import app.app_logic as app_logic
 import app.getters as getter
+import app.deleters as deleter
 import app.main as main
 from sqlalchemy.orm import Session
 from sqlalchemy import delete, select
 import pytest
 
-from app.models import Document_Entity_Link, Entity 
+from app.models import Document_Entity_Link, Entity
+from app.gemini_prompts_models import Citation 
 
 
 user_id = 'yU13Hk9BwEQiREgh91YM6EFKR7M2'
@@ -42,7 +44,7 @@ async def test_bookmark_page():
 
     # store the docuement id for future method
     document_id = doc.id
-    app_logic.extract_info_from_doc(doc)
+    app_logic.generate_summary(doc)
 
     # Testing the retrivel of document from the database
     doc = None
@@ -52,38 +54,96 @@ async def test_bookmark_page():
     assert doc != None
 
 @pytest.mark.asyncio
-async def test_information_extration():
+async def test_summary_extration():
+
+
+    deleter.reset_document_for_testing(130)
+
     tdoc = getter.get_document_by_id(130)
     assert tdoc != None
 
-    await app_logic.extract_info_from_doc(doc = tdoc, testing=True)
+    assert tdoc.is_about is None
+    assert tdoc.learning_from_document is None
+    assert tdoc.summary_bullet_points is None
+    assert tdoc.summary_citations is None
+
+    tdoc = await app_logic.generate_summary(doc = tdoc)
 
     # Testing the LLM extraction worked
     with Session(engine) as session:
         session.add(tdoc)
         session.refresh(tdoc)
         assert len(tdoc.summary_bullet_points) > 0
-        assert len(tdoc.entities) > 0
+        assert tdoc.is_about != None
+        assert tdoc.learning_from_document != None
+        assert len(tdoc.summary_citations) > 0
 
-    await app_logic.generate_embeddings(user_id=user_id)
 
-    # Testing the embeddings were generated
-    doc_embeddings = getter.get_document_embeddings(tdoc.id)
-    assert len(doc_embeddings) > 0
-    for emb in doc_embeddings:
-        assert len(emb.vector) > 0
-        assert emb.field != None
-        assert emb.text != None
+    start_match_counter = []
+    end_match_counter = []
+    for c in tdoc.summary_citations:
+        
+        citation = Citation(**c)
+        assert citation.start_str != None
+        assert citation.end_str != None
+        start_match_counter.append(tdoc.original_text.find(citation.start_str))
+        end_match_counter.append(tdoc.original_text.find(citation.end_str))
 
-    for ent in tdoc.entities:
+    start_mismatches = len([x for x in start_match_counter if x == -1])
+    end_mismatches = len([x for x in end_match_counter if x == -1])
+    assert (start_mismatches / len(start_match_counter)) < 0.1
+    assert (end_mismatches / len(end_match_counter)) < 0.1
+    
+    
+@pytest.mark.asyncio
+async def test_entitties_extraction():
+    
+    deleter.reset_document_for_testing(27)
+
+    tdoc = getter.get_document_by_id(27)
+    user_id = getter.get_bookmark_by_document_id(tdoc.id).user_id
+    entities = getter.get_entities_ids_by_document_id(tdoc.id)
+    assert tdoc != None
+
+    assert len(entities) == 0
+
+    ent_success = await app_logic.generate_entities(user_id= user_id, doc = tdoc)
+    topic_success = await app_logic.generate_topics(user_id= user_id, doc = tdoc)
+
+    assert ent_success is not None
+    
+    entities = getter.get_entities_by_document_id(tdoc.id)
+
+    assert len(entities) > 0
+    assert ent_success == True
+
+    for ent in entities:
         assert ent.id != None
-        ent_embeddings = getter.get_entity_embeddings(ent.id)
-        for ent_emb in ent_embeddings:
-            assert len(ent_emb.vector) > 0
-            assert ent_emb.field != None
-            assert ent_emb.text != None
+        assert ent.name != None
+        assert ent.type != None
     
+    topic_entities = [ent for ent in entities if ent.type == "topic"]
+    assert len(topic_entities) > 0
+    assert topic_success == True
+
+
+@pytest.mark.asyncio
+async def test_identify_questions_and_answers():
     
+    document_id = 27
+    deleter.delete_question_and_answer_associated_with_document(document_id)
+
+    tdoc = getter.get_document_by_id(document_id)
+    user_id = getter.get_bookmark_by_document_id(tdoc.id).user_id
+
+    success = await app_logic.generate_doc_quesions_answers(user_id= user_id, doc = tdoc)
+
+    qans = getter.get_question_answer_by_document_id(document_id)
+
+    assert success == True
+    assert len(qans) > 0
+
+
 
 def test_get_document():
     doc = getter.get_document_by_id(130)

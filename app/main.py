@@ -192,10 +192,24 @@ async def generate_document(bookmark: Bookmark):
 
     if document.status in ["Pending", "Done", "Failure"]:
         logging.info(f"Background task for document ID: {bookmark.document_id}")
-        await app_logic.extract_info_from_doc(bookmark.user_id, document)
+        await app_logic.generate_summary(doc= document)
         await app_logic.generate_embeddings(bookmark.user_id)
-        ## aawait subtopics_util.subtopics_factory(_user_id = bookmark.user_id)
         logging.info(f"Background task for document ID: {bookmark.document_id} completed")
+
+    
+    if len(getter.get_entities_ids_by_document_id(document.id)) == 0:
+        ent_success = await app_logic.generate_entities(user_id= bookmark.user_id, doc = document)
+        topic_success = await app_logic.generate_topics(user_id= bookmark.user_id, doc = document)
+        logging.info(f"Background task for generating entities and topics for: {document.id} completed. Result, entities: {ent_success} topic: {topic_success}")
+        await app_logic.generate_embeddings(bookmark.user_id)
+
+
+    if len(getter.get_question_answer_by_document_id(document.id)) == 0:
+        success = await app_logic.generate_doc_quesions_answers(user_id= bookmark.user_id, doc = document)
+        logging.info(f"Background task for generating questions and answers for: {document.id} completed. Result, {success}")
+        ## For now, we are not generating embeddings for questions and answers
+
+
 
 
 ## Background task to regenerate summaries from LLM if not already exists
@@ -203,7 +217,7 @@ async def regenerate_document(doc: Document):
 
     if doc.status in ["Pending", "Done", "Failure"]:
 
-        new_doc = await app_logic.extract_info_from_doc(doc)
+        new_doc = await app_logic.generate_summary(doc)
         if new_doc:
             logging.info(f"Background task for document ID: {new_doc.id} completed")
         else:

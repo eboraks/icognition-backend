@@ -131,6 +131,8 @@ class Document_Entity_Link(SQLModel, table=True):
     document_id: Optional[int] = Field(default=None, foreign_key="document.id", primary_key=True)
     entity_id: Optional[int] = Field(default=None, foreign_key="entity.id", primary_key=True)
 
+
+
 class Entity(SQLModel, table=True):
     """
     Represents an entity with its ID, document ID, name, description, source, type, Wikidata ID, and score.
@@ -219,6 +221,7 @@ class Document(SQLModel, table=True):
     is_about: str = Field(default=None, nullable=True)
     learning_from_document: str = Field(default=None, nullable=True)
     summary_bullet_points: List[str] = Field(default=[], sa_column=Column(JSON))
+    summary_citations: List[str] = Field(default=[], sa_column=Column(JSON))
     raw_answer: str = Field(default=None, nullable=True)
     publication_date: datetime = Field(default=None, nullable=True)
     update_at: datetime = Field(default_factory=datetime.now, nullable=True)
@@ -227,6 +230,7 @@ class Document(SQLModel, table=True):
 
     ## Many to Many relationships between documents and entities
     entities: list["Entity"] = Relationship(back_populates="documents", link_model=Document_Entity_Link)
+    qans: list["Question_Answer"] = Relationship(back_populates="document")
     subtopics: list["SubTopic"] = Relationship(back_populates="documents", link_model=SubTopic_Document_Link)
 
     def to_display(self, cosine_similarity: float = None) -> "DocumentDisplay": 
@@ -332,6 +336,29 @@ class Document(SQLModel, table=True):
             sentences = self.get_sentences()
 
         return sentences_to_text(sentences)
+
+
+
+
+class Question_Answer(SQLModel, table=True):
+    """
+    Represents a question answer with its ID, question, answer, and document ID.
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    question: str = Field(default=None, nullable=True)
+    answer: str = Field(default=None, nullable=True)
+    citations: List[str] = Field(default=[], sa_column=Column(JSON))
+    question_vector: List[float] = Field(sa_column=Column(Vector(384)))
+
+    document_id: Optional[int] = Field(default=None, foreign_key="document.id")
+    document: Document = Relationship(back_populates="qans")
+    
+
+
+### 
+###  The following classes are used to define the FastAPI payload and response models
+###
 
 class PagePayload(SQLModel, table=False):
     """

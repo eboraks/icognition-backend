@@ -1,7 +1,9 @@
-import re
+import json
 from pydantic import BaseModel
 
-from app.models import Answer, Document, Entity
+from app.models import Answer, Document, Entity, Question_Answer
+import app.transformers_util as transformers_util
+
 
 
 ## Models to be used in the Gemini API responses
@@ -19,7 +21,7 @@ class FoundEntity(BaseModel):
     type: str
     description: str
 
-class QuestionAnswer(BaseModel):
+class FoundQuestionAnswer(BaseModel):
     question: str
     answer: str
     citiation: list[Citation]
@@ -52,7 +54,7 @@ class SummarizePrompt(BaseModel):
         return """You are a researcher tasked with summarizing the article into what the article is about, key learnings, and critical points. 
         Please ensure that your responses are socially unbiased and positive in nature. If the ask does not make any sense, or is not factually coherent, 
         or you don't know the answer explain why. Please don't share false information. 
-        Use the meta_answer field to indicate if you were able to complete the task, or explanation why not. 
+        Use the meta_answer field to indicate if you were able to complete the task by writing "SUCCESS", or explanation why not  
         Ensure you include citations of the most essential sentences/text you relied on to answer the questions. 
         To reduce the number of tokens in the response, use the begging and end of the string to reference the citation. 
         Article: {BODY}""".format(BODY=text)
@@ -70,6 +72,7 @@ class SummarizePrompt(BaseModel):
         document.is_about = self.what_this_article_is_about
         document.learning_from_document = self.key_learning_from_article
         document.summary_bullet_points = self.key_points
+        document.summary_citations = [c.__dict__ for c in self.citations_sentances]
 
         return document
 
@@ -96,18 +99,80 @@ class EntitiesPrompt(BaseModel):
             str: The prompt for the summarize task.
         """
         # Prompt for summarizing an article
-        return """You are a researcher tasked with identifying entities (such as people, companies, locations, events, etc.) 
-        and topics (such as politics, economy, finance, technology, etc.) mentioned in an article. Please ensure that your responses are socially unbiased and positive in nature.
-            If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
-            If you don't know the answer, please don't share false information. 
+        return """You are a researcher tasked with identifying the most relevent entities (such as people, products, companies, locations, events, etc.) 
+        to the article subjects. Try to focus on the most important entities. Include the name, type, and description of each entity or topic. 
+        Merge entities with name variation for example Voter and Voters, or Anti-Woke and anti-wokeness. Deduplicates entities on name and do not include irrelevant entities.
+        Response most be valid JSON. Ensure that your responses are socially unbiased and positive in nature.
+        If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
+        If you don't know the answer, please don't share false information. 
         Article: {BODY}""".format(BODY=text)
+    
+
+    def entities_builder(self) -> list[Entity]:
+        """
+        Build the SQLModel Entities from the LLM results
+
+        Returns:
+            list[Entity]: The populated entities.
+        """
+        entities = []
+        temps = [Entity(**entity.model_dump()) for entity in self.entities]
+        for temp in temps:
+            ## temp.name doesn't alreasy exist in entities entity.name
+            if temp.name not in [entity.name for entity in entities]:
+                entities.append(temp)
+
+        return entities
+
+
+class TopicPrompt(BaseModel):
+    """
+    Prompt model for extracting entities from an article
+    """
+
+    topics: list[FoundEntity]
 
     
+    @classmethod
+    def build_prompt(cls, text: str):
+        """
+        Build the prompt extracting topics from article.
+
+        Args:
+            text (str): The text of the document/article.
+
+        Returns:
+            str: The prompt for the summarize task.
+        """
+        # Prompt for summarizing an article
+        return """You are a researcher tasked with identifying the most relevent topic (such as Politics, Finance, Economy, Religion, etc.) 
+        to the article subjects. Try to focus on the most important topics. Include the name, type='topic' and description of each topic. 
+        Merge topic by name, for example Voter and Voters, or Anti-Woke and anti-wokeness. Deduplicates topics on name and do not include irrelevant topics.
+        Response most be valid JSON. Ensure that your responses are socially unbiased and positive in nature.
+        If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
+        If you don't know the answer, please don't share false information. 
+        Article: {BODY}""".format(BODY=text)
+    
+    def entities_builder(self) -> list[Entity]:
+        """
+        Build the SQLModel Entities from the LLM results
+
+        Returns:
+            list[Entity]: The populated entities.
+        """
+        entities = []
+        temps = [Entity(**entity.model_dump()) for entity in self.topics]
+        for temp in temps:
+            ## temp.name doesn't alreasy exist in entities entity.name
+            if temp.name not in [entity.name for entity in entities]:
+                entities.append(temp)
+
+        return entities
 
 
 class IdentifyQuestionsAnswerPrompt(BaseModel):
     
-    questions_answers: list[QuestionAnswer]
+    questions_answers: list[FoundQuestionAnswer]
     meta_answer: str
 
     @classmethod
@@ -126,11 +191,29 @@ class IdentifyQuestionsAnswerPrompt(BaseModel):
         return """You are a researcher tasked with identifying the essential questions and answers an article(s) addresses. 
         Please ensure that your responses are socially unbiased and positive in nature.
         If the article does address any question, or is not factually coherent, or you don't know the answer explain why in the meta_answer field.
-        Use the meta_answer field to indicate if you were able to complete the task, or explanation why not.
+        Use the meta_answer field to indicate if you were able to complete the task by writing "SUCCESS", or explanation why not.
         Please don't share false information. Ensure to include citations with each question and answer. 
         To reduce the number of tokens, include the start and ending strings that can be used to identify the text.
         Article: {BODY}""".format(BODY=body)
 
+
+    def questions_answers_builder(self, document_id: int) -> list[Question_Answer]:
+        """
+        Build the SQLModel Answers from the LLM results
+
+        Returns:
+            list[Answer]: The populated answers.
+        """
+        qans = []
+        for qa in self.questions_answers:
+            answer = Question_Answer(document_id=document_id, 
+                                     question=qa.question, 
+                                     answer=qa.answer, 
+                                     citations=[c.__dict__ for c in qa.citiation], 
+                                     question_vector= transformers_util.generate_embeddings(qa.question))
+            qans.append(answer)
+
+        return qans  
  
     
 class AskQuestionPrompt(BaseModel):
@@ -162,8 +245,10 @@ class AskQuestionPrompt(BaseModel):
         return """You are a researcher task with answering questions using articles.  
             Please ensure that your responses are socially unbiased and positive in nature.
             If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
-            Use the meta_answer field to indicate if you were able to complete the task, or explanation why not.
-            If you don't know the answer, please don't share false information.\n. 
+            Use the meta_answer field to indicate if you were able to complete the task by writing "SUCCESS", or explanation why not.
+            If you don't know the answer, please don't share false information.
+            Ensure you include citations of the most essential sentences/text you relied on to answer the questions. 
+            To reduce the number of tokens in the response, use the begging and end of the string to reference the citation.\n 
             Question: {QUESTION}\n {ARTICLES}""".format(QUESTION=question, ARTICLES=_articles) 
 
         

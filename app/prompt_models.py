@@ -2,7 +2,7 @@ import re
 from typing import Optional, List, Dict
 from pydantic import BaseModel
 
-from app.models import Answer, Document, Entity, IdentifyEntity
+from app.models import Answer, Document, Entity
 
 class DocumentPrompt(BaseModel):
     """
@@ -48,7 +48,7 @@ class DocumentPromptTwo(DocumentPrompt):
     Subclass of DocumentPrompt for DocumentPromptTwo.
     """
 
-    entities_and_topics: Optional[List[IdentifyEntity]]
+    entities_and_topics: Optional[List[Entity]]
     usage: Optional[str]
 
     def populate_document(cls, document: Document) -> Document:
