@@ -375,3 +375,48 @@ def unsupported_page_url(url: str) -> bool:
             return True
     
     return False
+
+
+
+def identify_lowest_common_article_div(soup: BeautifulSoup) -> str:
+    
+
+    ## If there is a section use it
+    sections = soup.find_all(['section'])
+    for div in sections:
+        number_of_p = len(div.find_all('p'))
+        number_of_divs = len(div.find_all('div'))
+        number_of_headers = len(div.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']))
+        
+        ## If there is a section with enough content use it 
+        if ((number_of_p + number_of_headers) / number_of_divs) > 0.65:
+            return div
+
+    ## If there is no section but there is a article use it
+    articles = soup.find_all(['article'])
+    for div in articles:
+        number_of_p = len(div.find_all('p'))
+        number_of_divs = len(div.find_all('div'))
+        number_of_headers = len(div.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']))
+        
+        ## If there is a section with enough content use it 
+        if ((number_of_p + number_of_headers) / number_of_divs) > 0.65:
+            return div
+
+    ## If there is no article or section use the div with the most paragraphs
+    divs = soup.find_all(['div'])
+    ratio = 0.0
+    selected_div = None
+    for div in divs:
+        number_of_p = len(div.find_all('p'))
+        number_of_divs = len(div.find_all('div'))
+        number_of_headers = len(div.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']))
+        
+        if number_of_divs == 0:
+            continue
+        else: 
+            if (((number_of_p + number_of_headers) / number_of_divs) > ratio):
+                ratio = number_of_p / number_of_divs
+                selected_div = div
+        
+    return selected_div

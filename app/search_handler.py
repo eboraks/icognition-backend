@@ -11,6 +11,8 @@ from pydantic import BaseModel
 from app.icog_util import DocSummarizer
 from app.prompt_models import RAGPrompt
 from app.db_connector import get_engine
+from app.gemini_prompts_models import AskQuestionPrompt
+from app.genimi_client import generate_response
 
 
 logging.basicConfig(
@@ -94,26 +96,26 @@ class SearchHandler:
 
     async def rag_workflow(self, user_id: str, search_term: str) -> RagAnswerDisplay | str:
         
-        docs = self.search_embeddings(user_id=user_id, search_term=search_term, threshold=0.5, max_results=3)
+        matched_docs = self.search_embeddings(user_id=user_id, search_term=search_term, threshold=0.5, max_results=3)
+
+        docs = []
+        for doc in matched_docs:
+            docs.append(getter.get_document_by_id(doc.id))    
+
 
         if len(docs) == 0:
             return f"No documents found for the search term '{search_term}'"
 
-        retrieved_contexts = []
-        for doc in docs:
-            td = getter.get_document_by_id(doc.id)
-            summary = self._summarizer(td.original_text).toStr()
-            retrieved_contexts.append({"doc_id": td.id, "doc_title": td.title, "text": summary, "url": td.url})
-
-        messages_list = RAGPrompt.get_messages(contexts=retrieved_contexts, question=search_term)
-        
         try:
-            rag_answer = await self._mixtralClient.generate(messages=messages_list, model=RAGPrompt)
+            prompt = AskQuestionPrompt.build_prompt(docs, search_term)
+            generated_response = await generate_response(prompt, AskQuestionPrompt)
+
+            rag_answer = generated_response.question_answer_builder(question=search_term)
 
             answer_display = RagAnswerDisplay(
                 answer=rag_answer.answer,
-                documents_used=rag_answer.document_ids_used_for_answer,
-                llm_service_meta=rag_answer.usage
+                documents_used=[c['document_id'] for c in rag_answer.citations],
+                llm_service_meta=None
             )
             logging.info(answer_display)
             return answer_display

@@ -20,6 +20,7 @@ from app.models import (
     Embedding,
     Document_Entity_Link,
     Question_Answer,
+    Question_Answer_Display,
     SubTopic_Document_Link,
     SubTopic_Embedding_Link
 )
@@ -150,7 +151,7 @@ def create_document(page: Page):
     doc.image_url = page.image_url
     doc.site_name = page.site_name
     doc.metadata_description = page.metadata_description
-    doc.html_elements = page.html_elements
+    doc.html_elements = json.loads(page.html_elements)
 
     session.add(doc)
     session.commit()
@@ -490,45 +491,65 @@ async def generate_embeddings(user_id: str):
     ## Generate embeddings for documents that don't have embeddings
     with Session(engine) as session:
         
+        docs_embedding = select(Embedding.source_id)\
+        .filter(and_(Embedding.source_type == 'document', Embedding.user_id == user_id))\
+            .group_by(Embedding.source_id)
+
         docs = session.scalars(
             select(Document)\
             .join(Bookmark, Bookmark.document_id == Document.id)\
-            .outerjoin(Embedding, Embedding.source_id == Document.id)\
             .where(and_(
-                Embedding.source_id == None, 
+                Document.id.not_in(docs_embedding),
+                Document.is_about != None,
+                Document.learning_from_document != None, 
                 Document.status == 'Done', Bookmark.user_id == user_id))).unique().all()
 
-        embeddings = []
-        for doc in docs:
-            embeddings.extend(doc.to_embeddings())
-            
-        for embedding in embeddings:
-            embedding.vector = transformers_util.generate_embeddings(embedding.text)
-            embedding.user_id = user_id
-        session.add_all(embeddings)
-        session.commit()    
+    generate_embeddings_for_docs(docs, user_id)   
 
     ## Generate embeddings for entities that don't have embeddings
     ## May, 22. Remove Embedding.version < Entity.version) from where clause, becuase embedding have old versions (versions add additive)
     ## results in always generating embeddings for entities with version above 1. That mean that updated entities will not generate new embeddings
     ## for now. In the future this can be improved, but for now it's ok.
+    
+
+    generate_embeddings_for_entities(user_id)
+        
+
+
+async def generate_embeddings_for_entities(user_id: str):
+
+    ## Find entities that don't have embeddings
     with Session(engine) as session:
         entities = session.scalars(
             select(Entity)\
             .join(Document_Entity_Link, Document_Entity_Link.entity_id == Entity.id)\
             .join(Bookmark, Bookmark.document_id == Document_Entity_Link.document_id)\
             .outerjoin(Embedding, Embedding.source_id == Entity.id)\
-            .where(Embedding.source_id == None, Bookmark.user_id == user_id)).unique().all()
-
+            .where(Embedding.source_id == None, Embedding.user_id == user_id, Bookmark.user_id == user_id)).unique().all()
+    
         embeddings = []
         for entity in entities:
-            embeddings.extend(entity.to_embeddings())
-            
-        for embedding in embeddings:
-            embedding.vector = transformers_util.generate_embeddings(embedding.text)
-            embedding.user_id = user_id
+            emb = entity.to_embeddings()
+            emb.vector = transformers_util.generate_embeddings(emb.text)
+            emb.user_id = user_id
+            embeddings.append(emb)
+        
         session.add_all(embeddings)
         session.commit()
+
+
+async def generate_embeddings_for_docs(docs: list[Document], user_id: str):
+
+    embeddings = []
+    for doc in docs:
+        for emb in doc.to_embeddings():
+            emb.vector = transformers_util.generate_embeddings(emb.text)
+            emb.user_id = user_id
+            embeddings.append(emb)
+    
+    with Session(engine) as session:
+        session.add_all(embeddings)
+        session.commit() 
 
 
 def update_entity_embedding(entity: Entity):
@@ -543,13 +564,13 @@ def update_entity_embedding(entity: Entity):
 
 
 
-async def custom_question(document_id: int, question: str) -> list[FoundQuestionAnswer]:
+async def custom_question(document_id: int, question: str) -> Question_Answer_Display:
     """
     This function generates a summary with verbatim sentences
     """
     doc = getter.get_document_by_id(document_id) 
     
     prompt = AskQuestionPrompt.build_prompt([doc], question)
-    generated_response = await generate_response(prompt, AskQuestionPrompt)
+    generated_response = await generate_response(prompt, AskQuestionPrompt) 
     
-    return generated_response.questions_answers
+    return generated_response.question_answer_builder(question=question)

@@ -148,7 +148,7 @@ class Entity(SQLModel, table=True):
     wikidata_id: str = Field(default=None, nullable=True)
     score: Optional[float] = Field(default=None, nullable=True)
     update_at: datetime = Field(default=datetime.now(), nullable=True)
-    synonyms: List[str] = Field(default=[], sa_column=Column(JSON))
+    synonyms: List[dict]  = Field(default=[], sa_column=Column(JSON))
 
     ## Many to Many relationships between entities documents
     documents: list["Document"] = Relationship(back_populates="entities", link_model=Document_Entity_Link)
@@ -210,7 +210,7 @@ class Document(SQLModel, table=True):
     title: str = Field(default=None, nullable=True)
     url: str = Field(default=None, nullable=True)
     original_text: str = Field(default=None, nullable=True)
-    html_elements: List[str] = Field(default=[], sa_column=Column(JSON))
+    html_elements: List[Dict] = Field(default=[], sa_column=Column(JSON))
     authors: str = Field(default=None, nullable=True)
     metadata_keywords: str = Field(default=None, nullable=True)
     metadata_description: str = Field(default=None, nullable=True)
@@ -221,7 +221,7 @@ class Document(SQLModel, table=True):
     is_about: str = Field(default=None, nullable=True)
     learning_from_document: str = Field(default=None, nullable=True)
     summary_bullet_points: List[str] = Field(default=[], sa_column=Column(JSON))
-    summary_citations: List[str] = Field(default=[], sa_column=Column(JSON))
+    summary_citations: List[Dict] = Field(default=[], sa_column=Column(JSON))
     raw_answer: str = Field(default=None, nullable=True)
     publication_date: datetime = Field(default=None, nullable=True)
     update_at: datetime = Field(default_factory=datetime.now, nullable=True)
@@ -234,6 +234,11 @@ class Document(SQLModel, table=True):
     subtopics: list["SubTopic"] = Relationship(back_populates="documents", link_model=SubTopic_Document_Link)
 
     def to_display(self, cosine_similarity: float = None) -> "DocumentDisplay": 
+
+        if type(self.html_elements) == str:
+            html_elements = json.loads(self.html_elements)
+        else:
+            html_elements=self.html_elements
 
         return DocumentDisplay(
             id = self.id,
@@ -251,7 +256,7 @@ class Document(SQLModel, table=True):
             cosine_similarity=cosine_similarity,
             image_url=self.image_url,
             site_name=self.site_name,
-            html_elements=json.loads(self.html_elements) if self.html_elements else None
+            html_elements= html_elements
         )
 
 
@@ -339,6 +344,11 @@ class Document(SQLModel, table=True):
 
 
 
+class Question_Answer_Display(BaseModel):
+    question: str
+    answer: str
+    citations: list[dict]
+
 
 class Question_Answer(SQLModel, table=True):
     """
@@ -348,11 +358,22 @@ class Question_Answer(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     question: str = Field(default=None, nullable=True)
     answer: str = Field(default=None, nullable=True)
-    citations: List[str] = Field(default=[], sa_column=Column(JSON))
+    citations: List[dict] = Field(default=[], sa_column=Column(JSON))
     question_vector: List[float] = Field(sa_column=Column(Vector(384)))
 
     document_id: Optional[int] = Field(default=None, foreign_key="document.id")
     document: Document = Relationship(back_populates="qans")
+
+
+    def to_display(self) -> Question_Answer_Display:
+        return Question_Answer_Display(
+            question=self.question,
+            answer=self.answer,
+            citations=self.citations,
+            relevance_score=None
+        )
+
+    
     
 
 
@@ -511,7 +532,7 @@ class RagAnswerDisplay(BaseModel):
 class Answer(BaseModel):
     question: str
     answer: str
-    sources: Optional[List[str]] = None
+    citations: Optional[List[str]] = None
     relevance_score: Optional[list[float]] = None
 
 

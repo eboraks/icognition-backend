@@ -1,7 +1,7 @@
 import json
 from pydantic import BaseModel
 
-from app.models import Answer, Document, Entity, Question_Answer
+from app.models import Answer, Document, Entity, Question_Answer, Question_Answer_Display
 import app.transformers_util as transformers_util
 
 
@@ -220,7 +220,6 @@ class AskQuestionPrompt(BaseModel):
     """
     Model for subtopic prompts.
     """
-
     answer: str
     meta_answer: str
     documents_citations: list[DocumentCitation]
@@ -242,7 +241,7 @@ class AskQuestionPrompt(BaseModel):
             _articles += """Article_ID: {ID}, Article_Name: {TITLE}, Article: {CONTEXT}\n""".format(
                 ID=d.id, TITLE=d.title, CONTEXT=d.original_text, URL=d.url)
 
-        return """You are a researcher task with answering questions using articles.  
+        return """You are a researcher task with answering questions using articles. Keep your answer short, concise and informative.  
             Please ensure that your responses are socially unbiased and positive in nature.
             If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
             Use the meta_answer field to indicate if you were able to complete the task by writing "SUCCESS", or explanation why not.
@@ -250,6 +249,9 @@ class AskQuestionPrompt(BaseModel):
             Ensure you include citations of the most essential sentences/text you relied on to answer the questions. 
             To reduce the number of tokens in the response, use the begging and end of the string to reference the citation.\n 
             Question: {QUESTION}\n {ARTICLES}""".format(QUESTION=question, ARTICLES=_articles) 
+    
+    def question_answer_builder(self, question: str) -> Question_Answer_Display: 
+        return Question_Answer_Display(question=question, answer=self.answer, citations=[dc.__dict__ for dc in self.documents_citations])
 
         
 

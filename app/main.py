@@ -11,6 +11,8 @@ from app.models import (
     PagePayload,
     DocumentDisplay,
     HTTPError,
+    Question_Answer,
+    Question_Answer_Display,
     QuestionPlayload,
     SearchPayload,
     SearchResults,
@@ -76,7 +78,7 @@ async def validation_exception_handler(request, exc):
     return PlainTextResponse(str(request), status_code=400)
 
 
-@app.post("/document/question", response_model=Answer, status_code=200)
+@app.post("/document/question", response_model=Question_Answer_Display, status_code=200)
 async def post_document_question(payload: QuestionPlayload):
     try:
         logging.info(f"Question endpoint called on {payload.document_id} with question {payload.question}")
@@ -192,8 +194,8 @@ async def generate_document(bookmark: Bookmark):
 
     if document.status in ["Pending", "Done", "Failure"]:
         logging.info(f"Background task for document ID: {bookmark.document_id}")
-        await app_logic.generate_summary(doc= document)
-        await app_logic.generate_embeddings(bookmark.user_id)
+        document = await app_logic.generate_summary(doc= document)
+        await app_logic.generate_embeddings_for_docs(docs = [document], user_id = bookmark.user_id)
         logging.info(f"Background task for document ID: {bookmark.document_id} completed")
 
     
@@ -201,7 +203,7 @@ async def generate_document(bookmark: Bookmark):
         ent_success = await app_logic.generate_entities(user_id= bookmark.user_id, doc = document)
         topic_success = await app_logic.generate_topics(user_id= bookmark.user_id, doc = document)
         logging.info(f"Background task for generating entities and topics for: {document.id} completed. Result, entities: {ent_success} topic: {topic_success}")
-        await app_logic.generate_embeddings(bookmark.user_id)
+        await app_logic.generate_embeddings_for_entities(user_id =  bookmark.user_id)
 
 
     if len(getter.get_question_answer_by_document_id(document.id)) == 0:
@@ -374,13 +376,27 @@ async def get_document_display(id: int, response: Response):
 async def get_document_summary(id: int, response: Response, force: str | None = None):
     
         try:
-            res = await app_logic.generate_xray_summary(id, bool(force))
+            res = getter.get_document_by_id(id)
             response.status_code = status.HTTP_200_OK
             return res
     
         except ValueError as e:
             logging.error(e)
             raise HTTPException(status_code=404, detail=e)
+
+
+@app.get("/document/{id}/questions_answers")
+async def get_document_questions_answers(id: int, response: Response):
+
+    try:
+        qas = getter.get_question_answer_by_document_id(id)
+        qas = [qa.to_display() for qa in qas]
+        response.status_code = status.HTTP_200_OK
+        return qas
+
+    except ValueError as e:
+        logging.error(e)
+        raise HTTPException(status_code=404, detail=e)
 
 
 @app.get("/bookmark/{id}/keysentences")
@@ -472,10 +488,10 @@ async def search_documents(search_payload: SearchPayload, response: Response):
 
 
 
-@app.get("/generate_embedding", status_code=200)
-async def generate_embedding():
+@app.get("/generate_embedding/{user_id}", status_code=200)
+async def generate_embedding(user_id: str):
     try:
-        await app_logic.generate_documents_embeddings()
+        await app_logic.generate_embeddings(user_id=user_id)
         return {"Message": "Embedding generation completed"}
     except Exception as e:
         logging.error(e)
