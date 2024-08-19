@@ -1,4 +1,4 @@
-import json
+import json, logging, sys
 from types import SimpleNamespace
 from sqlmodel import SQLModel, Field, Float, JSON, Integer, Relationship, String
 from sqlalchemy import Column
@@ -9,6 +9,15 @@ from datetime import datetime
 from pydantic import BaseModel, model_serializer
 
 from app.icog_util import original_text_to_sentences, sentences_to_text
+from app.gemini_client import GeminiClient
+
+
+logging.basicConfig(
+    stream=sys.stdout,
+    format="%(asctime)s - %(message)s",
+    level=logging.INFO,
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 class TreeNode(BaseModel):
     "Tree Node Model based on primevue Tree data filter"
@@ -227,6 +236,7 @@ class Document(SQLModel, table=True):
     update_at: datetime = Field(default_factory=datetime.now, nullable=True)
     status: str = Field(default="Pending", nullable=True)
     llm_service_meta: Optional[Dict] = Field(default={}, sa_column=Column(JSONB))
+    summary_vector: List[float] = Field(sa_column=Column(Vector(768)))
 
     ## Many to Many relationships between documents and entities
     entities: list["Entity"] = Relationship(back_populates="documents", link_model=Document_Entity_Link)
@@ -323,7 +333,24 @@ class Document(SQLModel, table=True):
 
         return results
     
-    def get_sentences(self): 
+    async def generate_vector(self, geminiClient: GeminiClient):
+
+        try:
+            if self.is_about and self.summary_bullet_points:
+                text = f"{self.is_about} \n"
+                for bullet_point in self.summary_bullet_points:
+                    text += f"{bullet_point} \n"
+                self.summary_vector = await geminiClient.generate_embedding(content= text, title= self.title)
+                return self.summary_vector
+
+            else:
+                return None
+        except Exception as e:
+            # Handle the exception here
+            logging.error(f"An error occurred while generating summary vector for document_id: {self.id}. Error: {e}")
+            return None
+
+    def get_sentences_can_be_delete(self): 
         sentences = []
         for element in json.loads(self.html_elements, object_hook=lambda d: SimpleNamespace(**d)):
 
@@ -335,7 +362,7 @@ class Document(SQLModel, table=True):
 
         return sentences
 
-    def get_text_with_sentences_index(self, sentences: list[str] = None):
+    def get_text_with_sentences_index_can_be_delete(self, sentences: list[str] = None):
 
         if sentences is None:
             sentences = self.get_sentences()
@@ -373,8 +400,61 @@ class Question_Answer(SQLModel, table=True):
             relevance_score=None
         )
 
+class Study_Task(SQLModel, table=True):
+    """
+    Represents a study task with its ID, name, description, and user ID.
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    description: str = Field(default=None)
+    explanation: str = Field(default=None, nullable=True)
+    status: str = Field(default="Pending", nullable=True)
+    description_vector: List[float] = Field(sa_column=Column(Vector(768)))
+    project_id: Optional[int] = Field(default=None, foreign_key="study_project.id")
+    study_project: "Study_Project" = Relationship(back_populates="tasks")
+    citations: list["Study_Task_Citation"] = Relationship(back_populates="task")
+
+    async def generate_vector(self, geminiClient: GeminiClient):
+        self.description_vector = await geminiClient.generate_embedding(content= self.description)
+
+
     
+class Study_Project(SQLModel, table=True):
+    """
+    Represents a study project with its ID, name, description, and user ID.
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(nullable=False)
+    objective: str = Field(default=None, nullable=True)
+    explanation: str = Field(default=None, nullable=True)
+    user_id: str = Field(nullable=False)
+    objective_tasks_vector: List[float] = Field(sa_column=Column(Vector(768)))
+    # documents: list["Document"] = Relationship(back_populates="study_project", link_model="Study_Project_Document_Link", sa_relationship_kwargs={"cascade": "delete"})
+    tasks: list["Study_Task"] = Relationship(back_populates="study_project")
     
+
+    async def generate_vector(self, geminiClient: GeminiClient):
+        text = f"{self.objective} \n"
+        for task in self.tasks:
+            text += f"{task.description} \n"
+        
+        self.objective_tasks_vector = await geminiClient.generate_embedding(content= text, title= self.name)
+        
+
+class Study_Task_Citation(SQLModel, table=True):
+    """
+    Represents a study task citation with its ID, task ID, and citation.
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    citations: Optional[List[Dict]] = Field(default=[], sa_column=Column(JSON))
+    ## Intentially I didn't created relationship with Document because that will require a many to many relationship table
+    ## and code to manage creation, update and deletion of the relationship.
+    document_id: Optional[int] = Field(default=None, nullable=True)
+    task_id: Optional[int] = Field(default=None, foreign_key="study_task.id")
+    task: Study_Task = Relationship(back_populates="citations")    
+
 
 
 ### 

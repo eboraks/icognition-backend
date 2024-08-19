@@ -2,7 +2,9 @@ import app.getters as getter
 import pytest
 from app.gemini_prompts_models import SummarizePrompt, EntitiesPrompt, IdentifyQuestionsAnswerPrompt, AskQuestionPrompt, TopicPrompt
 from app.models import Document, Entity
-from app.genimi_client import generate_response 
+from app.gemini_client import GeminiClient
+
+genimi_client = GeminiClient()
 
 
 user_id = 'yU13Hk9BwEQiREgh91YM6EFKR7M2'
@@ -13,7 +15,7 @@ async def test_summarization():
     document = getter.get_document_by_id(109)
 
     prompt = SummarizePrompt.build_prompt(document.original_text)
-    generated_response = await generate_response(prompt, SummarizePrompt)
+    generated_response = await genimi_client.generate_response(prompt, SummarizePrompt)
 
     assert generated_response is not None
     assert generated_response.what_this_article_is_about is not None
@@ -36,7 +38,7 @@ async def test_entities():
     document = getter.get_document_by_id(109)
 
     prompt = EntitiesPrompt.build_prompt(document.original_text)
-    generated_response = await generate_response(prompt, EntitiesPrompt)
+    generated_response = await genimi_client.generate_response(prompt, EntitiesPrompt)
 
     assert generated_response is not None
     assert len(generated_response.entities) > 0
@@ -48,7 +50,7 @@ async def test_topics():
     document = getter.get_document_by_id(109)
 
     prompt = TopicPrompt.build_prompt(document.original_text)
-    generated_response = await generate_response(prompt, TopicPrompt)
+    generated_response = await genimi_client.generate_response(prompt, TopicPrompt)
 
     assert generated_response is not None
     assert len(generated_response.topics) > 0
@@ -59,7 +61,7 @@ async def test_questions_answers():
     document = getter.get_document_by_id(109)
 
     prompt = IdentifyQuestionsAnswerPrompt.build_prompt(document.original_text)
-    generated_response = await generate_response(prompt, IdentifyQuestionsAnswerPrompt)
+    generated_response = await genimi_client.generate_response(prompt, IdentifyQuestionsAnswerPrompt)
 
     assert generated_response is not None
     assert len(generated_response.questions_answers) > 0
@@ -78,7 +80,7 @@ async def test_ask_question():
     document = getter.get_document_by_id(109)
 
     prompt = AskQuestionPrompt.build_prompt([document], "Who is Trump and what does it do?")
-    generated_response = await generate_response(prompt, AskQuestionPrompt)
+    generated_response = await genimi_client.generate_response(prompt, AskQuestionPrompt)
 
     assert generated_response is not None
     assert generated_response.answer is not None
@@ -101,25 +103,25 @@ async def test_run_all():
 
     ## Test Summarization
     prompt = SummarizePrompt.build_prompt(document.original_text)
-    generated_response = await generate_response(prompt, SummarizePrompt)
+    generated_response = await genimi_client.generate_response(prompt, SummarizePrompt)
 
     assert generated_response is not None
 
     ## Test Entities
     prompt = EntitiesPrompt.build_prompt(document.original_text)
-    generated_response = await generate_response(prompt, EntitiesPrompt)
+    generated_response = await genimi_client.generate_response(prompt, EntitiesPrompt)
 
     assert generated_response is not None
 
     ## Test Questions and Answers
     prompt = IdentifyQuestionsAnswerPrompt.build_prompt(document.original_text)
-    generated_response = await generate_response(prompt, IdentifyQuestionsAnswerPrompt)
+    generated_response = await genimi_client.generate_response(prompt, IdentifyQuestionsAnswerPrompt)
 
     assert generated_response is not None
 
     ## Test Ask Question
     prompt = AskQuestionPrompt.build_prompt([document], "Who is Trump and what does it do?")
-    generated_response = await generate_response(prompt, AskQuestionPrompt)
+    generated_response = await genimi_client.generate_response(prompt, AskQuestionPrompt)
 
     assert generated_response is not None
     

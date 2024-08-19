@@ -12,7 +12,7 @@ from app.icog_util import DocSummarizer
 from app.prompt_models import RAGPrompt
 from app.db_connector import get_engine
 from app.gemini_prompts_models import AskQuestionPrompt
-from app.genimi_client import generate_response
+from app.gemini_client import GeminiClient
 
 
 logging.basicConfig(
@@ -31,7 +31,7 @@ env_vers = os.environ
 
 engine = get_engine()
 
-
+gemini_client = GeminiClient()
 
 class MatchedDocument(BaseModel):
     id: int
@@ -108,7 +108,7 @@ class SearchHandler:
 
         try:
             prompt = AskQuestionPrompt.build_prompt(docs, search_term)
-            generated_response = await generate_response(prompt, AskQuestionPrompt)
+            generated_response = await gemini_client.generate_response(prompt, AskQuestionPrompt)
 
             rag_answer = generated_response.question_answer_builder(question=search_term)
 

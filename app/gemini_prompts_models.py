@@ -15,6 +15,10 @@ class DocumentCitation(BaseModel):
     document_id: int
     citations: list[Citation]
 
+    def get_citations(self) -> list[dict]:
+        """"Return the citations as a list of dictionaries for stroing as JSON in DB"""
+        return [c.__dict__ for c in self.citations]
+
 
 class FoundEntity(BaseModel):
     name: str
@@ -241,7 +245,8 @@ class AskQuestionPrompt(BaseModel):
             _articles += """Article_ID: {ID}, Article_Name: {TITLE}, Article: {CONTEXT}\n""".format(
                 ID=d.id, TITLE=d.title, CONTEXT=d.original_text, URL=d.url)
 
-        return """You are a researcher task with answering questions using articles. Keep your answer short, concise and informative.  
+        return """You are a researcher task with answering questions using articles. 
+            Compose your answer from as many articles as you need. Keep your answer short, concise and informative.  
             Please ensure that your responses are socially unbiased and positive in nature.
             If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
             Use the meta_answer field to indicate if you were able to complete the task by writing "SUCCESS", or explanation why not.
@@ -252,6 +257,42 @@ class AskQuestionPrompt(BaseModel):
     
     def question_answer_builder(self, question: str) -> Question_Answer_Display: 
         return Question_Answer_Display(question=question, answer=self.answer, citations=[dc.__dict__ for dc in self.documents_citations])
+    
+
+
+class ProjectTaskPrompt(BaseModel):
+    
+    description: str
+    explanation: str
+    meta_answer: str
+    documents_citations: list[DocumentCitation]
+
+    @classmethod
+    def build_prompt(cls, docs: list[Document], description: str):
+        """
+        Build question from for the RAG task.
+        Args:
+            docs (list[Document]): The list of documents to use for the task.
+            description (str): The description of the task.
+
+        Returns:
+            list[dict]: The list of messages for the subtopic prompt.
+        """
+        
+        _articles = "Articles:\n"
+        for d in docs:
+            _articles += """Article_ID: {ID}, Article_Name: {TITLE}, Article: {CONTEXT}\n""".format(
+                ID=d.id, TITLE=d.title, CONTEXT=d.original_text, URL=d.url)
+
+        return """You are a researcher task with answering questions using articles. Keep your answer short, concise and informative.  
+            Please ensure that your responses are socially unbiased and positive in nature.
+            If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
+            Use the meta_answer field to indicate if you were able to complete the task by writing "SUCCESS", or explanation why not.
+            If you don't know the answer, please don't share false information.
+            Ensure you include citations of the most essential sentences/text you relied on to answer the questions. 
+            To reduce the number of tokens in the response, use the begging and end of the string to reference the citation.\n 
+            Description: {DESCRIPTION}\n {ARTICLES}""".format(DESCRIPTION=description, ARTICLES=_articles)
+
 
         
 

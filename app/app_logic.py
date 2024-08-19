@@ -25,7 +25,7 @@ from app.models import (
     SubTopic_Embedding_Link
 )
 from app.prompt_models import CustomQuestionPrompt, DocumentPromptTwo, DocumentPromptVerbatim
-from app.genimi_client import generate_response
+from app.gemini_client import GeminiClient
 from sqlalchemy import (
     select,
     delete,
@@ -48,6 +48,7 @@ logging.basicConfig(
 env_vers = os.environ
 
 engine = get_engine()
+genimi_client = GeminiClient()
 
 doc_counter_for_subtopics = 0
 
@@ -308,7 +309,7 @@ async def generate_summary(doc: Document, testing: bool = False) -> Document:
                 logging.info(f"Response loaded from file for document {doc.id}")
         else:
 
-            response = await generate_response(
+            response = await genimi_client.generate_response(
                 SummarizePrompt.build_prompt(doc.original_text), 
                 SummarizePrompt)
             ## Save response in json file
@@ -327,6 +328,7 @@ async def generate_summary(doc: Document, testing: bool = False) -> Document:
     try:
         ## raw_answer is the response from LLM with the support sentences.
         doc = response.populate_document(doc)
+        doc.summary_vector = await doc.generate_vector(geminiClient=genimi_client)
         doc.status = "Done"
         doc.update_at = datetime.datetime.now()
         update_document(doc)
@@ -360,7 +362,7 @@ async def generate_entities(user_id: str, doc: Document, testing: bool = False) 
                 response = pickle.load(f)
                 logging.info(f"Response loaded from file for document {doc.id}")
         else:
-            response = await generate_response(
+            response = await genimi_client.generate_response(
                 EntitiesPrompt.build_prompt(doc.original_text), 
                 EntitiesPrompt)
             logging.info(f"Response from LLM {response}")
@@ -394,7 +396,7 @@ async def generate_topics(user_id: str, doc: Document, testing: bool = False) ->
                 response = pickle.load(f)
                 logging.info(f"Response loaded from file for document {doc.id}")
         else:
-            response = await generate_response(
+            response = await genimi_client.generate_response(
                 TopicPrompt.build_prompt(doc.original_text), 
                 TopicPrompt)
             logging.info(f"Response from LLM {response}")
@@ -421,7 +423,7 @@ async def generate_doc_quesions_answers(user_id: str, doc: Document, testing: bo
         
         ## If file exists, load it and return payload
         prompt = IdentifyQuestionsAnswerPrompt.build_prompt(doc.original_text)
-        response = await generate_response(prompt, IdentifyQuestionsAnswerPrompt)
+        response = await genimi_client.generate_response(prompt, IdentifyQuestionsAnswerPrompt)
         ## Using the entities builder to get the entities from the response    
         qans = response.questions_answers_builder(document_id = doc.id)
  
@@ -571,6 +573,6 @@ async def custom_question(document_id: int, question: str) -> Question_Answer_Di
     doc = getter.get_document_by_id(document_id) 
     
     prompt = AskQuestionPrompt.build_prompt([doc], question)
-    generated_response = await generate_response(prompt, AskQuestionPrompt) 
+    generated_response = await genimi_client.generate_response(prompt, AskQuestionPrompt) 
     
     return generated_response.question_answer_builder(question=question)

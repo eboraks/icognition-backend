@@ -4,7 +4,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy import (
     and_,
     select,
-    func,
     text,
 )
 
@@ -35,6 +34,12 @@ def get_documents_by_ids(document_ids: set[int]) -> list[Document]:
         documents = session.scalars(select(Document).where(Document.id.in_(document_ids))).unique().all()
 
     return documents
+
+def get_documents() -> list[Document]:
+    session = Session(engine)
+    docs = session.scalars(select(Document)).all()
+    session.close()
+    return docs
 
 def get_document_by_bookmark_id(bookmark_id) -> Document:
     session = Session(engine)
