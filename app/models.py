@@ -461,6 +461,46 @@ class Study_Task_Citation(SQLModel, table=True):
 ###  The following classes are used to define the FastAPI payload and response models
 ###
 
+class StudyTaskCitationPublic(SQLModel, table=False):
+    """
+    Represents a study task citation with its ID, task ID, and citation.
+    """
+
+    id: Optional[int] = Field(default=None)
+    citations: Optional[List[Dict]] = Field(default=[])
+    document_id: Optional[int] = Field(default=None)
+    task_id: Optional[int] = Field(default=None)
+
+class StudyTaskPublic(SQLModel, table=False):
+    """
+    Represents a study task with its ID, name, description, and user ID.
+    """
+
+    id: Optional[int] = Field(default=None)
+    description: Optional[str] = Field(default=None)
+    explanation: Optional[str] = Field(default=None)
+    status: Optional[str] = Field(nullable=True)
+    project_id: Optional[int] = Field(default=None)
+    citations: Optional[list[StudyTaskCitationPublic]] = Field(default=[])
+
+    
+
+    
+class StudyProjectPublic(SQLModel, table=False):
+    """
+    Represents a study project with its ID, name, description, and user ID.
+    """
+
+    id: Optional[int] = Field(default=None)
+    name: str = Field(nullable=False)
+    objective: str = Field(default=None)
+    explanation: Optional[str] = Field(default=None)
+    user_id: str = Field(nullable=False)
+    tasks: Optional[list[StudyTaskPublic]] = Field(default=[])
+    
+
+
+
 class PagePayload(SQLModel, table=False):
     """
     Represents the payload for a page, including its URL and HTML content.

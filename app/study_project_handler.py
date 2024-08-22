@@ -62,10 +62,10 @@ async def update_study_project(project_id: int, name: str, objective: str) -> St
 
 
     
-def get_study_projects() -> list[Study_Project]:
+def get_study_projects(user_id: str) -> list[Study_Project]:
 
     with Session(engine) as session:
-        projects = session.scalars(select(Study_Project))
+        projects = session.scalars(select(Study_Project).where(Study_Project.user_id == user_id)).all()
         return projects
 
 def delete_study_project(project_id: int) -> None:
@@ -88,6 +88,16 @@ def create_study_task(project_id: int, description: str) -> Study_Task:
             session.add(task)
             session.commit()
         return task
+    
+def get_study_task(task_id: int) -> Study_Task:
+    with Session(engine) as session:
+        task = session.scalar(select(Study_Task).options(joinedload(Study_Task.citations)).where(Study_Task.id == task_id))
+        return task
+
+def get_study_tasks(project_id: int) -> list[Study_Task]:
+    with Session(engine) as session:
+        tasks = session.scalars(select(Study_Task).options(joinedload(Study_Task.citations)).where(Study_Task.project_id == project_id)).all()
+        return tasks
 
 
 def find_related_docs(project_id: int) -> list[Document]:

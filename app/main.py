@@ -18,7 +18,10 @@ from app.models import (
     SearchResults,
     SubTopicDisplay,
     TreeNode,
+    StudyProjectPublic,
+    StudyTaskPublic
 )
+import app.study_project_handler as project_handler
 import logging
 import sys, json
 import app.app_logic as app_logic
@@ -535,3 +538,76 @@ async def get_user_entities_names(user_id: str):
         response_class=FileResponse)
 async def get_placeholder_image():
     return FileResponse("./app/assets/images/library_placeholder.jpg")
+
+
+## Study project endpoints
+@app.get("/study_projects/{user_id}", response_model=List[StudyProjectPublic], status_code=200)
+async def get_study_projects(user_id: str):
+    try:
+        projects = project_handler.get_study_projects(user_id)
+        return projects
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=404, detail="Study projects not found")
+    
+
+@app.post("/study_project", response_model=StudyProjectPublic, status_code=200)
+async def create_study_project(project: StudyProjectPublic):
+    try:
+        project = project_handler.create_study_project(name=project.name, 
+                objective=project.objective, 
+                user_id = project.user_id, 
+                tasks_descriptions=project.tasks)
+        return project
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Study project creation failed")
+    
+
+@app.get("/study_project/{id}", response_model=StudyProjectPublic, status_code=200)
+async def get_study_project(id: int):
+    try:
+        project = project_handler.get_study_project(id)
+        return project
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=404, detail="Study project not found")
+    
+
+@app.delete("/study_project/{id}", status_code=204)
+async def delete_study_project(id: int):
+    try:
+        project_handler.delete_study_project(id)
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Study project deletion failed")
+    
+
+@app.post("/study_task", response_model=StudyTaskPublic, status_code=200)
+async def create_study_task(task: StudyTaskPublic):
+    try:
+        task = project_handler.create_study_task(project_id=task.project_id, description=task.description)
+        return task
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Study task creation failed")
+    
+@app.post("/study_tasks", response_model=List[StudyTaskPublic], status_code=200)
+async def create_study_tasks(tasks: List[StudyTaskPublic]):
+    try:
+        created_tasks = []
+        for task in tasks:
+            created_tasks.append(project_handler.create_study_task(project_id=task.project_id, description=task.description))
+        return created_tasks
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Study task creation failed")
+    
+@app.get("/study_tasks/{project_id}", response_model=List[StudyTaskPublic], status_code=200)
+async def get_study_tasks(project_id: int):
+    try:
+        tasks = project_handler.get_study_tasks(project_id)
+        return tasks
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=404, detail="Study tasks not found")
