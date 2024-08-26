@@ -1,7 +1,7 @@
 import logging, re, sys, os
 from app.transformers_util import generate_embeddings
 from app.db_connector import get_engine
-from app.models import DocumentDisplay, RagAnswerDisplay, SearchResults
+from app.models import DocumentPublic, RagAnswerDisplay, SearchResults
 import app.getters as getter
 import app.icog_util as util
 from sqlalchemy import text
@@ -179,7 +179,7 @@ class SearchHandler:
         
         return results
      
-    def from_matches_to_display(self, matched_docs: list[MatchedDocument]) -> list[DocumentDisplay]:
+    def from_matches_to_display(self, matched_docs: list[MatchedDocument]) -> list[DocumentPublic]:
         """
         This function returns a list of DocumentDisplay objects
         """

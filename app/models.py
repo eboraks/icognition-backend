@@ -142,6 +142,14 @@ class Document_Entity_Link(SQLModel, table=True):
 
 
 
+class EntityPublic(BaseModel):
+    id: Optional[int]
+    name: Optional[str]
+    description: Optional[str] | None
+    source: Optional[str] | None
+    type: Optional[str] | None
+
+
 class Entity(SQLModel, table=True):
     """
     Represents an entity with its ID, document ID, name, description, source, type, Wikidata ID, and score.
@@ -173,8 +181,8 @@ class Entity(SQLModel, table=True):
             children = [])
     
 
-    def to_display(self) -> "EntityDisplay":
-        return EntityDisplay(
+    def to_public(self) -> "EntityPublic":
+        return EntityPublic(
             id=self.id,
             name=self.name,
             description=self.description,
@@ -243,14 +251,14 @@ class Document(SQLModel, table=True):
     qans: list["Question_Answer"] = Relationship(back_populates="document")
     subtopics: list["SubTopic"] = Relationship(back_populates="documents", link_model=SubTopic_Document_Link)
 
-    def to_display(self, cosine_similarity: float = None) -> "DocumentDisplay": 
+    def to_public(self, cosine_similarity: float = None) -> "DocumentPublic": 
 
         if type(self.html_elements) == str:
             html_elements = json.loads(self.html_elements)
         else:
             html_elements=self.html_elements
 
-        return DocumentDisplay(
+        return DocumentPublic(
             id = self.id,
             title = self.title,
             url = self.url,
@@ -262,7 +270,7 @@ class Document(SQLModel, table=True):
             updateAt = self.update_at,
             oneSentenceSummary = self.short_summary,
             is_about = self.is_about,
-            entities_and_concepts= [ent.to_display() for ent in self.entities] ,
+            entities_and_concepts= [ent.to_public() for ent in self.entities] ,
             cosine_similarity=cosine_similarity,
             image_url=self.image_url,
             site_name=self.site_name,
@@ -387,6 +395,7 @@ class Question_Answer(SQLModel, table=True):
     answer: str = Field(default=None, nullable=True)
     citations: List[dict] = Field(default=[], sa_column=Column(JSON))
     question_vector: List[float] = Field(sa_column=Column(Vector(384)))
+    created_at: datetime = Field(default_factory=datetime.now, nullable=True)
 
     document_id: Optional[int] = Field(default=None, foreign_key="document.id")
     document: Document = Relationship(back_populates="qans")
@@ -408,14 +417,27 @@ class Study_Task(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     description: str = Field(default=None)
     explanation: str = Field(default=None, nullable=True)
-    status: str = Field(default="Pending", nullable=True)
+    status: str = Field(default="PENDING", nullable=True)
     description_vector: List[float] = Field(sa_column=Column(Vector(768)))
     project_id: Optional[int] = Field(default=None, foreign_key="study_project.id")
     study_project: "Study_Project" = Relationship(back_populates="tasks")
     citations: list["Study_Task_Citation"] = Relationship(back_populates="task")
+    created_at: datetime = Field(default_factory=datetime.now, nullable=True)
+    updated_at: datetime = Field(default_factory=datetime.now, nullable=True)
 
     async def generate_vector(self, geminiClient: GeminiClient):
         self.description_vector = await geminiClient.generate_embedding(content= self.description)
+
+    def to_public(self) -> "StudyTaskPublic":
+        return StudyTaskPublic(
+            id=self.id,
+            description=self.description,
+            explanation=self.explanation,
+            status=self.status,
+            project_id=self.project_id,
+            created_at=self.created_at,
+            citations=[citation.to_public() for citation in self.citations]
+        )
 
 
     
@@ -429,10 +451,11 @@ class Study_Project(SQLModel, table=True):
     objective: str = Field(default=None, nullable=True)
     explanation: str = Field(default=None, nullable=True)
     user_id: str = Field(nullable=False)
+    status: str = Field(default="PENDING", nullable=True)
     objective_tasks_vector: List[float] = Field(sa_column=Column(Vector(768)))
     # documents: list["Document"] = Relationship(back_populates="study_project", link_model="Study_Project_Document_Link", sa_relationship_kwargs={"cascade": "delete"})
     tasks: list["Study_Task"] = Relationship(back_populates="study_project")
-    
+    created_at: datetime = Field(default_factory=datetime.now, nullable=True)
 
     async def generate_vector(self, geminiClient: GeminiClient):
         text = f"{self.objective} \n"
@@ -440,6 +463,17 @@ class Study_Project(SQLModel, table=True):
             text += f"{task.description} \n"
         
         self.objective_tasks_vector = await geminiClient.generate_embedding(content= text, title= self.name)
+
+    def to_public(self) -> "StudyProjectPublic":
+        return StudyProjectPublic(
+            id=self.id,
+            name=self.name,
+            objective=self.objective,
+            explanation=self.explanation,
+            user_id=self.user_id,
+            created_at=self.created_at,
+            tasks=[task.to_public() for task in self.tasks]
+        )
         
 
 class Study_Task_Citation(SQLModel, table=True):
@@ -453,13 +487,37 @@ class Study_Task_Citation(SQLModel, table=True):
     ## and code to manage creation, update and deletion of the relationship.
     document_id: Optional[int] = Field(default=None, nullable=True)
     task_id: Optional[int] = Field(default=None, foreign_key="study_task.id")
-    task: Study_Task = Relationship(back_populates="citations")    
+    task: Study_Task = Relationship(back_populates="citations")  
+    created_at: datetime = Field(default_factory=datetime.now, nullable=True)
 
+    def to_public(self) -> "StudyTaskCitationPublic":
+        return StudyTaskCitationPublic(
+            id=self.id,
+            citations=self.citations,
+            document_id=self.document_id,
+            task_id=self.task_id,
+            created_at=self.created_at
+        )  
 
+class Study_Project_Document_Link(SQLModel, table=True):
+    """
+    Represents a link between a study project and a document.
+    """
+    project_id: Optional[int] = Field(default=None, foreign_key="study_project.id", primary_key=True)
+    document_id: Optional[int] = Field(default=None, foreign_key="document.id", primary_key=True)
 
 ### 
 ###  The following classes are used to define the FastAPI payload and response models
 ###
+
+class ProjectDocumentlinkPayload(SQLModel, table=False):
+    """
+    Represents the payload for linking a project and a document.
+    """
+
+    project_id: Optional[int] = Field(default=None)
+    document_id: Optional[int] = Field(default=None)
+
 
 class StudyTaskCitationPublic(SQLModel, table=False):
     """
@@ -470,6 +528,7 @@ class StudyTaskCitationPublic(SQLModel, table=False):
     citations: Optional[List[Dict]] = Field(default=[])
     document_id: Optional[int] = Field(default=None)
     task_id: Optional[int] = Field(default=None)
+    created_at: Optional[datetime] = Field(default=None)
 
 class StudyTaskPublic(SQLModel, table=False):
     """
@@ -479,9 +538,10 @@ class StudyTaskPublic(SQLModel, table=False):
     id: Optional[int] = Field(default=None)
     description: Optional[str] = Field(default=None)
     explanation: Optional[str] = Field(default=None)
-    status: Optional[str] = Field(nullable=True)
+    status: Optional[str] = Field(default=None)
     project_id: Optional[int] = Field(default=None)
     citations: Optional[list[StudyTaskCitationPublic]] = Field(default=[])
+    created_at: Optional[datetime] = Field(default=None)
 
     
 
@@ -497,6 +557,7 @@ class StudyProjectPublic(SQLModel, table=False):
     explanation: Optional[str] = Field(default=None)
     user_id: str = Field(nullable=False)
     tasks: Optional[list[StudyTaskPublic]] = Field(default=[])
+    created_at: Optional[datetime] = Field(default=None)
     
 
 
@@ -613,16 +674,10 @@ Why I used Pydantic instead of SQLModel? Good question, in my testing I was not 
 
 
 
-class EntityDisplay(BaseModel):
-    id: Optional[int]
-    name: Optional[str]
-    description: Optional[str] | None
-    source: Optional[str] | None
-    type: Optional[str] | None
     
  
 
-class DocumentDisplay(BaseModel):
+class DocumentPublic(BaseModel):
     id: Optional[int]
     title: Optional[str]
     url: Optional[str] = None
@@ -634,7 +689,7 @@ class DocumentDisplay(BaseModel):
     oneSentenceSummary: Optional[str] = None
     is_about: Optional[str] = None
     tldr: Optional[List[str]] = None
-    entities_and_concepts: Optional[List[EntityDisplay]] = None
+    entities_and_concepts: Optional[List[EntityPublic]] = None
     tags: Optional[List[str]] = None
     usage: Optional[str] = None
     cosine_similarity: Optional[float] = None
@@ -657,7 +712,7 @@ class Answer(BaseModel):
 
 
 class SearchResults(BaseModel):
-    documents_display: Optional[List[DocumentDisplay]]
+    documents_display: Optional[List[DocumentPublic]]
     rag_answer: Optional[RagAnswerDisplay]
     failure: Optional[str] = None
 

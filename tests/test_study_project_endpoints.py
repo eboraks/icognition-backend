@@ -11,7 +11,7 @@ async def test_create_study_project():
         "name": "test_project",
         "objective": "test_objective",
         "user_id": "test_user",
-        "tasks": [{"description": "test_task"}]
+        "tasks": [{"description": "description of the test task"}]
     }
     response = client.post("/study_project", json=payload)
     assert response.status_code == 200
@@ -20,34 +20,81 @@ async def test_create_study_project():
     assert response.json()["user_id"] == "test_user"
     assert len(response.json()["tasks"]) > 0
 
-@pytest.mark.asyncio
-async def test_get_study_project():
-    # Test get_study_project endpoint
-    response = await client.get("/study_project/1")
-    assert response.status_code == 200
-    assert response.json()["id"] == 1
+    response = client.delete(f"/study_project/{response.json()['id']}")
 
-@pytest.mark.asyncio
-async def test_delete_study_project():
+def test_get_study_project():
+    # Test get_study_project endpoint
+    id = 29
+    response = client.get(f"/study_project/{id}")
+    assert response.status_code == 200
+    assert response.json()["id"] == id
+
+def test_delete_study_project():
     # Test delete_study_project endpoint
-    response = await client.delete("/study_project/1")
+    id = 30
+    response = client.delete(f"/study_project/{id}")
     assert response.status_code == 204
 
-@pytest.mark.asyncio
-async def test_create_study_task():
+def test_create_study_task():
     # Test create_study_task endpoint
+    project_id = 19
+    description = f"test_description for task {project_id}"
     payload = {
-        "project_id": 1,
-        "description": "test_description"
+        "project_id": project_id,
+        "description": description
     }
-    response = await client.post("/study_task", json=payload)
+    response = client.post("/study_task", json=payload)
     assert response.status_code == 200
-    assert response.json()["project_id"] == 1
-    assert response.json()["description"] == "test_description"
+    assert response.json()["project_id"] == project_id
+    assert response.json()["description"] == description
 
-@pytest.mark.asyncio
-async def test_get_study_tasks():
+def test_get_study_tasks():
     # Test get_study_tasks endpoint
-    response = await client.get("/study_tasks/1")
+    project_id = 18
+    response = client.get(f"/study_project_tasks/{project_id}")
     assert response.status_code == 200
     assert len(response.json()) > 0
+
+
+def test_study_related_entities():
+    # Test get_study_related_entities endpoint
+    project_id = 18
+                            
+    response = client.get(f"/study_project/{project_id}/related_entities")
+    assert response.status_code == 200
+    assert len(response.json()) > 0
+    for node in response.json():
+        assert node["label"] is not None
+        for entity in node["children"]:
+            assert entity["label"] is not None
+            assert entity["data"] is not None
+
+
+
+def test_create_project_document_link():
+    # Test create_project_document_link endpoint
+    project_id = 18
+    document_id = 129
+    payload = {
+        "project_id": project_id,
+        "document_id": document_id
+    }
+    response = client.post("/project_document_link", json=payload)
+    assert response.status_code == 200
+    assert response.json()["project_id"] == project_id
+    assert response.json()["document_id"] == document_id
+
+
+def test_delete_project_document_link():
+    # Test delete_project_document_link endpoint
+    project_id = 18
+    document_id = 129
+    payload = {
+        "project_id": project_id,
+        "document_id": document_id
+    }
+    response = client.post("/project_document_unlink", json=payload)
+    assert response.status_code == 200
+    
+
+    

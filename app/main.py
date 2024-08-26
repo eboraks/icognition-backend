@@ -9,17 +9,19 @@ from app.models import (
     Bookmark,
     Document,
     PagePayload,
-    DocumentDisplay,
+    DocumentPublic,
     HTTPError,
     Question_Answer,
     Question_Answer_Display,
     QuestionPlayload,
     SearchPayload,
     SearchResults,
+    Study_Project_Document_Link,
     SubTopicDisplay,
     TreeNode,
     StudyProjectPublic,
-    StudyTaskPublic
+    StudyTaskPublic,
+    ProjectDocumentlinkPayload
 )
 import app.study_project_handler as project_handler
 import logging
@@ -253,7 +255,7 @@ async def get_bookmarks_by_user_id(payload: PagePayload):
 
 @app.get(
     "/documents_plus/user/{user_id}",
-    response_model=List[DocumentDisplay],
+    response_model=List[DocumentPublic],
     status_code=200,
 )
 async def get_documents_plus_by_user_id(user_id: str):
@@ -311,7 +313,7 @@ async def get_bookmark_document(id: int, response: Response):
             "description": "Returning document error",
         },
         206: {"model": None, "description": "Document is being processed"},
-        200: {"model": DocumentDisplay, "description": "Document is ready"},
+        200: {"model": DocumentPublic, "description": "Document is ready"},
     })
 async def get_document_plus(bookmark_id: int, response: Response, background_tasks: BackgroundTasks):
     """get document with entities and concepts"""
@@ -336,10 +338,10 @@ async def get_document_plus(bookmark_id: int, response: Response, background_tas
             f"Document plus -> endpoint called on document status {document.status}"
         )
 
-        return document.to_display()
+        return document.to_public()
     else:
         response.status_code = status.HTTP_404_NOT_FOUND
-        return document.to_display()
+        return document.to_public()
 
 
 @app.get("/document/{id}")
@@ -552,22 +554,27 @@ async def get_study_projects(user_id: str):
     
 
 @app.post("/study_project", response_model=StudyProjectPublic, status_code=200)
-async def create_study_project(project: StudyProjectPublic):
+async def create_study_project(project: StudyProjectPublic, background_tasks: BackgroundTasks):
     try:
-        project = project_handler.create_study_project(name=project.name, 
+        project = await project_handler.create_study_project(name=project.name, 
                 objective=project.objective, 
                 user_id = project.user_id, 
                 tasks_descriptions=project.tasks)
+        
+        background_tasks.add_task(project_handler.generate_project_response, project_id = project.id, listener = event_listener)
         return project
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Study project creation failed")
     
+def event_listener(event):
+    logging.info(f"Event listner called with event: {event}")
+
 
 @app.get("/study_project/{id}", response_model=StudyProjectPublic, status_code=200)
 async def get_study_project(id: int):
     try:
-        project = project_handler.get_study_project(id)
+        project = project_handler.get_study_project_by_id(id)
         return project
     except Exception as e:
         logging.error(e)
@@ -603,7 +610,7 @@ async def create_study_tasks(tasks: List[StudyTaskPublic]):
         logging.error(e)
         raise HTTPException(status_code=500, detail="Study task creation failed")
     
-@app.get("/study_tasks/{project_id}", response_model=List[StudyTaskPublic], status_code=200)
+@app.get("/study_project_tasks/{project_id}", response_model=List[StudyTaskPublic], status_code=200)
 async def get_study_tasks(project_id: int):
     try:
         tasks = project_handler.get_study_tasks(project_id)
@@ -611,3 +618,30 @@ async def get_study_tasks(project_id: int):
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=404, detail="Study tasks not found")
+    
+
+@app.get("/study_project/{project_id}/related_entities", response_model=List[TreeNode], status_code=200)
+async def get_project_entities(project_id: int):
+    try:
+        entities = project_handler.get_project_entities(project_id)
+        return entities
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=404, detail="Entities not found")
+    
+
+@app.post("/project_document_link", status_code=200, response_model= Study_Project_Document_Link)
+async def link_project_document(payload: ProjectDocumentlinkPayload):
+    try:
+        return project_handler.link_project_document(project_id = payload.project_id, document_id = payload.document_id)
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Project document link failed")
+    
+@app.post("/project_document_unlink", status_code=200)
+async def unlink_project_document(payload: ProjectDocumentlinkPayload):
+    try:
+        return project_handler.unlink_project_document(project_id = payload.project_id, document_id = payload.document_id)
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Project document unlink failed")

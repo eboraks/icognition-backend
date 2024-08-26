@@ -149,7 +149,7 @@ def test_get_document():
     doc = getter.get_document_by_id(130)
     assert doc.id == 130
     
-    display = doc.to_display()
+    display = doc.to_public()
     assert display != None
 
     for ent in display.entities_and_concepts:

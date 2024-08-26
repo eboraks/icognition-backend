@@ -1,7 +1,7 @@
 import logging, sys
 import app.getters as getter
 from app.db_connector import get_engine
-from app.models import Bookmark, Document, Document_Entity_Link, DocumentDisplay, Entity, Question_Answer, SubTopic, SubTopic_Document_Link, SubTopic_Embedding_Link, Embedding, SubTopic_Entity_Link, SubTopicDisplay, TreeNode
+from app.models import Bookmark, Document, Document_Entity_Link, DocumentPublic, Entity, Question_Answer, SubTopic, SubTopic_Document_Link, SubTopic_Embedding_Link, Embedding, SubTopic_Entity_Link, SubTopicDisplay, TreeNode
 from sqlalchemy.orm import Session
 from sqlalchemy import (
     and_,
