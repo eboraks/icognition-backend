@@ -164,7 +164,7 @@ def create_document(page: Page):
 
 def clone_document(doc: Document):
 
-    old_doc = getter.get_document_by_id(doc.id)
+    old_doc = getter.get_document_public_by_id(doc.id)
 
     ## Clone document. This is used when regenerasting a document, we keep the old document and it's related objects
     new_doc = Document()
@@ -570,7 +570,7 @@ async def custom_question(document_id: int, question: str) -> Question_Answer_Di
     """
     This function generates a summary with verbatim sentences
     """
-    doc = getter.get_document_by_id(document_id) 
+    doc = getter.get_document_public_by_id(document_id) 
     
     prompt = AskQuestionPrompt.build_prompt([doc], question)
     generated_response = await genimi_client.generate_response(prompt, AskQuestionPrompt) 

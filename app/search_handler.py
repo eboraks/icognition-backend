@@ -100,7 +100,7 @@ class SearchHandler:
 
         docs = []
         for doc in matched_docs:
-            docs.append(getter.get_document_by_id(doc.id))    
+            docs.append(getter.get_document_public_by_id(doc.id))    
 
 
         if len(docs) == 0:

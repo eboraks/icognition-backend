@@ -11,15 +11,22 @@ import app.html_parser as html_parser
 engine = get_engine()
 
 
+def get_document_public_by_id(document_id) -> DocumentPublic:
+    with Session(engine) as session:
+        doc = session.scalar(select(Document).where(Document.id == document_id))
+        if doc is None:
+            raise ValueError(f"Document with id {document_id} not found")
+        session.add_all(doc.entities)
+        
+        return doc.to_public()
+    
 def get_document_by_id(document_id) -> Document:
-    session = Session(engine)
-    doc = session.scalar(select(Document).where(Document.id == document_id))
-    if doc is None:
-        raise ValueError(f"Document with id {document_id} not found")
-    session.add_all(doc.entities)
-    session.add_all(doc.subtopics)
-    session.close()
-    return doc
+    with Session(engine) as session:
+        doc = session.scalar(select(Document).where(Document.id == document_id))
+        if doc is None:
+            raise ValueError(f"Document with id {document_id} not found")
+        
+        return doc
 
 def get_documents_by_ids(document_ids: set[int]) -> list[Document]:
     """Method that retrieves documents from the database by ID.
@@ -356,7 +363,7 @@ def get_document_display_by_id(document_id: int, cosine_similarity: float = None
         Method that retrieves a document display by ID.
         cosine_similarity: The cosine similarity value to be used find the document. This is mostly for testing purposes.
     """
-    doc = get_document_by_id(document_id)
+    doc = get_document_public_by_id(document_id)
     display = doc.to_public(cosine_similarity=cosine_similarity)
     return display
 

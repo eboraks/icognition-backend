@@ -271,7 +271,7 @@ async def get_documents_plus_by_user_id(user_id: str):
 @app.get('/document/{id}/html_elements', status_code=200)
 async def get_document_html_elements(id: int):
     try:
-        doc = getter.get_document_by_id(id)
+        doc = getter.get_document_public_by_id(id)
         return json.loads(doc.html_elements)
     except Exception as e:
         logging.error(e)
@@ -347,7 +347,7 @@ async def get_document_plus(bookmark_id: int, response: Response, background_tas
 @app.get("/document/{id}")
 async def get_document(id: int, response: Response):
     logging.info(f"Icognition document endpoint called on {id}")
-    document = getter.get_document_by_id(id)
+    document = getter.get_document_public_by_id(id)
 
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -381,7 +381,7 @@ async def get_document_display(id: int, response: Response):
 async def get_document_summary(id: int, response: Response, force: str | None = None):
     
         try:
-            res = getter.get_document_by_id(id)
+            res = getter.get_document_public_by_id(id)
             response.status_code = status.HTTP_200_OK
             return res
     

@@ -59,7 +59,7 @@ async def test_summary_extration():
 
     deleter.reset_document_for_testing(130)
 
-    tdoc = getter.get_document_by_id(130)
+    tdoc = getter.get_document_public_by_id(130)
     assert tdoc != None
 
     assert tdoc.is_about is None
@@ -100,7 +100,7 @@ async def test_entitties_extraction():
     
     deleter.reset_document_for_testing(27)
 
-    tdoc = getter.get_document_by_id(27)
+    tdoc = getter.get_document_public_by_id(27)
     user_id = getter.get_bookmark_by_document_id(tdoc.id).user_id
     entities = getter.get_entities_ids_by_document_id(tdoc.id)
     assert tdoc != None
@@ -133,7 +133,7 @@ async def test_identify_questions_and_answers():
     document_id = 27
     deleter.delete_question_and_answer_associated_with_document(document_id)
 
-    tdoc = getter.get_document_by_id(document_id)
+    tdoc = getter.get_document_public_by_id(document_id)
     user_id = getter.get_bookmark_by_document_id(tdoc.id).user_id
 
     success = await app_logic.generate_doc_quesions_answers(user_id= user_id, doc = tdoc)
@@ -146,7 +146,7 @@ async def test_identify_questions_and_answers():
 
 
 def test_get_document():
-    doc = getter.get_document_by_id(130)
+    doc = getter.get_document_public_by_id(130)
     assert doc.id == 130
     
     display = doc.to_public()
@@ -159,7 +159,7 @@ def test_get_document():
 
 def test_insert_entities():
     
-    doc = getter.get_document_by_id(65)
+    doc = getter.get_document_public_by_id(65)
     
     user_id = 'HqAXhad3jrUWmPibnMf1xZczNIq2'
     entities_one = [
@@ -201,6 +201,6 @@ async def test_main_generate_document():
 
     await main.generate_document(bookmark) 
 
-    doc = getter.get_document_by_id(bookmark.document_id)
+    doc = getter.get_document_public_by_id(bookmark.document_id)
     assert doc != None
     

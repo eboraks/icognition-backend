@@ -269,6 +269,7 @@ class Document(SQLModel, table=True):
             status = self.status,
             updateAt = self.update_at,
             oneSentenceSummary = self.short_summary,
+            summary_citations = self.summary_citations,
             is_about = self.is_about,
             entities_and_concepts= [ent.to_public() for ent in self.entities] ,
             cosine_similarity=cosine_similarity,
@@ -687,6 +688,7 @@ class DocumentPublic(BaseModel):
     status: Optional[str] = None
     updateAt: Optional[datetime] = None
     oneSentenceSummary: Optional[str] = None
+    summary_citations: Optional[List[Dict]] = None
     is_about: Optional[str] = None
     tldr: Optional[List[str]] = None
     entities_and_concepts: Optional[List[EntityPublic]] = None

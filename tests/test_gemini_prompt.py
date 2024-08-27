@@ -12,7 +12,7 @@ user_id = 'yU13Hk9BwEQiREgh91YM6EFKR7M2'
 
 @pytest.mark.asyncio
 async def test_summarization():
-    document = getter.get_document_by_id(109)
+    document = getter.get_document_public_by_id(109)
 
     prompt = SummarizePrompt.build_prompt(document.original_text)
     generated_response = await genimi_client.generate_response(prompt, SummarizePrompt)
@@ -35,7 +35,7 @@ async def test_summarization():
 
 @pytest.mark.asyncio
 async def test_entities():
-    document = getter.get_document_by_id(109)
+    document = getter.get_document_public_by_id(109)
 
     prompt = EntitiesPrompt.build_prompt(document.original_text)
     generated_response = await genimi_client.generate_response(prompt, EntitiesPrompt)
@@ -47,7 +47,7 @@ async def test_entities():
 
 @pytest.mark.asyncio
 async def test_topics():
-    document = getter.get_document_by_id(109)
+    document = getter.get_document_public_by_id(109)
 
     prompt = TopicPrompt.build_prompt(document.original_text)
     generated_response = await genimi_client.generate_response(prompt, TopicPrompt)
@@ -58,7 +58,7 @@ async def test_topics():
 
 @pytest.mark.asyncio
 async def test_questions_answers():
-    document = getter.get_document_by_id(109)
+    document = getter.get_document_public_by_id(109)
 
     prompt = IdentifyQuestionsAnswerPrompt.build_prompt(document.original_text)
     generated_response = await genimi_client.generate_response(prompt, IdentifyQuestionsAnswerPrompt)
@@ -77,7 +77,7 @@ async def test_questions_answers():
 
 @pytest.mark.asyncio
 async def test_ask_question():
-    document = getter.get_document_by_id(109)
+    document = getter.get_document_public_by_id(109)
 
     prompt = AskQuestionPrompt.build_prompt([document], "Who is Trump and what does it do?")
     generated_response = await genimi_client.generate_response(prompt, AskQuestionPrompt)
@@ -99,7 +99,7 @@ async def test_ask_question():
 @pytest.mark.asyncio
 async def test_run_all():
     ## The purpose of this test it to make sure that the gemini_client.py and gemini_prompts_models.py are working as expected
-    document = getter.get_document_by_id(109)
+    document = getter.get_document_public_by_id(109)
 
     ## Test Summarization
     prompt = SummarizePrompt.build_prompt(document.original_text)
