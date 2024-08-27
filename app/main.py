@@ -12,7 +12,7 @@ from app.models import (
     DocumentPublic,
     HTTPError,
     Question_Answer,
-    Question_Answer_Display,
+    RagAnswerDisplay,
     QuestionPlayload,
     SearchPayload,
     SearchResults,
@@ -38,8 +38,8 @@ search = SearchHandler()
 
 logging.basicConfig(
     stream=sys.stdout,
-    format="%(asctime)s - %(funcName)s:%(lineno)d - %(message)s",
-    level=logging.DEBUG,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s",
+    level=logging.INFO,
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
@@ -83,7 +83,7 @@ async def validation_exception_handler(request, exc):
     return PlainTextResponse(str(request), status_code=400)
 
 
-@app.post("/document/question", response_model=Question_Answer_Display, status_code=200)
+@app.post("/document/question", response_model=RagAnswerDisplay, status_code=200)
 async def post_document_question(payload: QuestionPlayload):
     try:
         logging.info(f"Question endpoint called on {payload.document_id} with question {payload.question}")
@@ -469,7 +469,7 @@ async def regenerate_user_subtopics(user_id: str, background_tasks: BackgroundTa
 
 @app.post("/search", status_code=200, response_model=SearchResults)
 async def search_documents(search_payload: SearchPayload, response: Response):
-    logging.info(f"Search documents")
+    logging.info(f"Search documents with query: {search_payload.query}")
     
     try:
         results = await search(search_payload.user_id, search_payload.query)

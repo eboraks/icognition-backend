@@ -17,7 +17,7 @@ from app.gemini_client import GeminiClient
 
 logging.basicConfig(
     stream=sys.stdout,
-    format="%(asctime)s - %(message)s",
+    format="%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s",
     level=logging.INFO,
     datefmt="%Y-%m-%d %H:%M:%S",
 )
@@ -61,7 +61,7 @@ class SearchHandler:
 
         """
         if not query:
-            docs = self.get_documents_display_for_user_id(user_id)
+            docs = [d.to_public for d in getter.get_documents_by_user_id(user_id)]
             return SearchResults(documents_display=docs, rag_answer=None)
 
         is_question = re.match(self._question_regex, query, re.IGNORECASE)
@@ -77,13 +77,13 @@ class SearchHandler:
 
             docs = []
             for doc_id in rag_results.documents_used:
-                docs.append(getter.get_document_display_by_id(doc_id)) 
+                docs.append(getter.get_document_public_by_id(doc_id)) 
             
             return SearchResults(documents_display=docs, rag_answer=rag_results)
                 
         else:
             matched_docs = self.search_embeddings(user_id=user_id, search_term=query, threshold=0.5, max_results=10)
-            return SearchResults(documents_display=self.from_matches_to_display(matched_docs), rag_answer=None)
+            return SearchResults(documents_display=self.docs_convert_matches_to_doc_public(matched_docs), rag_answer=None)
         
 
     async def test_rag_workflow(self) -> RagAnswerDisplay:
@@ -100,25 +100,21 @@ class SearchHandler:
 
         docs = []
         for doc in matched_docs:
-            docs.append(getter.get_document_public_by_id(doc.id))    
+            docs.append(getter.get_document_by_id(doc.id))    
 
 
         if len(docs) == 0:
             return f"No documents found for the search term '{search_term}'"
 
         try:
-            prompt = AskQuestionPrompt.build_prompt(docs, search_term)
-            generated_response = await gemini_client.generate_response(prompt, AskQuestionPrompt)
+            generated_response = await gemini_client.generate_response(
+                AskQuestionPrompt.build_prompt(docs, search_term), 
+                AskQuestionPrompt)
 
             rag_answer = generated_response.question_answer_builder(question=search_term)
 
-            answer_display = RagAnswerDisplay(
-                answer=rag_answer.answer,
-                documents_used=[c['document_id'] for c in rag_answer.citations],
-                llm_service_meta=None
-            )
-            logging.info(answer_display)
-            return answer_display
+            logging.info(f"Generated RAG answer for search term {search_term}")
+            return rag_answer
         except ApiCallException as e:
             logging.error(f"Error calling TogetherMixtral API: {str(e)}")
             return None
@@ -179,24 +175,15 @@ class SearchHandler:
         
         return results
      
-    def from_matches_to_display(self, matched_docs: list[MatchedDocument]) -> list[DocumentPublic]:
+    def docs_convert_matches_to_doc_public(self, matched_docs: list[MatchedDocument]) -> list[DocumentPublic]:
         """
         This function returns a list of DocumentDisplay objects
         """
         logging.info(f"Get document display for matched documents")
         results = []
         for doc in matched_docs:
-            display = getter.get_document_display_by_id(doc.id, doc.cosine_similarity)
-            results.append(display) 
+            public = getter.get_document_public_by_id(doc.id)
+            public.cosine_similarity = doc.cosine_similarity
+            results.append(public) 
 
-        return results
-    
-    def get_documents_display_for_user_id(self, user_id: str):
-
-        docs = getter.get_documents_by_user_id(user_id)
-        results = []
-        for doc in docs:
-            display = getter.get_document_display_by_id(doc.id)
-            results.append(display)
-        
         return results

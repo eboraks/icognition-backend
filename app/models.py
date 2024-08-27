@@ -380,10 +380,17 @@ class Document(SQLModel, table=True):
 
 
 
-class Question_Answer_Display(BaseModel):
+class RagAnswerDisplay(BaseModel):
     question: str
     answer: str
     citations: list[dict]
+
+class RagAnswerDisplay(BaseModel):
+    question: Optional[str] = None
+    answer: Optional[str] = None
+    documents_used: Optional[List[int]] = None
+    citations: list[dict] = None
+    llm_service_meta: Optional[dict] = None
 
 
 class Question_Answer(SQLModel, table=True):
@@ -402,8 +409,8 @@ class Question_Answer(SQLModel, table=True):
     document: Document = Relationship(back_populates="qans")
 
 
-    def to_display(self) -> Question_Answer_Display:
-        return Question_Answer_Display(
+    def to_display(self) -> RagAnswerDisplay:
+        return RagAnswerDisplay(
             question=self.question,
             answer=self.answer,
             citations=self.citations,
@@ -700,10 +707,7 @@ class DocumentPublic(BaseModel):
     html_elements: Optional[List[dict]] = None
 
 
-class RagAnswerDisplay(BaseModel):
-    answer: Optional[str]
-    documents_used: Optional[List[int]]
-    llm_service_meta: Optional[Dict]
+
 
 
 class Answer(BaseModel):

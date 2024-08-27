@@ -20,7 +20,7 @@ from app.models import (
     Embedding,
     Document_Entity_Link,
     Question_Answer,
-    Question_Answer_Display,
+    RagAnswerDisplay,
     SubTopic_Document_Link,
     SubTopic_Embedding_Link
 )
@@ -566,7 +566,7 @@ def update_entity_embedding(entity: Entity):
 
 
 
-async def custom_question(document_id: int, question: str) -> Question_Answer_Display:
+async def custom_question(document_id: int, question: str) -> RagAnswerDisplay:
     """
     This function generates a summary with verbatim sentences
     """

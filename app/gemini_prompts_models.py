@@ -1,7 +1,7 @@
 import json
 from pydantic import BaseModel
 
-from app.models import Answer, Document, Entity, Question_Answer, Question_Answer_Display
+from app.models import Answer, Document, Entity, Question_Answer, RagAnswerDisplay
 import app.transformers_util as transformers_util
 
 
@@ -255,8 +255,12 @@ class AskQuestionPrompt(BaseModel):
             To reduce the number of tokens in the response, use the begging and end of the string to reference the citation.\n 
             Question: {QUESTION}\n {ARTICLES}""".format(QUESTION=question, ARTICLES=_articles) 
     
-    def question_answer_builder(self, question: str) -> Question_Answer_Display: 
-        return Question_Answer_Display(question=question, answer=self.answer, citations=[dc.__dict__ for dc in self.documents_citations])
+    def question_answer_builder(self, question: str) -> RagAnswerDisplay: 
+        return RagAnswerDisplay(
+            question=question, 
+            answer=self.answer, 
+            citations=[dc.__dict__ for dc in self.documents_citations],
+            documents_used=[dc.document_id for dc in self.documents_citations])
     
 
 
