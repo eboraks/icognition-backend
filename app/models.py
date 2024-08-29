@@ -391,6 +391,7 @@ class RagAnswerDisplay(BaseModel):
     documents_used: Optional[List[int]] = None
     citations: list[dict] = None
     llm_service_meta: Optional[dict] = None
+    created_at: Optional[datetime] = None
 
 
 class Question_Answer(SQLModel, table=True):
@@ -414,7 +415,8 @@ class Question_Answer(SQLModel, table=True):
             question=self.question,
             answer=self.answer,
             citations=self.citations,
-            relevance_score=None
+            relevance_score=None,
+            created_at=self.created_at
         )
 
 class Study_Task(SQLModel, table=True):
