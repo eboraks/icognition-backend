@@ -422,7 +422,7 @@ class Study_Project(SQLModel, table=True):
     id: uuid_pkg.UUID = Field(default_factory=uuid_pkg.uuid4, primary_key=True)
     name: str = Field(nullable=False)
     objective: str = Field(default=None, nullable=True)
-    explanation: str = Field(default=None, nullable=True)
+    ai_explanation: str = Field(default=None, nullable=True)
     user_id: str = Field(nullable=False)
     status: str = Field(default="PENDING", nullable=True)
     objective_tasks_vector: List[float] = Field(sa_column=Column(Vector(768)))
@@ -442,7 +442,7 @@ class Study_Project(SQLModel, table=True):
             id=self.id,
             name=self.name,
             objective=self.objective,
-            explanation=self.explanation,
+            ai_explanation=self.explanation,
             user_id=self.user_id,
             created_at=self.created_at,
             tasks=[task.to_public() for task in self.tasks]
@@ -455,7 +455,7 @@ class Study_Task(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     description: str = Field(default=None)
-    explanation: str = Field(default=None, nullable=True)
+    ai_explanation: str = Field(default=None, nullable=True)
     status: str = Field(default="PENDING", nullable=True)
     description_vector: List[float] = Field(sa_column=Column(Vector(768)))
     project_id: Optional[uuid_pkg.UUID] = Field(default=None, foreign_key="study_project.id")
@@ -471,7 +471,7 @@ class Study_Task(SQLModel, table=True):
         return StudyTaskPublic(
             id=self.id,
             description=self.description,
-            explanation=self.explanation,
+            ai_explanation=self.ai_explanation,
             status=self.status,
             project_id=self.project_id,
             created_at=self.created_at,
@@ -543,7 +543,7 @@ class StudyTaskPublic(SQLModel, table=False):
 
     id: Optional[int] = Field(default=None)
     description: Optional[str] = Field(default=None)
-    explanation: Optional[str] = Field(default=None)
+    ai_explanation: Optional[str] = Field(default=None)
     status: Optional[str] = Field(default=None)
     project_id: Optional[int] = Field(default=None)
     citations: Optional[list[StudyTaskCitationPublic]] = Field(default=[])
@@ -560,7 +560,7 @@ class StudyProjectPublic(SQLModel, table=False):
     id: Optional[uuid_pkg.UUID] = Field(default=None)
     name: str = Field(nullable=False)
     objective: str = Field(default=None)
-    explanation: Optional[str] = Field(default=None)
+    ai_explanation: Optional[str] = Field(default=None)
     user_id: str = Field(nullable=False)
     tasks: Optional[list[StudyTaskPublic]] = Field(default=[])
     created_at: Optional[datetime] = Field(default=None)
