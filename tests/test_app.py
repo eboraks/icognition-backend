@@ -32,7 +32,7 @@ async def test_bookmark_page():
         app_logic.delete_bookmark_and_associate_records(bookmark.id)
 
     page = app_logic.create_page(url)
-    bm = app_logic.create_bookmark(page)
+    bm = app_logic.create_source_bookmark(page)
     bookmark = app_logic.get_bookmark_by_url(url)
     assert bookmark != None
 
@@ -63,7 +63,6 @@ async def test_summary_extration():
     assert tdoc != None
 
     assert tdoc.is_about is None
-    assert tdoc.learning_from_document is None
     assert tdoc.summary_bullet_points is None
     assert tdoc.summary_citations is None
 
@@ -73,15 +72,14 @@ async def test_summary_extration():
     with Session(engine) as session:
         session.add(tdoc)
         session.refresh(tdoc)
-        assert len(tdoc.summary_bullet_points) > 0
-        assert tdoc.is_about != None
-        assert tdoc.learning_from_document != None
-        assert len(tdoc.summary_citations) > 0
+        assert len(tdoc.ai_bullet_points) > 0
+        assert tdoc.ai_is_about != None
+        assert len(tdoc.ai_citations) > 0
 
 
     start_match_counter = []
     end_match_counter = []
-    for c in tdoc.summary_citations:
+    for c in tdoc.ai_citations:
         
         citation = Citation(**c)
         assert citation.start_str != None
@@ -101,7 +99,7 @@ async def test_entitties_extraction():
     deleter.reset_document_for_testing(27)
 
     tdoc = getter.get_document_public_by_id(27)
-    user_id = getter.get_bookmark_by_document_id(tdoc.id).user_id
+    user_id = getter.get_source_by_document_id(tdoc.id).user_id
     entities = getter.get_entities_ids_by_document_id(tdoc.id)
     assert tdoc != None
 
@@ -134,7 +132,7 @@ async def test_identify_questions_and_answers():
     deleter.delete_question_and_answer_associated_with_document(document_id)
 
     tdoc = getter.get_document_public_by_id(document_id)
-    user_id = getter.get_bookmark_by_document_id(tdoc.id).user_id
+    user_id = getter.get_source_by_document_id(tdoc.id).user_id
 
     success = await app_logic.generate_doc_quesions_answers(user_id= user_id, doc = tdoc)
 

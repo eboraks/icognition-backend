@@ -102,3 +102,5 @@ wcwidth==0.2.13
 weasel==0.3.4
 wheel==0.41.2
 widgetsnbextension==4.0.9
+google-generativeai==0.7.2
+google-cloud-storage==2.18.2

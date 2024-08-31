@@ -6,7 +6,7 @@ from sqlmodel import SQLModel
 
 from alembic import context
 
-from app.models import Bookmark, Document, Entity
+from app.models import Source, Document, Entity
 
 connection_string = os.getenv("DATABASE_URL")
 

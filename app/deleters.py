@@ -1,7 +1,7 @@
 import logging, sys
 import app.getters as getter
 from app.db_connector import get_engine
-from app.models import Bookmark, Document, Document_Entity_Link, DocumentPublic, Entity, Question_Answer, SubTopic, SubTopic_Document_Link, SubTopic_Embedding_Link, Embedding, SubTopic_Entity_Link, SubTopicDisplay, TreeNode
+from app.models import Source, Document, Document_Entity_Link, DocumentPublic, Entity, Question_Answer, SubTopic, SubTopic_Document_Link, SubTopic_Embedding_Link, Embedding, SubTopic_Entity_Link, SubTopicDisplay, TreeNode
 from sqlalchemy.orm import Session
 from sqlalchemy import (
     and_,
@@ -22,19 +22,19 @@ engine = get_engine()
 
 ### This file contains the logic for deleting records from the database
 
-def delete_bookmark_and_associate_records(bookmark_id) -> None:
+def delete_source_and_associate_records(source_id) -> None:
     """
     This function deletes a bookmark and all associated records from the database.
     This function was create for testing purposes.
     """
-    doc = getter.get_document_by_bookmark_id(bookmark_id)
+    doc = getter.get_document_by_source_id(source_id)
     delete_document_and_associate_records(doc.id)
 
-    logging.info(f"Deleting bookmark {bookmark_id} and associated records")
+    logging.info(f"Deleting bookmark {source_id} and associated records")
     with Session(engine) as session:
-        session.execute(delete(Bookmark).where(Bookmark.id == bookmark_id))
+        session.execute(delete(Source).where(Source.id == source_id))
         session.commit()
-        logging.info(f"Bookmark {bookmark_id} and associated records deleted")
+        logging.info(f"Bookmark {source_id} and associated records deleted")
 
 
 def reset_document_for_testing(document_id) -> None:
@@ -52,10 +52,9 @@ def reset_document_for_testing(document_id) -> None:
         delete_document_embedding_and_associate_records(document_id)
 
         doc = session.scalar(select(Document).where(Document.id == document_id))
-        doc.is_about = None
-        doc.learning_from_document = None
-        doc.summary_bullet_points = None
-        doc.summary_citations = None
+        doc.ai_is_about = None
+        doc.ai_bullet_points = None
+        doc.ai_citations = None
         
         session.commit()
         
@@ -129,6 +128,6 @@ def delete_all_of_users_records(user_id: str) -> None:
     Args:
         user_id int
     """
-    bookmarks = getter.get_bookmarks_by_user_id(user_id)
+    bookmarks = getter.get_sources_by_user_id(user_id)
     for bookmark in bookmarks:
-        delete_bookmark_and_associate_records(bookmark.id)    
+        delete_source_and_associate_records(bookmark.id)    

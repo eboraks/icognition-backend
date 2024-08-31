@@ -12,7 +12,7 @@ from app.db_connector import get_engine
 from app.icog_util import DocSummarizer, original_text_to_sentences, sentences_to_text
 from pydantic.json import pydantic_encoder
 from app.models import (
-    Bookmark,
+    Source,
     Entity,
     Page,
     Document,
@@ -20,7 +20,7 @@ from app.models import (
     Embedding,
     Document_Entity_Link,
     Question_Answer,
-    RagAnswerDisplay,
+    RagAnswerPublic,
     SubTopic_Document_Link,
     SubTopic_Embedding_Link
 )
@@ -63,63 +63,6 @@ def test_db_connection():
         return None
 
 
-def delete_bookmark_and_associate_records(bookmark_id) -> None:
-    """
-    This function deletes a bookmark and all associated records from the database.
-    This function was create for testing purposes.
-    """
-    doc = getter.get_document_by_bookmark_id(bookmark_id)
-    delete_document_and_associate_records(doc.id)
-
-    logging.info(f"Deleting bookmark {bookmark_id} and associated records")
-    with Session(engine) as session:
-        session.execute(delete(Bookmark).where(Bookmark.id == bookmark_id))
-        session.commit()
-        logging.info(f"Bookmark {bookmark_id} and associated records deleted")
-
-
-def delete_document_and_associate_records(document_id) -> None:
-    """
-    This function deletes a document and all associated records from the database.
-    This function was create for testing purposes.
-    """
-    logging.info(f"Deleting document {document_id} and associated records")
-    with Session(engine) as session:
-        delete_subt_links = session.scalars(select(SubTopic_Document_Link).where(SubTopic_Document_Link.document_id == document_id)).all()
-        for link in delete_subt_links:
-            session.delete(link)
-
-        session.flush()
-        delete_doc_ent_links = session.scalars(select(Document_Entity_Link).where(Document_Entity_Link.document_id == document_id)).all()
-        for delink in delete_doc_ent_links:
-            session.delete(delink)
-
-        delete_doc_embs = session.scalars(select(Embedding).where(Embedding.source_id == document_id)).all()
-        emb_ids = []
-        for emb in delete_doc_embs:
-            emb_ids.append(emb.id)
-            session.delete(emb)
-
-        session.flush()
-        delete_subt_emb_links = session.scalars(select(SubTopic_Embedding_Link).where(SubTopic_Embedding_Link.embedding_id.in_(emb_ids))).all()
-        for emblink in delete_subt_emb_links:
-            session.delete(emblink)
-        
-        session.execute(delete(Document).where(Document.id == document_id))
-
-        session.commit()
-        logging.info(f"Document {document_id} and associated records deleted")
-
-
-def delete_all_of_users_records(user_id: str) -> None:
-    """Delete all of the records for a user. This function was create for testing
-
-    Args:
-        user_id int
-    """
-    bookmarks = getter.get_bookmarks_by_user_id(user_id)
-    for bookmark in bookmarks:
-        delete_bookmark_and_associate_records(bookmark.id)
 
 
 
@@ -203,7 +146,7 @@ def reassociate_bookmark_with_document(old_document_id, new_document_id):
     """
     with Session(engine) as session:
         bookmark = session.scalar(
-            select(Bookmark).where(Bookmark.document_id == old_document_id)
+            select(Source).where(Source.document_id == old_document_id)
         )
         if bookmark is None:
             logging.error(f"Bookmark with document {old_document_id} not found")
@@ -328,7 +271,7 @@ async def generate_summary(doc: Document, testing: bool = False) -> Document:
     try:
         ## raw_answer is the response from LLM with the support sentences.
         doc = response.populate_document(doc)
-        doc.summary_vector = await doc.generate_vector(geminiClient=genimi_client)
+        doc.ai_summary_vector = await doc.generate_vector(geminiClient=genimi_client)
         doc.status = "Done"
         doc.update_at = datetime.datetime.now()
         update_document(doc)
@@ -444,15 +387,15 @@ async def generate_doc_quesions_answers(user_id: str, doc: Document, testing: bo
 
 
 
-def create_bookmark(page: Page, user_id: str) -> Bookmark:
+def create_source_bookmark(page: Page, user_id: str) -> Source:
     session = Session(engine)
 
     # Check if document exists, retrieve the bookmark and return
     # if exists. Else, create the document, bookmark.
 
     bookmark = session.scalar(
-        select(Bookmark).where(
-            and_(Bookmark.url == page.clean_url, Bookmark.user_id == user_id)
+        select(Source).where(
+            and_(Source.url == page.clean_url, Source.user_id == user_id)
         )
     )
 
@@ -463,7 +406,7 @@ def create_bookmark(page: Page, user_id: str) -> Bookmark:
 
     doc = create_document(page)
 
-    bookmark = Bookmark()
+    bookmark = Source()
     bookmark.url = page.clean_url
     bookmark.update_at = datetime.datetime.now()
     bookmark.document_id = doc.id
@@ -499,12 +442,11 @@ async def generate_embeddings(user_id: str):
 
         docs = session.scalars(
             select(Document)\
-            .join(Bookmark, Bookmark.document_id == Document.id)\
+            .join(Source, Source.document_id == Document.id)\
             .where(and_(
                 Document.id.not_in(docs_embedding),
-                Document.is_about != None,
-                Document.learning_from_document != None, 
-                Document.status == 'Done', Bookmark.user_id == user_id))).unique().all()
+                Document.ai_is_about != None,
+                Document.status == 'Done', Source.user_id == user_id))).unique().all()
 
     generate_embeddings_for_docs(docs, user_id)   
 
@@ -525,9 +467,9 @@ async def generate_embeddings_for_entities(user_id: str):
         entities = session.scalars(
             select(Entity)\
             .join(Document_Entity_Link, Document_Entity_Link.entity_id == Entity.id)\
-            .join(Bookmark, Bookmark.document_id == Document_Entity_Link.document_id)\
+            .join(Source, Source.document_id == Document_Entity_Link.document_id)\
             .outerjoin(Embedding, Embedding.source_id == Entity.id)\
-            .where(Embedding.source_id == None, Embedding.user_id == user_id, Bookmark.user_id == user_id)).unique().all()
+            .where(Embedding.source_id == None, Embedding.user_id == user_id, Source.user_id == user_id)).unique().all()
     
         embeddings = []
         for entity in entities:
@@ -566,7 +508,7 @@ def update_entity_embedding(entity: Entity):
 
 
 
-async def custom_question(document_id: int, question: str) -> RagAnswerDisplay:
+async def custom_question(document_id: int, question: str) -> RagAnswerPublic:
     """
     This function generates a summary with verbatim sentences
     """

@@ -63,15 +63,15 @@ async def test_generate_docs_vector():
     docs = getter.get_documents()
 
     for doc in docs:
-        if doc.summary_vector is None:
+        if doc.ai_summary_vector is None:
             doc.summary_vector = await doc.generate_vector(geminiClient=genimi_client)
             update_document(doc)
 
 
     docs = getter.get_documents()
     for doc in docs:
-        if doc.is_about and doc.summary_bullet_points:
-            assert doc.summary_vector is not None
+        if doc.ai_is_about and doc.ai_bullet_points:
+            assert doc.ai_summary_vector is not None
 
 @pytest.mark.asyncio
 async def test_find_related_docs():

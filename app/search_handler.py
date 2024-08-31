@@ -1,7 +1,7 @@
 import logging, re, sys, os
 from app.transformers_util import generate_embeddings
 from app.db_connector import get_engine
-from app.models import DocumentPublic, RagAnswerDisplay, SearchResults
+from app.models import DocumentPublic, RagAnswerPublic, SearchResults
 import app.getters as getter
 import app.icog_util as util
 from sqlalchemy import text
@@ -34,8 +34,8 @@ engine = get_engine()
 gemini_client = GeminiClient()
 
 class MatchedDocument(BaseModel):
-    id: int
-    entity_id: int | None
+    id: str
+    entity_id: str | None
     embedding_id: int
     cosine_similarity: float
 
@@ -86,15 +86,15 @@ class SearchHandler:
             return SearchResults(documents_display=self.docs_convert_matches_to_doc_public(matched_docs), rag_answer=None)
         
 
-    async def test_rag_workflow(self) -> RagAnswerDisplay:
+    async def test_rag_workflow(self) -> RagAnswerPublic:
         
-        return RagAnswerDisplay(
+        return RagAnswerPublic(
             answer='Netflix is a worldwide Internet TV company that offers a wide variety of TV shows, movies, documentaries, and anime, along with award-winning Netflix originals. It started as a DVD-by-mail service and has evolved over the years to become a streaming service with a huge library of content. The brand is well-known and trusted, and it aims to delight customers in hard-to-copy, margin-enhancing ways. The company continually experiments with its non-member site to identify which potential ideas resonate with customers and determine how to position new features they have already built.',
             documents_used=[132], 
             llm_service_meta={'prompt_tokens': 2890, 'completion_tokens': 330, 'total_tokens': 3220, 'duration': 4043})
         
 
-    async def rag_workflow(self, user_id: str, search_term: str) -> RagAnswerDisplay | str:
+    async def rag_workflow(self, user_id: str, search_term: str) -> RagAnswerPublic | str:
         
         matched_docs = self.search_embeddings(user_id=user_id, search_term=search_term, threshold=0.5, max_results=3)
 
@@ -128,7 +128,7 @@ class SearchHandler:
         logging.info(f"Embeddings for term {search_term} are length is {len(embedded_term)}")
 
         # Get document with some embeddings that are closest to the search term
-        logging.info(f"Searching for documents with embeddings closest to term {search_term}")
+        logging.info(f"Searching for documents with embeddings closest to term {search_term}. Attempt {attempts} with threshold {threshold}")
 
         with Session(self._db_engine) as session:
             stmt = text("""SELECT a.emb_id, a.source_type, a.source_id, a.cosine_similarity
@@ -160,12 +160,12 @@ class SearchHandler:
                 docs = getter.get_documents_by_entity_id(emb_source_id)
                 for doc in docs:
                     results.append(MatchedDocument(id=doc.id, 
-                                                   entity_id = emb_source_id, 
+                                                   entity_id = str(emb_source_id), 
                                                    embedding_id=emb_id,
                                                    cosine_similarity=emb_cosine_similarity))
             
             if emb_source == "document":
-                results.append(MatchedDocument(id=emb_source_id, 
+                results.append(MatchedDocument(id=str(emb_source_id), 
                                                 entity_id = None, 
                                                 embedding_id=emb_id,
                                                 cosine_similarity=emb_cosine_similarity))

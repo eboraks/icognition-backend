@@ -29,7 +29,6 @@ async def test_summarization():
 
     document = generated_response.populate_document(document)
     assert document.is_about is not None
-    assert document.learning_from_document is not None
     assert len(document.summary_bullet_points) > 0 
     
 

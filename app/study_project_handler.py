@@ -112,7 +112,7 @@ def get_study_tasks(project_id: int) -> list[StudyTaskPublic]:
 def find_related_docs(project_id: int, cosine_distance_freshhold: float = 0.30) -> list[Document]:
     with Session(engine) as session:
         stmt = select(Study_Project.objective_tasks_vector).where(Study_Project.id == project_id).scalar_subquery()
-        docs = session.scalars(select(Document).filter(Document.summary_vector.cosine_distance(stmt) <= cosine_distance_freshhold)).all()
+        docs = session.scalars(select(Document).filter(Document.ai_summary_vector.cosine_distance(stmt) <= cosine_distance_freshhold)).all()
         linked_docs = session.scalars(select(Document).join(Study_Project_Document_Link).where(Study_Project_Document_Link.project_id == project_id)).all()
         
         ## Add the linked docs to the list of docs if they are not already in the list
@@ -174,7 +174,7 @@ def get_project_entities(project_id: int) -> list[TreeNode]:
             json_agg(distinct l.document_id) as docs_ids
         FROM public.entity e
         JOIN public.document_entity_link l ON l.entity_id = e.id
-        JOIN public.bookmark b ON b.document_id = l.document_id
+        JOIN public.source s ON s.document_id = l.document_id
             WHERE l.document_id IN ({docs_ids_str})
         GROUP BY 1) a
         """)

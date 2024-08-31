@@ -1,7 +1,7 @@
 import json
 from pydantic import BaseModel
 
-from app.models import Answer, Document, Entity, Question_Answer, RagAnswerDisplay
+from app.models import Answer, Document, Entity, Question_Answer, RagAnswerPublic
 import app.transformers_util as transformers_util
 
 
@@ -37,7 +37,6 @@ class SummarizePrompt(BaseModel):
     """
 
     what_this_article_is_about: str
-    key_learning_from_article: str
     key_points: list[str]
     citations_sentances: list[Citation]
     meta_answer: str
@@ -73,10 +72,9 @@ class SummarizePrompt(BaseModel):
         Returns:
             Document: The populated document.
         """
-        document.is_about = self.what_this_article_is_about
-        document.learning_from_document = self.key_learning_from_article
-        document.summary_bullet_points = self.key_points
-        document.summary_citations = [c.__dict__ for c in self.citations_sentances]
+        document.ai_is_about = self.what_this_article_is_about
+        document.ai_bullet_points = self.key_points
+        document.ai_citations = [c.__dict__ for c in self.citations_sentances]
 
         return document
 
@@ -255,8 +253,8 @@ class AskQuestionPrompt(BaseModel):
             To reduce the number of tokens in the response, use the begging and end of the string to reference the citation.\n 
             Question: {QUESTION}\n {ARTICLES}""".format(QUESTION=question, ARTICLES=_articles) 
     
-    def question_answer_builder(self, question: str) -> RagAnswerDisplay: 
-        return RagAnswerDisplay(
+    def question_answer_builder(self, question: str) -> RagAnswerPublic: 
+        return RagAnswerPublic(
             question=question, 
             answer=self.answer, 
             citations=[dc.__dict__ for dc in self.documents_citations],

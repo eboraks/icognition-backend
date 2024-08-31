@@ -6,13 +6,13 @@ from fastapi.responses import FileResponse
 from typing import List
 from app.models import (
     Answer,
-    Bookmark,
+    Source,
     Document,
     PagePayload,
     DocumentPublic,
     HTTPError,
     Question_Answer,
-    RagAnswerDisplay,
+    RagAnswerPublic,
     QuestionPlayload,
     SearchPayload,
     SearchResults,
@@ -83,7 +83,7 @@ async def validation_exception_handler(request, exc):
     return PlainTextResponse(str(request), status_code=400)
 
 
-@app.post("/document/question", response_model=RagAnswerDisplay, status_code=200)
+@app.post("/document/question", response_model=RagAnswerPublic, status_code=200)
 async def post_document_question(payload: QuestionPlayload):
     try:
         logging.info(f"Question endpoint called on {payload.document_id} with question {payload.question}")
@@ -104,7 +104,7 @@ async def post_document_question(payload: QuestionPlayload):
             "description": "Reporting back errors",
         },
         404: {"model": HTTPError, "description": "Page is not supported"},
-        201: {"model": Bookmark, "description": "Bookmark created successfully"},
+        201: {"model": Source, "description": "Bookmark created successfully"},
     },
 )
 async def create_bookmark(
@@ -138,9 +138,9 @@ async def create_bookmark(
         )
 
     ## Check in bookmark already exists
-    _bookmark = getter.get_bookmark_by_url(payload.user_id, page.clean_url)
+    _bookmark = getter.get_source_by_url(payload.user_id, page.clean_url)
     if _bookmark is not None:
-        _doc = getter.get_document_by_bookmark_id(_bookmark.id)
+        _doc = getter.get_document_by_source_id(_bookmark.id)
         
         if _doc.status == "Done":
             logging.info(f"Bookmark already exists for {page.clean_url}")
@@ -157,7 +157,7 @@ async def create_bookmark(
             return _bookmark
     else:
         logging.info(f"Page object created for {page.clean_url}")
-        _bookmark = app_logic.create_bookmark(page, payload.user_id)
+        _bookmark = app_logic.create_source_bookmark(page, payload.user_id)
         logging.info(f"Bookmark created for {_bookmark.url}")
         background_tasks.add_task(generate_document, bookmark = _bookmark)
         response.status_code = status.HTTP_201_CREATED
@@ -166,15 +166,15 @@ async def create_bookmark(
 
 @app.post(
     "/document/regenerate",
-    response_model=Bookmark,
+    response_model=Source,
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def post_regenerate_document(
     old_doc: Document, background_tasks: BackgroundTasks
 ):
     """
-    This method create document using a bookmark id and a URL.
-    Because create_bookmark also generate document, this method is use to re-generate
+    This method create document using a source id and a URL.
+    Because create_source_bookmark also generate document, this method is use to re-generate
     the a document. Because it can take time to generate a document, this method
     kickoff the generate and return 202
     """
@@ -194,7 +194,7 @@ async def post_regenerate_document(
 
 
 ## Background task to generate summaries from LLM
-async def generate_document(bookmark: Bookmark):
+async def generate_document(bookmark: Source):
     document = getter.get_document_by_id(bookmark.document_id)
 
     if document.status in ["Pending", "Done", "Failure"]:
@@ -233,9 +233,9 @@ async def regenerate_document(doc: Document):
             )
 
 
-@app.get("/bookmarks/user/{user_id}", response_model=List[Bookmark], status_code=200)
+@app.get("/bookmarks/user/{user_id}", response_model=List[Source], status_code=200)
 async def get_bookmarks_by_user_id(user_id: str):
-    bookmarks = getter.get_bookmarks_by_user_id(user_id)
+    bookmarks = getter.get_sources_by_user_id(user_id)
 
     if bookmarks is None:
         raise HTTPException(status_code=404, detail="Bookmarks not found")
@@ -243,9 +243,9 @@ async def get_bookmarks_by_user_id(user_id: str):
     logging.info(f"Icognition return {len(bookmarks)} bookmarks")
     return bookmarks
 
-@app.post("/bookmark/user", response_model=Bookmark, status_code=200)
+@app.post("/bookmark/user", response_model=Source, status_code=200)
 async def get_bookmarks_by_user_id(payload: PagePayload):
-    bookmark = getter.get_bookmark_by_url(payload.user_id, payload.url)
+    bookmark = getter.get_source_by_url(payload.user_id, payload.url)
 
     if bookmark is None:
         raise HTTPException(status_code=404, detail="Bookmark not found")
@@ -269,7 +269,7 @@ async def get_documents_plus_by_user_id(user_id: str):
     return documents
 
 @app.get('/document/{id}/html_elements', status_code=200)
-async def get_document_html_elements(id: int):
+async def get_document_html_elements(id: str):
     try:
         doc = getter.get_document_public_by_id(id)
         return json.loads(doc.html_elements)
@@ -279,9 +279,9 @@ async def get_document_html_elements(id: int):
 
 
 
-@app.get("/bookmark", response_model=Bookmark, status_code=200)
+@app.get("/bookmark", response_model=Source, status_code=200)
 async def get_bookmark_by_url(url: str):
-    bookmark = getter.get_bookmark_by_url(url)
+    bookmark = getter.get_source_by_url(url)
 
     if bookmark is None:
         raise HTTPException(status_code=404, detail="Bookmark not found")
@@ -291,9 +291,9 @@ async def get_bookmark_by_url(url: str):
 
 
 @app.get("/bookmark/{id}/document")
-async def get_bookmark_document(id: int, response: Response):
+async def get_bookmark_document(id: str, response: Response):
     logging.info(f"Icognition bookmark document endpoint called on {id}")
-    document = getter.get_document_by_bookmark_id(id)
+    document = getter.get_document_by_source_id(id)
 
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -307,7 +307,7 @@ async def get_bookmark_document(id: int, response: Response):
         return document
 
 
-@app.get("/document_plus/{bookmark_id}", responses={
+@app.get("/document_plus/{source_id}", responses={
         404: {
             "model": HTTPError,
             "description": "Returning document error",
@@ -315,11 +315,11 @@ async def get_bookmark_document(id: int, response: Response):
         206: {"model": None, "description": "Document is being processed"},
         200: {"model": DocumentPublic, "description": "Document is ready"},
     })
-async def get_document_plus(bookmark_id: int, response: Response, background_tasks: BackgroundTasks):
+async def get_document_plus(source_id: str, response: Response, background_tasks: BackgroundTasks):
     """get document with entities and concepts"""
 
-    logging.info(f"Document plus -> endpoint called on bookmark {bookmark_id}")
-    document = getter.get_document_by_bookmark_id(bookmark_id)
+    logging.info(f"Document plus -> endpoint called on bookmark {source_id}")
+    document = getter.get_document_by_source_id(source_id)
 
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -345,7 +345,7 @@ async def get_document_plus(bookmark_id: int, response: Response, background_tas
 
 
 @app.get("/document/{id}")
-async def get_document(id: int, response: Response):
+async def get_document(id: str, response: Response):
     logging.info(f"Icognition document endpoint called on {id}")
     document = getter.get_document_public_by_id(id)
 
@@ -360,25 +360,8 @@ async def get_document(id: int, response: Response):
         response.status_code = status.HTTP_200_OK
         return document
     
-@app.get("/document_display/{id}")
-async def get_document_display(id: int, response: Response):
-
-    logging.info(f"Icognition document display endpoint called on {id}")
-    document = getter.get_document_display_by_id(id)
-
-    if document is None:
-        raise HTTPException(status_code=404, detail="Document not found")
-
-    # If document is still in processing, let the client know
-    if document.status == "Processing":
-        response.status_code = status.HTTP_206_PARTIAL_CONTENT
-        return document
-    else:
-        response.status_code = status.HTTP_200_OK
-        return document
-    
 @app.get("/document/{id}/xray")
-async def get_document_summary(id: int, response: Response, force: str | None = None):
+async def get_document_summary(id: str, response: Response, force: str | None = None):
     
         try:
             res = getter.get_document_public_by_id(id)
@@ -391,7 +374,7 @@ async def get_document_summary(id: int, response: Response, force: str | None = 
 
 
 @app.get("/document/{id}/questions_answers")
-async def get_document_questions_answers(id: int, response: Response):
+async def get_document_questions_answers(id: str, response: Response):
 
     try:
         qas = getter.get_question_answer_by_document_id(id)
@@ -419,13 +402,13 @@ async def get_bookmark_keysentences(id: int, response: Response):
 
 
 @app.delete("/bookmark/{id}", status_code=204)
-async def delete_bookmark(id: int) -> None:
+async def delete_bookmark(id: str) -> None:
     logging.info(f"Delete bookmark and associated records for id: {id}")
     app_logic.delete_bookmark_and_associate_records(id)
 
 
 @app.delete("/document/{id}", status_code=204)
-async def delete_document(id: int) -> None:
+async def delete_document(id: str) -> None:
     logging.info(f"Delete document and associated records for id: {id}")
     app_logic.delete_document_and_associate_records(id)
 
@@ -572,7 +555,7 @@ def event_listener(event):
 
 
 @app.get("/study_project/{id}", response_model=StudyProjectPublic, status_code=200)
-async def get_study_project(id: int):
+async def get_study_project(id: str):
     try:
         project = project_handler.get_study_project_by_id(id)
         return project
@@ -582,7 +565,7 @@ async def get_study_project(id: int):
     
 
 @app.delete("/study_project/{id}", status_code=204)
-async def delete_study_project(id: int):
+async def delete_study_project(id: str):
     try:
         project_handler.delete_study_project(id)
     except Exception as e:
@@ -611,7 +594,7 @@ async def create_study_tasks(tasks: List[StudyTaskPublic]):
         raise HTTPException(status_code=500, detail="Study task creation failed")
     
 @app.get("/study_project_tasks/{project_id}", response_model=List[StudyTaskPublic], status_code=200)
-async def get_study_tasks(project_id: int):
+async def get_study_tasks(project_id: str):
     try:
         tasks = project_handler.get_study_tasks(project_id)
         return tasks
@@ -621,7 +604,7 @@ async def get_study_tasks(project_id: int):
     
 
 @app.get("/study_project/{project_id}/related_entities", response_model=List[TreeNode], status_code=200)
-async def get_project_entities(project_id: int):
+async def get_project_entities(project_id: str):
     try:
         entities = project_handler.get_project_entities(project_id)
         return entities

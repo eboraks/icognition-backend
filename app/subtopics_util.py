@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 import os
 
 from app.db_connector import get_engine
-from app.models import Bookmark, Document, Entity, SubTopic, SubTopic_Document_Link, SubTopic_Embedding_Link, Embedding, SubTopic_Entity_Link
+from app.models import Source, Document, Entity, SubTopic, SubTopic_Document_Link, SubTopic_Embedding_Link, Embedding, SubTopic_Entity_Link
 from app.prompt_models import SubTopicPrompt
 from app.transformers_util import get_util, generate_embeddings
 import app.getters as getter
@@ -351,7 +351,7 @@ def should_run_subtopics_factory(user_id: str):
         query = text("""
             SELECT (COUNT(DISTINCT d.id) %% 4) as result
 	            FROM document d
-	            JOIN bookmark b ON b.document_id = d.id
+	            JOIN source b ON b.document_id = d.id
 	            LEFT OUTER JOIN subtopic_document_link l ON d.id = l.document_id
             WHERE l.document_id is null
             AND d.status = 'Done' 
