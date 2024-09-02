@@ -30,6 +30,7 @@ import app.app_logic as app_logic
 import app.subtopics_util as subtopics_util
 import app.html_parser as html_parser
 import app.getters as getter
+import app.deleters as deleters
 from app.search_handler import SearchHandler
 from app.prompt_models import RAGPrompt
 
@@ -399,18 +400,19 @@ async def get_bookmark_keysentences(id: int, response: Response):
         logging.error(e)
         raise HTTPException(status_code=404, detail=e)
 
-
+ 
 
 @app.delete("/bookmark/{id}", status_code=204)
 async def delete_bookmark(id: str) -> None:
     logging.info(f"Delete bookmark and associated records for id: {id}")
-    app_logic.delete_bookmark_and_associate_records(id)
+    deleters.delete_source_and_associate_records(id)
 
 
 @app.delete("/document/{id}", status_code=204)
 async def delete_document(id: str) -> None:
     logging.info(f"Delete document and associated records for id: {id}")
-    app_logic.delete_document_and_associate_records(id)
+    
+    deleters.delete_document_and_associate_records(id)
 
 
 @app.get("/subtopics/{user_id}", response_model=List[SubTopicDisplay], status_code=200)
@@ -485,10 +487,6 @@ async def generate_embedding(user_id: str):
         logging.error(e)
         raise HTTPException(status_code=500, detail="Embedding generation failed")
 
-@app.delete("/subtopics/{user_id}", status_code=204)
-def delete_user_id_subtopics(user_id: str):
-    logging.info(f"Delete subtopics for user_id: {user_id}")
-    subtopics_util.delete_user_id_subtopics(user_id) 
 
 @app.get("/regenerate/subtopics/{user_id}", status_code=200)
 async def regenerate_subtopics(user_id: str, background_tasks: BackgroundTasks):

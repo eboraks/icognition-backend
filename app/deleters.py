@@ -27,8 +27,11 @@ def delete_source_and_associate_records(source_id) -> None:
     This function deletes a bookmark and all associated records from the database.
     This function was create for testing purposes.
     """
-    doc = getter.get_document_by_source_id(source_id)
-    delete_document_and_associate_records(doc.id)
+    try:
+        doc = getter.get_document_by_source_id(source_id)
+        delete_document_and_associate_records(doc.id)
+    except Exception as e:
+        logging.error(f"Error deleting document and associated records: {e}")
 
     logging.info(f"Deleting bookmark {source_id} and associated records")
     with Session(engine) as session:
@@ -104,6 +107,8 @@ def delete_document_and_associate_records(document_id) -> None:
         delete_doc_ent_links = session.scalars(select(Document_Entity_Link).where(Document_Entity_Link.document_id == document_id)).all()
         for delink in delete_doc_ent_links:
             session.delete(delink)
+
+        delete_question_and_answer_associated_with_document(document_id)
 
         delete_doc_embs = session.scalars(select(Embedding).where(Embedding.source_id == document_id)).all()
         emb_ids = []

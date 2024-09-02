@@ -8,8 +8,7 @@ import app.transformers_util as transformers_util
 
 ## Models to be used in the Gemini API responses
 class Citation(BaseModel):
-    start_str: str
-    end_str: str
+    verbatim: str
 
 class DocumentCitation(BaseModel):
     document_id: int
@@ -54,13 +53,15 @@ class SummarizePrompt(BaseModel):
             str: The prompt for the summarize task.
         """
         # Prompt for summarizing an article
-        return """You are a researcher tasked with summarizing the article into what the article is about, key learnings, and critical points. 
+        return """You are a researcher tasked with summarizing the article into what the article is about, key critical points the article make.  
         Please ensure that your responses are socially unbiased and positive in nature. If the ask does not make any sense, or is not factually coherent, 
         or you don't know the answer explain why. Please don't share false information. 
         Use the meta_answer field to indicate if you were able to complete the task by writing "SUCCESS", or explanation why not  
-        Ensure you include citations of the most essential sentences/text you relied on to answer the questions. 
-        To reduce the number of tokens in the response, use the begging and end of the string to reference the citation. 
+        Ensure you include citations of the sentences/text you used on to answer the questions, 
+        try to keep the number of citations to the five most important. 
+        The response must be valid JSON. 
         Article: {BODY}""".format(BODY=text)
+    
 
     def populate_document(self, document: Document) -> Document:
         """
@@ -101,10 +102,11 @@ class EntitiesPrompt(BaseModel):
             str: The prompt for the summarize task.
         """
         # Prompt for summarizing an article
-        return """You are a researcher tasked with identifying the most relevent entities (such as people, products, companies, locations, events, etc.) 
-        to the article subjects. Try to focus on the most important entities. Include the name, type, and description of each entity or topic. 
-        Merge entities with name variation for example Voter and Voters, or Anti-Woke and anti-wokeness. Deduplicates entities on name and do not include irrelevant entities.
-        Response most be valid JSON. Ensure that your responses are socially unbiased and positive in nature.
+        return """You are a researcher tasked with identifying the twenty most relevent entities (such as people, products, companies, locations, events, etc.) 
+        to the article subjects. Include the name, type, and description of each entity in the response. 
+        Those fields are required for the response to be valid JSON. 
+        Merge entities with name variation for example Voter and Voters. Deduplicates entities on name and do not include irrelevant entities.
+        Ensure that your responses are socially unbiased and positive in nature.
         If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
         If you don't know the answer, please don't share false information. 
         Article: {BODY}""".format(BODY=text)
@@ -190,7 +192,8 @@ class IdentifyQuestionsAnswerPrompt(BaseModel):
         """ 
 
         # Prompt
-        return """You are a researcher tasked with identifying the essential questions and answers an article(s) addresses. 
+        return """You are a researcher tasked with identifying the ten most important questions and answers an article(s) addresses. 
+        Keep your answers short, concise and informative. The response should include the question, answer, and citations of the most essential sentences/text you relied on to answer the questions. 
         Please ensure that your responses are socially unbiased and positive in nature.
         If the article does address any question, or is not factually coherent, or you don't know the answer explain why in the meta_answer field.
         Use the meta_answer field to indicate if you were able to complete the task by writing "SUCCESS", or explanation why not.
