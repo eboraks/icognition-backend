@@ -47,6 +47,7 @@ def connect() -> sqlalchemy.engine.base.Engine:
     db_user = os.environ["DB_USER"]
     db_pass = os.environ["DB_PASSWORD"]
     db_name = os.environ["DB_NAME"]
+    db_port = os.environ["DB_PORT"]
 
     pool = sqlalchemy.create_engine(
         # Equivalent URL:
@@ -56,6 +57,7 @@ def connect() -> sqlalchemy.engine.base.Engine:
             username=db_user,
             password=db_pass,
             database=db_name,
+            port=db_port,
         ),
         client_encoding="utf8",
     )

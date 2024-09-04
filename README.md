@@ -38,3 +38,7 @@ The backend application for icognition
 
 ## GCP
 ## STG DB: see .env files
+
+## GCP Fuse Mount to Bucket
+1. gcloud auth application-default login
+2. gcsfuse icog-dev-bucket-01 /home/eboraks/Projects/icognition-backend/data/icog-dev-bucket-01

@@ -32,7 +32,8 @@ class StorageHandler:
         for bucket in buckets:
             if bucket.name == bucket_name:
                 logging.info(f"Bucket {bucket_name} already exists")
-                return bucket
+                self.bucket = bucket
+                return self.bucket
 
         ## Create bucket if needed
         bucket = self.storage_client.bucket(bucket_name)

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks, status, Response
+from fastapi import FastAPI, HTTPException, BackgroundTasks, status, Response, File, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -84,19 +84,6 @@ async def validation_exception_handler(request, exc):
     return PlainTextResponse(str(request), status_code=400)
 
 
-@app.post("/document/question", response_model=RagAnswerPublic, status_code=200)
-async def post_document_question(payload: QuestionPlayload):
-    try:
-        logging.info(f"Question endpoint called on {payload.document_id} with question {payload.question}")
-        answer = await app_logic.custom_question(question=payload.question, document_id=payload.document_id)
-        logging.info(f"Question endpoint called on {payload.document_id} with answer {answer.answer}")
-        return answer
-    except Exception as e:
-        logging.error(e)
-        raise HTTPException(status_code=500, detail="Answer generation failed")
-
-
-
 @app.post(
     "/bookmark",
     responses={
@@ -165,14 +152,23 @@ async def create_bookmark(
         return _bookmark
 
 
-@app.post(
-    "/document/regenerate",
-    response_model=Source,
-    status_code=status.HTTP_202_ACCEPTED,
-)
-async def post_regenerate_document(
-    old_doc: Document, background_tasks: BackgroundTasks
-):
+
+@app.post("/document/question", response_model=RagAnswerPublic, status_code=200)
+async def post_document_question(payload: QuestionPlayload):
+    try:
+        logging.info(f"Question endpoint called on {payload.document_id} with question {payload.question}")
+        answer = await app_logic.custom_question(question=payload.question, document_id=payload.document_id)
+        logging.info(f"Question endpoint called on {payload.document_id} with answer {answer.answer}")
+        return answer
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Answer generation failed")
+
+
+
+
+@app.post("/document/regenerate", response_model=Source, status_code=status.HTTP_202_ACCEPTED)
+async def post_regenerate_document(old_doc: Document, background_tasks: BackgroundTasks):
     """
     This method create document using a source id and a URL.
     Because create_source_bookmark also generate document, this method is use to re-generate
@@ -626,3 +622,10 @@ async def unlink_project_document(payload: ProjectDocumentlinkPayload):
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Project document unlink failed")
+    
+
+@app.post("/uploadfiles/")
+async def create_upload_file(file: UploadFile):
+    logging.info(f"File {file.filename} uploaded")
+    return {"filename": file.filename}
+
