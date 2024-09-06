@@ -37,6 +37,7 @@ from app.search_handler import SearchHandler
 from app.prompt_models import RAGPrompt
 from app.user_handler import UserHandler
 
+router = APIRouter()
 search = SearchHandler()
 
 
@@ -110,7 +111,8 @@ async def add_user():
 
 
 @app.post(
-    "/bookmark",
+    "/bookmark", 
+    tags=["Bookmark"],
     responses={
         400: {
             "model": HTTPError,
@@ -178,7 +180,7 @@ async def create_bookmark(
 
 
 
-@app.post("/document/question", response_model=RagAnswerPublic, status_code=200)
+@app.post("/document/question", tags=["Document"], response_model=RagAnswerPublic, status_code=200)
 async def post_document_question(payload: QuestionPlayload):
     try:
         logging.info(f"Question endpoint called on {payload.document_id} with question {payload.question}")
@@ -192,7 +194,7 @@ async def post_document_question(payload: QuestionPlayload):
 
 
 
-@app.post("/document/regenerate", response_model=Source, status_code=status.HTTP_202_ACCEPTED)
+@app.post("/document/regenerate", tags=["Document"], response_model=Source, status_code=status.HTTP_202_ACCEPTED)
 async def post_regenerate_document(old_doc: Document, background_tasks: BackgroundTasks):
     """
     This method create document using a source id and a URL.
@@ -239,8 +241,6 @@ async def generate_document(bookmark: Source):
         ## For now, we are not generating embeddings for questions and answers
 
 
-
-
 ## Background task to regenerate summaries from LLM if not already exists
 async def regenerate_document(doc: Document):
 
@@ -255,7 +255,7 @@ async def regenerate_document(doc: Document):
             )
 
 
-@app.get("/bookmarks/user/{user_id}", response_model=List[Source], status_code=200)
+@app.get("/bookmarks/user/{user_id}", tags=["Bookmark"], response_model=List[Source], status_code=200)
 async def get_bookmarks_by_user_id(user_id: str):
     bookmarks = getter.get_sources_by_user_id(user_id)
 
@@ -265,7 +265,7 @@ async def get_bookmarks_by_user_id(user_id: str):
     logging.info(f"Icognition return {len(bookmarks)} bookmarks")
     return bookmarks
 
-@app.post("/bookmark/user", response_model=Source, status_code=200)
+@app.post("/bookmark/user", tags=["Bookmark"], response_model=Source, status_code=200)
 async def get_bookmarks_by_user_id(payload: PagePayload):
     bookmark = getter.get_source_by_url(payload.user_id, payload.url)
 
@@ -277,6 +277,7 @@ async def get_bookmarks_by_user_id(payload: PagePayload):
 
 @app.get(
     "/documents_plus/user/{user_id}",
+    tags=["Document"],
     response_model=List[DocumentPublic],
     status_code=200,
 )
@@ -290,7 +291,7 @@ async def get_documents_plus_by_user_id(user_id: str):
     logging.info(f"Icognition return {len(documents)} documents_plus")
     return documents
 
-@app.get('/document/{id}/html_elements', status_code=200)
+@app.get('/document/{id}/html_elements', tags=["Document"], status_code=200)
 async def get_document_html_elements(id: str):
     try:
         doc = getter.get_document_public_by_id(id)
@@ -301,7 +302,7 @@ async def get_document_html_elements(id: str):
 
 
 
-@app.get("/bookmark", response_model=Source, status_code=200)
+@app.get("/bookmark", tags=["Bookmark"], response_model=Source, status_code=200)
 async def get_bookmark_by_url(url: str):
     bookmark = getter.get_source_by_url(url)
 
@@ -312,7 +313,7 @@ async def get_bookmark_by_url(url: str):
     return bookmark
 
 
-@app.get("/bookmark/{id}/document")
+@app.get("/bookmark/{id}/document", tags=["Bookmark"])
 async def get_bookmark_document(id: str, response: Response):
     logging.info(f"Icognition bookmark document endpoint called on {id}")
     document = getter.get_document_by_source_id(id)
@@ -329,7 +330,7 @@ async def get_bookmark_document(id: str, response: Response):
         return document
 
 
-@app.get("/document_plus/{source_id}", responses={
+@app.get("/document_plus/{source_id}", tags=["Bookmark"], responses={
         404: {
             "model": HTTPError,
             "description": "Returning document error",
@@ -366,7 +367,7 @@ async def get_document_plus(source_id: str, response: Response, background_tasks
         return document.to_public()
 
 
-@app.get("/document/{id}")
+@app.get("/document/{id}", tags=["Document"])
 async def get_document(id: str, response: Response):
     logging.info(f"Icognition document endpoint called on {id}")
     document = getter.get_document_public_by_id(id)
@@ -382,7 +383,7 @@ async def get_document(id: str, response: Response):
         response.status_code = status.HTTP_200_OK
         return document
     
-@app.get("/document/{id}/xray")
+@app.get("/document/{id}/xray", tags=["Document"])
 async def get_document_summary(id: str, response: Response, force: str | None = None):
     
         try:
@@ -395,7 +396,7 @@ async def get_document_summary(id: str, response: Response, force: str | None = 
             raise HTTPException(status_code=404, detail=e)
 
 
-@app.get("/document/{id}/questions_answers")
+@app.get("/document/{id}/questions_answers", tags=["Document"])
 async def get_document_questions_answers(id: str, response: Response):
 
     try:
@@ -409,7 +410,7 @@ async def get_document_questions_answers(id: str, response: Response):
         raise HTTPException(status_code=404, detail=e)
 
 
-@app.get("/bookmark/{id}/keysentences")
+@app.get("/bookmark/{id}/keysentences", tags=["Bookmark"])
 async def get_bookmark_keysentences(id: int, response: Response):
 
     try:
@@ -423,20 +424,20 @@ async def get_bookmark_keysentences(id: int, response: Response):
 
  
 
-@app.delete("/bookmark/{id}", status_code=204)
+@app.delete("/bookmark/{id}", tags=["Bookmark"], status_code=204)
 async def delete_bookmark(id: str) -> None:
     logging.info(f"Delete bookmark and associated records for id: {id}")
     deleters.delete_source_and_associate_records(id)
 
 
-@app.delete("/document/{id}", status_code=204)
+@app.delete("/document/{id}", tags=["Document"], status_code=204)
 async def delete_document(id: str) -> None:
     logging.info(f"Delete document and associated records for id: {id}")
     
     deleters.delete_document_and_associate_records(id)
 
 
-@app.get("/subtopics/{user_id}", response_model=List[SubTopicDisplay], status_code=200)
+@app.get("/subtopics/{user_id}", tags=["Subtopics"], response_model=List[SubTopicDisplay], status_code=200)
 async def get_user_subtopics(user_id: str):
     try:
         subtopics = getter.get_subtopics_display(user_id = user_id)
@@ -446,7 +447,7 @@ async def get_user_subtopics(user_id: str):
         raise HTTPException(status_code=404, detail="Subtopics not found")
 
 
-@app.get("/subtopics_node/{user_id}", response_model=List[TreeNode], status_code=200)
+@app.get("/subtopics_node/{user_id}", tags=["Subtopics"], response_model=List[TreeNode], status_code=200)
 async def get_user_subtopics_node(user_id: str):
     try:
         subtopics_nodes = getter.get_subtopics_nodes_by_user(user_id)
@@ -455,7 +456,7 @@ async def get_user_subtopics_node(user_id: str):
         logging.error(e)
         raise HTTPException(status_code=404, detail="Subtopics not found")
     
-@app.get("/filter_nodes/{user_id}", response_model=List[TreeNode], status_code=200)
+@app.get("/filter_nodes/{user_id}", tags=["Filter Nodes"], response_model=List[TreeNode], status_code=200)
 async def get_user_filter_nodes(user_id: str):
     try:
         return getter.get_filter_nodes_by_user_id(user_id)
@@ -463,7 +464,7 @@ async def get_user_filter_nodes(user_id: str):
         logging.error(e)
         raise HTTPException(status_code=404, detail="Error getting filter nodes")
 
-@app.get("/subtopics_name_regenerate/{user_id}", status_code=200)
+@app.get("/subtopics_name_regenerate/{user_id}", tags=["Subtopics"], status_code=200)
 async def regenerate_user_subtopics(user_id: str, background_tasks: BackgroundTasks):
     try:
         background_tasks.add_task(subtopics_util.rename_subtopics, user_id)
@@ -473,7 +474,7 @@ async def regenerate_user_subtopics(user_id: str, background_tasks: BackgroundTa
         raise HTTPException(status_code=404, detail="Subtopics regeneration failed")
 
 
-@app.post("/search", status_code=200, response_model=SearchResults)
+@app.post("/search", tags=["Search"], status_code=200, response_model=SearchResults)
 async def search_documents(search_payload: SearchPayload, response: Response):
     logging.info(f"Search documents with query: {search_payload.query}")
     
@@ -499,7 +500,7 @@ async def search_documents(search_payload: SearchPayload, response: Response):
 
 
 
-@app.get("/generate_embedding/{user_id}", status_code=200)
+@app.get("/generate_embedding/{user_id}", tags=["Embedding"], status_code=200)
 async def generate_embedding(user_id: str):
     try:
         await app_logic.generate_embeddings(user_id=user_id)
@@ -509,7 +510,7 @@ async def generate_embedding(user_id: str):
         raise HTTPException(status_code=500, detail="Embedding generation failed")
 
 
-@app.get("/regenerate/subtopics/{user_id}", status_code=200)
+@app.get("/regenerate/subtopics/{user_id}", tags=["Subtopics"], status_code=200)
 async def regenerate_subtopics(user_id: str, background_tasks: BackgroundTasks):
     try:
         subtopics_util.delete_user_id_subtopics(user_id)
@@ -518,7 +519,7 @@ async def regenerate_subtopics(user_id: str, background_tasks: BackgroundTasks):
         logging.error(e)
         raise HTTPException(status_code=500, detail="Subtopics generation failed")
     
-@app.get("/generate/subtopics/{user_id}", status_code=200)
+@app.get("/generate/subtopics/{user_id}", tags=["Subtopics"], status_code=200)
 async def generate_subtopics(user_id: str, background_tasks: BackgroundTasks):
     try:
         background_tasks.add_task(subtopics_util.subtopics_factory, 
@@ -528,7 +529,7 @@ async def generate_subtopics(user_id: str, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=500, detail="Subtopics generation failed")
     
 
-@app.get("/entities_names/{user_id}", status_code=200)
+@app.get("/entities_names/{user_id}", tags=["Entities"], status_code=200)
 async def get_user_entities_names(user_id: str):
     try:
         names = getter.get_entities_names_by_user_id(user_id)
@@ -537,7 +538,7 @@ async def get_user_entities_names(user_id: str):
         logging.error(e)
         raise HTTPException(status_code=404, detail="Entities not found")
 
-@app.get("/placeholder_image", 
+@app.get("/placeholder_image", tags=["Document"], 
          responses = {200: {"content": {"image/png": {}}}},
         response_class=FileResponse)
 async def get_placeholder_image():
@@ -545,7 +546,7 @@ async def get_placeholder_image():
 
 
 ## Study project endpoints
-@app.get("/study_projects/{user_id}", response_model=List[StudyProjectPublic], status_code=200)
+@app.get("/study_projects/{user_id}", tags=["Study Project"], response_model=List[StudyProjectPublic], status_code=200)
 async def get_study_projects(user_id: str):
     try:
         projects = project_handler.get_study_projects(user_id)
@@ -555,7 +556,7 @@ async def get_study_projects(user_id: str):
         raise HTTPException(status_code=404, detail="Study projects not found")
     
 
-@app.post("/study_project", response_model=StudyProjectPublic, status_code=200)
+@app.post("/study_project", tags=["Study Project"], response_model=StudyProjectPublic, status_code=200)
 async def create_study_project(project: StudyProjectPublic, background_tasks: BackgroundTasks):
     try:
         project = await project_handler.create_study_project(name=project.name, 
@@ -573,7 +574,7 @@ def event_listener(event):
     logging.info(f"Event listner called with event: {event}")
 
 
-@app.get("/study_project/{id}", response_model=StudyProjectPublic, status_code=200)
+@app.get("/study_project/{id}", tags=["Study Project"], response_model=StudyProjectPublic, status_code=200)
 async def get_study_project(id: str):
     try:
         project = project_handler.get_study_project_by_id(id)
@@ -583,7 +584,7 @@ async def get_study_project(id: str):
         raise HTTPException(status_code=404, detail="Study project not found")
     
 
-@app.delete("/study_project/{id}", status_code=204)
+@app.delete("/study_project/{id}", tags=["Study Project"], status_code=204)
 async def delete_study_project(id: str):
     try:
         project_handler.delete_study_project(id)
@@ -592,7 +593,7 @@ async def delete_study_project(id: str):
         raise HTTPException(status_code=500, detail="Study project deletion failed")
     
 
-@app.post("/study_task", response_model=StudyTaskPublic, status_code=200)
+@app.post("/study_task", tags=["Study Project"], response_model=StudyTaskPublic, status_code=200)
 async def create_study_task(task: StudyTaskPublic):
     try:
         task = project_handler.create_study_task(project_id=task.project_id, description=task.description)
@@ -601,7 +602,7 @@ async def create_study_task(task: StudyTaskPublic):
         logging.error(e)
         raise HTTPException(status_code=500, detail="Study task creation failed")
     
-@app.post("/study_tasks", response_model=List[StudyTaskPublic], status_code=200)
+@app.post("/study_tasks", tags=["Study Project"], response_model=List[StudyTaskPublic], status_code=200)
 async def create_study_tasks(tasks: List[StudyTaskPublic]):
     try:
         created_tasks = []
@@ -612,7 +613,7 @@ async def create_study_tasks(tasks: List[StudyTaskPublic]):
         logging.error(e)
         raise HTTPException(status_code=500, detail="Study task creation failed")
     
-@app.get("/study_project_tasks/{project_id}", response_model=List[StudyTaskPublic], status_code=200)
+@app.get("/study_project_tasks/{project_id}", tags=["Study Project"], response_model=List[StudyTaskPublic], status_code=200)
 async def get_study_tasks(project_id: str):
     try:
         tasks = project_handler.get_study_tasks(project_id)
@@ -622,7 +623,7 @@ async def get_study_tasks(project_id: str):
         raise HTTPException(status_code=404, detail="Study tasks not found")
     
 
-@app.get("/study_project/{project_id}/related_entities", response_model=List[TreeNode], status_code=200)
+@app.get("/study_project/{project_id}/related_entities", tags=["Study Project"], response_model=List[TreeNode], status_code=200)
 async def get_project_entities(project_id: str):
     try:
         entities = project_handler.get_project_entities(project_id)
@@ -632,7 +633,7 @@ async def get_project_entities(project_id: str):
         raise HTTPException(status_code=404, detail="Entities not found")
     
 
-@app.post("/project_document_link", status_code=200, response_model= Study_Project_Document_Link)
+@app.post("/project_document_link", tags=["Study Project"], status_code=200, response_model= Study_Project_Document_Link)
 async def link_project_document(payload: ProjectDocumentlinkPayload):
     try:
         return project_handler.link_project_document(project_id = payload.project_id, document_id = payload.document_id)
@@ -640,7 +641,7 @@ async def link_project_document(payload: ProjectDocumentlinkPayload):
         logging.error(e)
         raise HTTPException(status_code=500, detail="Project document link failed")
     
-@app.post("/project_document_unlink", status_code=200)
+@app.post("/project_document_unlink", tags=["Study Project"], status_code=200)
 async def unlink_project_document(payload: ProjectDocumentlinkPayload):
     try:
         return project_handler.unlink_project_document(project_id = payload.project_id, document_id = payload.document_id)

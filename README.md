@@ -13,8 +13,8 @@ The backend application for icognition
 2. DO NOT USE: Build icogapi image using `docker build -t icogapi:latest .`
 
 # Run database migration
-* Load env variable from .env in local. Ths mostly use for testing 
-* echo $DEV_DATABASE_URL
+* Load env variable from .env in local. This is mostly used for testing.
+* export $(cat .env | xargs) && env
 
 * For local develop: See instructions in migration-local
 
