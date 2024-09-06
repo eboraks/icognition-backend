@@ -1,11 +1,12 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks, status, Response, File, UploadFile
+import aiofiles, os
+from fastapi import FastAPI, HTTPException, BackgroundTasks, status, Response, Form, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from typing import List
 from app.models import (
-    Answer,
+    User,
     Source,
     Document,
     PagePayload,
@@ -24,6 +25,7 @@ from app.models import (
     ProjectDocumentlinkPayload
 )
 import app.study_project_handler as project_handler
+from app.source_doc_handler import SourceDocHandler
 import logging
 import sys, json
 import app.app_logic as app_logic
@@ -33,6 +35,7 @@ import app.getters as getter
 import app.deleters as deleters
 from app.search_handler import SearchHandler
 from app.prompt_models import RAGPrompt
+from app.user_handler import UserHandler
 
 search = SearchHandler()
 
@@ -82,6 +85,28 @@ async def validation_exception_handler(request, exc):
     logging.error(request)
     logging.error(exc)
     return PlainTextResponse(str(request), status_code=400)
+
+
+@app.post("/add_user", status_code=204)
+async def add_user(user: User):
+    user_handler = UserHandler()
+
+    try:
+        user_handler.add_users_from_source()
+        user_handler.add_user(user)
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="User creation failed")
+
+@app.get("/populate_user_table", status_code=204)
+async def add_user():
+    user_handler = UserHandler()
+
+    try:
+        user_handler.add_users_from_source()
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Failed to populate user table" + str(e))
 
 
 @app.post(
@@ -624,8 +649,37 @@ async def unlink_project_document(payload: ProjectDocumentlinkPayload):
         raise HTTPException(status_code=500, detail="Project document unlink failed")
     
 
-@app.post("/uploadfiles/")
-async def create_upload_file(file: UploadFile):
-    logging.info(f"File {file.filename} uploaded")
-    return {"filename": file.filename}
+def listen_to_md_file(event: dict):
+    logging.info(f"Event listener called with event: {event}")
+
+@app.post("/create_source_upload_file/")
+async def create_source_upload_file(background_tasks: BackgroundTasks, file: UploadFile, user_id: str = Form(...)): 
+    
+    user_handler = UserHandler()
+    source_handler = SourceDocHandler()
+    
+    if user_handler.user_exits(user_id) != True:
+        raise HTTPException(status_code=404, detail="User not found")
+
+
+    if file.content_type != 'application/pdf':
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+
+    logging.info(f"File {file.filename} with contect type of {file.content_type} uploaded for user {user_id}")
+    
+    try:
+        source = source_handler.create_source(user_id=user_id, filename=file.filename)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    async with aiofiles.open(source.filepath, 'wb') as out_file:
+        content = await file.read()  # async read
+        await out_file.write(content)  # async write
+        await file.close()
+
+    background_tasks.add_task(source_handler.convert_pdf_to_markup, source, listen_to_md_file)
+
+    return {"filename": file.filename}        
+    
+
 

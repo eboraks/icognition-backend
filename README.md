@@ -14,7 +14,7 @@ The backend application for icognition
 
 # Run database migration
 * Load env variable from .env in local. Ths mostly use for testing 
-* export $(cat .env | xargs) && env
+* echo $DEV_DATABASE_URL
 
 * For local develop: See instructions in migration-local
 
@@ -41,4 +41,5 @@ The backend application for icognition
 
 ## GCP Fuse Mount to Bucket
 1. gcloud auth application-default login
-2. gcsfuse icog-dev-bucket-01 /home/eboraks/Projects/icognition-backend/data/icog-dev-bucket-01
+2. gcsfuse icog-dev-bucket-01 icog-dev-bucket-01
+3. fusermount -u icog-dev-bucket-01

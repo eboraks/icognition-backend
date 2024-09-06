@@ -400,6 +400,7 @@ class Question_Answer(SQLModel, table=True):
     citations: List[dict] = Field(default=[], sa_column=Column(JSON))
     question_vector: List[float] = Field(sa_column=Column(Vector(384)))
     created_at: datetime = Field(default_factory=datetime.now, nullable=True)
+    created_by: str = Field(default="AI", nullable=True)
 
     document_id: Optional[uuid_pkg.UUID] = Field(default=None, foreign_key="document.id")
     document: Document = Relationship(back_populates="qans")
@@ -622,16 +623,27 @@ class Page(SQLModel, table=False):
     metadata_description: Optional[str] = Field(default=None)
 
 
+class User(SQLModel, table=True):
+    """
+    Represents a user with its ID, email, password, and role.
+    """
+    id: str = Field(primary_key=True)
+    first_name: str = Field(nullable=True)
+    last_name: str = Field(nullable=True)
+    
+
 
 class Source(SQLModel, table=True):
     """
     Represents a source with its ID, URL, update timestamp, document ID, and user ID.
     """
     id: uuid_pkg.UUID = Field(default_factory=uuid_pkg.uuid4, primary_key=True)
-    url: str = Field(nullable=False)
+    url: str = Field(nullable=True)
     update_at: datetime = Field(default_factory=datetime.now, nullable=False)
     document_id: Optional[uuid_pkg.UUID] = Field(default=None, nullable=True)
     user_id: Optional[str] = Field(nullable=False)
+    filepath: Optional[str] = Field(default=None, nullable=True)
+    filename: Optional[str] = Field(default=None, nullable=True)
     cloned_documents: List[uuid_pkg.UUID] = Field(default=[], sa_column=Column(ARRAY(Integer)))
 
 
