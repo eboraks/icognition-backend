@@ -1,10 +1,9 @@
-from pathlib import Path
 import pymupdf4llm
-import os, sys, logging
+import os, sys, logging, json
 import markdown
-
-from app.models import Source, Document
-
+import app.html_parser as html_parser
+from pathlib import Path
+from app.models import Page, Source, Document, PagePayload
 from app.db_connector import get_engine
 from sqlalchemy import (
     select,
@@ -60,7 +59,7 @@ class SourceDocHandler:
         """
         with Session(engine) as session:
             source = session.execute(
-                select(Source).where(and_(Source.filename == filename, Source.user_id == user_id))
+                select(Source ).where(and_(Source.filename == filename, Source.user_id == user_id))
             ).scalar_one_or_none()
 
         return source is not None
@@ -86,7 +85,7 @@ class SourceDocHandler:
         
         return source
     
-    async def convert_pdf_to_markup(self, source: Source, callback) -> None:
+    async def generate_doc_from_pdf(self, source: Source, callback) -> None:
         
         md_file = f"{source.filepath}.md"
         html_file = f"{source.filepath}.html"
@@ -102,7 +101,51 @@ class SourceDocHandler:
         with open(html_file, "w") as file:
             file.write(content)
 
-        callback({"filename": md_file})    
+        payload = PagePayload(url=html_file, user_id=source.user_id, html=content, source='pdf')
+        page = html_parser.create_page(payload)
+
+        ## URL and Filename are not the same, but in this case we use them for the same thing - unique identifying the source
+        page.clean_url = source.filename
+        doc = self.create_document_from_page(page)
+        doc.image_url = "https://placeholder.ai/icon/icons8-pdf-80"
+
+        with Session(engine) as session:
+            session.add(source)
+            source.document_id = doc.id
+            session.commit()
+            session.refresh(source)
+
+        await callback({"message": "generate_doc_from_pdf_done", "source": source})
+
+    def create_document_from_page(self, page: Page) -> Document:
+        session = Session(engine)
+        doc = session.scalar(select(Document).where(Document.url == page.clean_url))
+
+        ## If Document isn't already exist, create it
+        if doc:
+            session.close()
+            return doc
+
+        doc = Document()
+        doc.title = page.title
+        doc.url = page.clean_url
+        doc.original_text = page.full_text
+        doc.authors = ", ".join(page.authors) if page.authors else None
+        doc.metadata_keywords = ", ".join(page.keywords) if page.keywords else None
+        doc.locale = page.locale
+        doc.publication_date = page.publish_date
+        doc.image_url = page.image_url
+        doc.site_name = page.site_name
+        doc.metadata_description = page.metadata_description
+        doc.html_elements = json.loads(page.html_elements)
+
+        session.add(doc)
+        session.commit()
+        session.refresh(doc)
+        session.close()
+
+        return doc
+    
 
         
 

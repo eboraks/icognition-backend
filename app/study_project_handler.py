@@ -1,5 +1,5 @@
-import datetime
 import logging, sys
+from datetime import datetime
 from app.models import DocumentPublic, Entity, EntityPublic, Study_Project, Study_Project_Document_Link, Study_Task, Document, Study_Task_Citation, StudyProjectPublic, StudyTaskPublic, StudyTaskCitationPublic, TreeNode
 from app.db_connector import get_engine
 from app.gemini_client import GeminiClient
@@ -39,7 +39,7 @@ async def create_study_project(name: str, objective: str, user_id: str, tasks_de
     
         return project.to_public()
 
-def get_study_project_by_id(project_id: int) -> StudyProjectPublic:
+def get_study_project_by_id(project_id: str) -> StudyProjectPublic:
     with Session(engine) as session:
         project = session.scalar(select(Study_Project).options(joinedload(Study_Project.tasks)).where(Study_Project.id == project_id))
         return project.to_public()
@@ -218,13 +218,13 @@ async def generate_task_response(task: Study_Task, documents: list[Document]) ->
         raise Exception(f"Error while generate response for task_id: {task.id}. Error: {e}")
                 
     
-def insert_task_citations(task: Study_Task, response: AskQuestionPrompt) -> StudyTaskPublic:
+def insert_task_citations(task_public: StudyTaskPublic, response: AskQuestionPrompt) -> StudyTaskPublic:
     
     with Session(engine) as session:
         
-        session.add(task)
+        task = session.scalar(select(Study_Task).where(Study_Task.id == task_public.id))
         task.status = response.meta_answer
-        task.explanation = response.answer
+        task.ai_explanation = response.answer
         task.updated_at = datetime.now()
 
         if response.meta_answer == "SUCCESS":
@@ -236,7 +236,7 @@ def insert_task_citations(task: Study_Task, response: AskQuestionPrompt) -> Stud
             for doc_citation in response.documents_citations:
                 study_task_citation = Study_Task_Citation(task_id=task.id, 
                                                         document_id=doc_citation.document_id, 
-                                                        citations= doc_citation.get_citations())
+                                                        text_referance = doc_citation.get_verbatims())
                 session.add(study_task_citation)
                 task.citations.append(study_task_citation)
         

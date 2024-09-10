@@ -231,7 +231,7 @@ def get_webpage(payload: PagePayload) -> BeautifulSoup:
 def find_main_article_element(soup: BeautifulSoup) -> list[str]:
 
     articles = []
-    selectors = ["div#article", "div.article-body", "div.article", "div.article-container", "article", "main"]
+    selectors = ["div#article", "div.article-body", "div.article", "div.article-container", "article", "main", "body"]
 
     for selector in selectors:
         for element in soup.select(selector):
@@ -319,16 +319,20 @@ def create_page(payload: PagePayload) -> Page:
         logging.error("No webpage found")
         return None
 
-    
+    if payload.source == "web":
+        article_element = find_main_article_element(html)
 
-    article_element = find_main_article_element(html)
+        if article_element is None:
+            logging.error("No article element found in webpage")
+            return None
 
-    if article_element is None:
-        return None
+        paragraphs = get_paragraphs(article_element)
+        elements = json.dumps(get_elements(article_element))
+    elif payload.source == "pdf":
+        paragraphs = get_paragraphs(html)
+        elements = json.dumps(get_elements(html))
 
-    paragraphs = get_paragraphs(article_element)
-    elements = json.dumps(get_elements(article_element))
-
+ 
     if paragraphs is None:
         logging.error("No paragraphs found in webpage")
         return None

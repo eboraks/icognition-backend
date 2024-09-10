@@ -16,11 +16,10 @@ async def test_create_study_project():
 
     project = await handler.create_study_project(name="test_project", objective="test_objective", user_id = "test_user", tasks_descriptions=["task1", "task2"])
 
-    project = await handler.get_study_project(project.id)
+    project = handler.get_study_project_by_id(project.id)
     assert project.name == "test_project"
     assert project.objective == "test_objective"
     assert project.user_id == "test_user"
-    assert project.objective_tasks_vector is not None
     assert len(project.tasks) > 0
 
 @pytest.mark.asyncio
@@ -49,12 +48,11 @@ async def test_create_frech_revolution_project():
 
     project = await handler.create_study_project(name=name, objective=objective, user_id = "HqAXhad3jrUWmPibnMf1xZczNIq2", tasks_descriptions=tasks)
 
-    project = await handler.get_study_project(project.id)
+    project = handler.get_study_project_by_id(project.id)
 
     assert project.name == name
     assert project.objective == objective
     assert project.user_id == "HqAXhad3jrUWmPibnMf1xZczNIq2"
-    assert project.objective_tasks_vector is not None
     assert len(project.tasks) == len(tasks)
 
 
@@ -64,7 +62,7 @@ async def test_generate_docs_vector():
 
     for doc in docs:
         if doc.ai_summary_vector is None:
-            doc.summary_vector = await doc.generate_vector(geminiClient=genimi_client)
+            doc.ai_summary_vector = await doc.generate_vector(geminiClient=genimi_client)
             update_document(doc)
 
 
@@ -77,7 +75,7 @@ async def test_generate_docs_vector():
 async def test_find_related_docs():
     
     name = "French Revolution Highschool paper"
-    project = handler.get_study_project(name)
+    project = handler.get_study_project_by_name(name)
     documents = handler.find_related_docs(project.id)
     assert len(documents) > 3
 
@@ -88,7 +86,7 @@ async def test_find_related_docs():
 async def test_generate_task_response():
     
     name = "French Revolution Highschool paper"
-    project = handler.get_study_project(name)
+    project = handler.get_study_project_by_name(name)
     
     documents = handler.find_related_docs(project.id)
     

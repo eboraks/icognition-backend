@@ -9,8 +9,7 @@ import app.getters as getter
 from types import SimpleNamespace
 from app import html_parser
 from app.db_connector import get_engine
-from app.icog_util import DocSummarizer, original_text_to_sentences, sentences_to_text
-from pydantic.json import pydantic_encoder
+from app.source_doc_handler import SourceDocHandler
 from app.models import (
     Source,
     Entity,
@@ -75,34 +74,6 @@ def create_page(payload: PagePayload) -> Page:
     return page
 
 
-def create_document(page: Page):
-    session = Session(engine)
-    doc = session.scalar(select(Document).where(Document.url == page.clean_url))
-
-    ## If Document isn't already exist, create it
-    if doc:
-        session.close()
-        return doc
-
-    doc = Document()
-    doc.title = page.title
-    doc.url = page.clean_url
-    doc.original_text = page.full_text
-    doc.authors = ", ".join(page.authors) if page.authors else None
-    doc.metadata_keywords = ", ".join(page.keywords) if page.keywords else None
-    doc.locale = page.locale
-    doc.publication_date = page.publish_date
-    doc.image_url = page.image_url
-    doc.site_name = page.site_name
-    doc.metadata_description = page.metadata_description
-    doc.html_elements = json.loads(page.html_elements)
-
-    session.add(doc)
-    session.commit()
-    session.refresh(doc)
-    session.close()
-
-    return doc
 
 
 def clone_document(doc: Document):
@@ -388,6 +359,7 @@ async def generate_doc_quesions_answers(user_id: str, doc: Document, testing: bo
 
 
 def create_source_bookmark(page: Page, user_id: str) -> Source:
+    source_doc_handler = SourceDocHandler()
     session = Session(engine)
 
     # Check if document exists, retrieve the bookmark and return
@@ -404,7 +376,7 @@ def create_source_bookmark(page: Page, user_id: str) -> Source:
         session.close()
         return bookmark
 
-    doc = create_document(page)
+    doc = source_doc_handler.create_document_from_page(page)
 
     bookmark = Source()
     bookmark.url = page.clean_url

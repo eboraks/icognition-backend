@@ -443,7 +443,7 @@ class Study_Project(SQLModel, table=True):
             id=self.id,
             name=self.name,
             objective=self.objective,
-            ai_explanation=self.explanation,
+            ai_explanation=self.ai_explanation,
             user_id=self.user_id,
             created_at=self.created_at,
             tasks=[task.to_public() for task in self.tasks]
@@ -500,7 +500,7 @@ class Study_Task_Citation(SQLModel, table=True):
     def to_public(self) -> "StudyTaskCitationPublic":
         return StudyTaskCitationPublic(
             id=self.id,
-            citations=self.citations,
+            text_referance=self.text_referance,
             document_id=self.document_id,
             task_id=self.task_id,
             created_at=self.created_at
@@ -532,7 +532,7 @@ class StudyTaskCitationPublic(SQLModel, table=False):
     """
 
     id: Optional[int] = Field(default=None)
-    citations: Optional[List[Dict]] = Field(default=[])
+    text_referance: Optional[List[Dict]] = Field(default=[])
     document_id: Optional[uuid_pkg.UUID] = Field(default=None)
     task_id: Optional[int] = Field(default=None)
     created_at: Optional[datetime] = Field(default=None)
@@ -546,7 +546,7 @@ class StudyTaskPublic(SQLModel, table=False):
     description: Optional[str] = Field(default=None)
     ai_explanation: Optional[str] = Field(default=None)
     status: Optional[str] = Field(default=None)
-    project_id: Optional[int] = Field(default=None)
+    project_id: Optional[uuid_pkg.UUID] = Field(default=None)
     citations: Optional[list[StudyTaskCitationPublic]] = Field(default=[])
     created_at: Optional[datetime] = Field(default=None)
 
@@ -577,6 +577,7 @@ class PagePayload(SQLModel, table=False):
     url: Optional[str] = Field(default=None)
     html: Optional[str] = Field(default=None)
     user_id: str = Field(default=None, nullable=True)
+    source: Optional[str] = Field(default='web', nullable=True)
 
 class QuestionPlayload(SQLModel, table=False):
     """

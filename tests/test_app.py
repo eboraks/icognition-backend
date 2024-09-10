@@ -8,7 +8,7 @@ from sqlalchemy import delete, select
 import pytest
 
 from app.models import Document_Entity_Link, Entity
-from app.gemini_prompts_models import Citation 
+from app.gemini_prompts_models import Verbatim 
 
 
 user_id = 'yU13Hk9BwEQiREgh91YM6EFKR7M2'
@@ -81,7 +81,7 @@ async def test_summary_extration():
     end_match_counter = []
     for c in tdoc.ai_citations:
         
-        citation = Citation(**c)
+        citation = Verbatim(**c)
         assert citation.start_str != None
         assert citation.end_str != None
         start_match_counter.append(tdoc.original_text.find(citation.start_str))

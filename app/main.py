@@ -1,3 +1,4 @@
+from enum import Enum
 import aiofiles, os
 from fastapi import FastAPI, HTTPException, BackgroundTasks, status, Response, Form, UploadFile
 from fastapi.exceptions import RequestValidationError
@@ -37,8 +38,19 @@ from app.search_handler import SearchHandler
 from app.prompt_models import RAGPrompt
 from app.user_handler import UserHandler
 
-router = APIRouter()
 search = SearchHandler()
+
+
+class Groups(Enum):
+    LIBRARY = "Library Search & Filter"
+    BOOKMARK = "Bookmark / Source"
+    DOCUMENT = "Document and Related Data (Entities, Questions...)"
+    USER_DATA = "User Data (Documents, Entities, Topics)"
+    ACTION = "Initiate Action"
+    STUDY_PROJECT = "Study Project"
+    ICONS = "Icons"
+    FOR_TESTING = "For Testing"
+
 
 
 logging.basicConfig(
@@ -88,7 +100,7 @@ async def validation_exception_handler(request, exc):
     return PlainTextResponse(str(request), status_code=400)
 
 
-@app.post("/add_user", status_code=204)
+@app.post("/add_user", status_code=204, tags=[Groups.USER_DATA.value])
 async def add_user(user: User):
     user_handler = UserHandler()
 
@@ -99,7 +111,7 @@ async def add_user(user: User):
         logging.error(e)
         raise HTTPException(status_code=500, detail="User creation failed")
 
-@app.get("/populate_user_table", status_code=204)
+@app.get("/populate_user_table", status_code=204, tags=[Groups.ACTION.value, Groups.FOR_TESTING.value])
 async def add_user():
     user_handler = UserHandler()
 
@@ -112,7 +124,7 @@ async def add_user():
 
 @app.post(
     "/bookmark", 
-    tags=["Bookmark"],
+    tags=[Groups.BOOKMARK.value],
     responses={
         400: {
             "model": HTTPError,
@@ -153,34 +165,38 @@ async def create_bookmark(
         )
 
     ## Check in bookmark already exists
-    _bookmark = getter.get_source_by_url(payload.user_id, page.clean_url)
-    if _bookmark is not None:
-        _doc = getter.get_document_by_source_id(_bookmark.id)
-        
-        if _doc.status == "Done":
-            logging.info(f"Bookmark already exists for {page.clean_url}")
+    try:
+        _source = getter.get_source_by_url(payload.user_id, page.clean_url)
+        if _source is not None:
+            _doc = getter.get_document_by_source_id(_source.id)
+            
+            if _doc.status == "Done":
+                logging.info(f"Bookmark already exists for {page.clean_url}")
+                response.status_code = status.HTTP_201_CREATED
+                return _source
+            elif _doc.status == "Processing":
+                logging.info(f"Document is still processing for {page.clean_url}")
+                response.status_code = status.HTTP_206_PARTIAL_CONTENT
+                return _source
+            elif _doc.status in ["Failure", "Pending"]:
+                logging.info(f"Document status is {_doc.status} attempting to regenerated document for {page.clean_url}")
+                background_tasks.add_task(generate_document, source = _source)
+                response.status_code = status.HTTP_201_CREATED
+                return _source
+        else:
+            logging.info(f"Page object created for {page.clean_url}")
+            _source = app_logic.create_source_bookmark(page, payload.user_id)
+            logging.info(f"Source created for {_source.url}")
+            background_tasks.add_task(generate_document, source = _source)
             response.status_code = status.HTTP_201_CREATED
-            return _bookmark
-        elif _doc.status == "Processing":
-            logging.info(f"Document is still processing for {page.clean_url}")
-            response.status_code = status.HTTP_206_PARTIAL_CONTENT
-            return _bookmark
-        elif _doc.status in ["Failure", "Pending"]:
-            logging.info(f"Document status is {_doc.status} attempting to regenerated document for {page.clean_url}")
-            background_tasks.add_task(generate_document, bookmark = _bookmark)
-            response.status_code = status.HTTP_201_CREATED
-            return _bookmark
-    else:
-        logging.info(f"Page object created for {page.clean_url}")
-        _bookmark = app_logic.create_source_bookmark(page, payload.user_id)
-        logging.info(f"Bookmark created for {_bookmark.url}")
-        background_tasks.add_task(generate_document, bookmark = _bookmark)
-        response.status_code = status.HTTP_201_CREATED
-        return _bookmark
+            return _source
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Bookmark creation failed")
 
 
 
-@app.post("/document/question", tags=["Document"], response_model=RagAnswerPublic, status_code=200)
+@app.post("/document/question", tags=[Groups.DOCUMENT.value], response_model=RagAnswerPublic, status_code=200)
 async def post_document_question(payload: QuestionPlayload):
     try:
         logging.info(f"Question endpoint called on {payload.document_id} with question {payload.question}")
@@ -218,25 +234,25 @@ async def post_regenerate_document(old_doc: Document, background_tasks: Backgrou
 
 
 ## Background task to generate summaries from LLM
-async def generate_document(bookmark: Source):
-    document = getter.get_document_by_id(bookmark.document_id)
+async def generate_document(source: Source):
+    document = getter.get_document_by_id(source.document_id)
 
     if document.status in ["Pending", "Done", "Failure"]:
-        logging.info(f"Background task for document ID: {bookmark.document_id}")
+        logging.info(f"Background task for document ID: {source.document_id}")
         document = await app_logic.generate_summary(doc= document)
-        await app_logic.generate_embeddings_for_docs(docs = [document], user_id = bookmark.user_id)
-        logging.info(f"Background task for document ID: {bookmark.document_id} completed")
+        await app_logic.generate_embeddings_for_docs(docs = [document], user_id = source.user_id)
+        logging.info(f"Background task for document ID: {source.document_id} completed")
 
     
     if len(getter.get_entities_ids_by_document_id(document.id)) == 0:
-        ent_success = await app_logic.generate_entities(user_id= bookmark.user_id, doc = document)
-        topic_success = await app_logic.generate_topics(user_id= bookmark.user_id, doc = document)
+        ent_success = await app_logic.generate_entities(user_id= source.user_id, doc = document)
+        topic_success = await app_logic.generate_topics(user_id= source.user_id, doc = document)
         logging.info(f"Background task for generating entities and topics for: {document.id} completed. Result, entities: {ent_success} topic: {topic_success}")
-        await app_logic.generate_embeddings_for_entities(user_id =  bookmark.user_id)
+        await app_logic.generate_embeddings_for_entities(user_id =  source.user_id)
 
 
     if len(getter.get_question_answer_by_document_id(document.id)) == 0:
-        success = await app_logic.generate_doc_quesions_answers(user_id= bookmark.user_id, doc = document)
+        success = await app_logic.generate_doc_quesions_answers(user_id= source.user_id, doc = document)
         logging.info(f"Background task for generating questions and answers for: {document.id} completed. Result, {success}")
         ## For now, we are not generating embeddings for questions and answers
 
@@ -456,7 +472,7 @@ async def get_user_subtopics_node(user_id: str):
         logging.error(e)
         raise HTTPException(status_code=404, detail="Subtopics not found")
     
-@app.get("/filter_nodes/{user_id}", tags=["Filter Nodes"], response_model=List[TreeNode], status_code=200)
+@app.get("/filter_nodes/{user_id}", tags=["Library Search"], response_model=List[TreeNode], status_code=200)
 async def get_user_filter_nodes(user_id: str):
     try:
         return getter.get_filter_nodes_by_user_id(user_id)
@@ -464,7 +480,7 @@ async def get_user_filter_nodes(user_id: str):
         logging.error(e)
         raise HTTPException(status_code=404, detail="Error getting filter nodes")
 
-@app.get("/subtopics_name_regenerate/{user_id}", tags=["Subtopics"], status_code=200)
+@app.get("/subtopics_name_regenerate/{user_id}", tags=["User Data (Entities, Document)"], status_code=200)
 async def regenerate_user_subtopics(user_id: str, background_tasks: BackgroundTasks):
     try:
         background_tasks.add_task(subtopics_util.rename_subtopics, user_id)
@@ -474,7 +490,7 @@ async def regenerate_user_subtopics(user_id: str, background_tasks: BackgroundTa
         raise HTTPException(status_code=404, detail="Subtopics regeneration failed")
 
 
-@app.post("/search", tags=["Search"], status_code=200, response_model=SearchResults)
+@app.post("/search", tags=["Library Search"], status_code=200, response_model=SearchResults)
 async def search_documents(search_payload: SearchPayload, response: Response):
     logging.info(f"Search documents with query: {search_payload.query}")
     
@@ -500,7 +516,7 @@ async def search_documents(search_payload: SearchPayload, response: Response):
 
 
 
-@app.get("/generate_embedding/{user_id}", tags=["Embedding"], status_code=200)
+@app.get("/generate_embedding/{user_id}", tags=["User Data (Entities, Document)"], status_code=200)
 async def generate_embedding(user_id: str):
     try:
         await app_logic.generate_embeddings(user_id=user_id)
@@ -510,7 +526,7 @@ async def generate_embedding(user_id: str):
         raise HTTPException(status_code=500, detail="Embedding generation failed")
 
 
-@app.get("/regenerate/subtopics/{user_id}", tags=["Subtopics"], status_code=200)
+@app.get("/regenerate/subtopics/{user_id}", tags=["User Data (Entities, Document)"], status_code=200)
 async def regenerate_subtopics(user_id: str, background_tasks: BackgroundTasks):
     try:
         subtopics_util.delete_user_id_subtopics(user_id)
@@ -519,7 +535,7 @@ async def regenerate_subtopics(user_id: str, background_tasks: BackgroundTasks):
         logging.error(e)
         raise HTTPException(status_code=500, detail="Subtopics generation failed")
     
-@app.get("/generate/subtopics/{user_id}", tags=["Subtopics"], status_code=200)
+@app.get("/generate/subtopics/{user_id}", tags=["User Data (Entities, Document)"], status_code=200)
 async def generate_subtopics(user_id: str, background_tasks: BackgroundTasks):
     try:
         background_tasks.add_task(subtopics_util.subtopics_factory, 
@@ -529,7 +545,7 @@ async def generate_subtopics(user_id: str, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=500, detail="Subtopics generation failed")
     
 
-@app.get("/entities_names/{user_id}", tags=["Entities"], status_code=200)
+@app.get("/entities_names/{user_id}", tags=["User Data (Entities, Document)"], status_code=200)
 async def get_user_entities_names(user_id: str):
     try:
         names = getter.get_entities_names_by_user_id(user_id)
@@ -538,11 +554,16 @@ async def get_user_entities_names(user_id: str):
         logging.error(e)
         raise HTTPException(status_code=404, detail="Entities not found")
 
-@app.get("/placeholder_image", tags=["Document"], 
+@app.get("/placeholder_image", tags=["Icons"], 
          responses = {200: {"content": {"image/png": {}}}},
         response_class=FileResponse)
 async def get_placeholder_image():
     return FileResponse("./app/assets/images/library_placeholder.jpg")
+
+ 
+@app.get("/icon/{icon_name}", tags=["Icons"], responses = {200: {"content": {"image/png": {}}}}, response_class=FileResponse)
+async def get_icon(icon_name: str):
+    return FileResponse(f"./app/assets/images/{icon_name}.png")
 
 
 ## Study project endpoints
@@ -581,7 +602,7 @@ async def get_study_project(id: str):
         return project
     except Exception as e:
         logging.error(e)
-        raise HTTPException(status_code=404, detail="Study project not found")
+        raise HTTPException(status_code=404, detail=f"Study project not found. Error {str(e)}")
     
 
 @app.delete("/study_project/{id}", tags=["Study Project"], status_code=204)
@@ -650,10 +671,19 @@ async def unlink_project_document(payload: ProjectDocumentlinkPayload):
         raise HTTPException(status_code=500, detail="Project document unlink failed")
     
 
-def listen_to_md_file(event: dict):
-    logging.info(f"Event listener called with event: {event}")
+async def listen_doc_generation(event: dict):
+    logging.info(f"Event listener called with event: {event['message']}")
 
-@app.post("/create_source_upload_file/")
+    source = event['source']
+    if source.document_id is None:
+        logging.warn(f"Document was not created for source {source.id}")
+        return False
+    else:
+        await generate_document(source)
+        return True
+
+
+@app.post("/create_source_upload_file/", tags=["Bookmark / Source"])
 async def create_source_upload_file(background_tasks: BackgroundTasks, file: UploadFile, user_id: str = Form(...)): 
     
     user_handler = UserHandler()
@@ -678,7 +708,7 @@ async def create_source_upload_file(background_tasks: BackgroundTasks, file: Upl
         await out_file.write(content)  # async write
         await file.close()
 
-    background_tasks.add_task(source_handler.convert_pdf_to_markup, source, listen_to_md_file)
+    background_tasks.add_task(source_handler.generate_doc_from_pdf, source, listen_doc_generation)
 
     return {"filename": file.filename}        
     

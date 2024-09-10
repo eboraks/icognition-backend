@@ -7,16 +7,16 @@ import app.transformers_util as transformers_util
 
 
 ## Models to be used in the Gemini API responses
-class Citation(BaseModel):
-    verbatim: str
+class Verbatim(BaseModel):
+    verbatim_text: str
 
 class DocumentCitation(BaseModel):
-    document_id: int
-    citations: list[Citation]
+    document_id: str
+    verbatims: list[Verbatim]
 
-    def get_citations(self) -> list[dict]:
+    def get_verbatims(self) -> list[dict]:
         """"Return the citations as a list of dictionaries for stroing as JSON in DB"""
-        return [c.__dict__ for c in self.citations]
+        return [c.__dict__ for c in self.verbatims]
 
 
 class FoundEntity(BaseModel):
@@ -27,7 +27,7 @@ class FoundEntity(BaseModel):
 class FoundQuestionAnswer(BaseModel):
     question: str
     answer: str
-    citiation: list[Citation]
+    citiation: list[Verbatim]
 
 ## Prompts class
 class SummarizePrompt(BaseModel):
@@ -37,7 +37,7 @@ class SummarizePrompt(BaseModel):
 
     what_this_article_is_about: str
     key_points: list[str]
-    citations_sentances: list[Citation]
+    citations_sentances: list[Verbatim]
     meta_answer: str
 
     
@@ -241,6 +241,21 @@ class AskQuestionPrompt(BaseModel):
             list[dict]: The list of messages for the subtopic prompt.
         """
         
+        example_json_output = {
+            "answer": "Paris is the capital of France.",
+            "meta_answer": "SUCCESS",
+            "documents_citations": [
+                {
+                    "document_id": "fe32b94b-de9c-4aa4-87a3-c5cbbfaaab0b",
+                    "verbatims": [
+                        {
+                            "verbatim_text": "Paris is the capital of France."
+                        }
+                    ]
+                }
+            ]
+        }
+
         _articles = "Articles:\n"
         for d in docs:
             _articles += """Article_ID: {ID}, Article_Name: {TITLE}, Article: {CONTEXT}\n""".format(
@@ -252,8 +267,8 @@ class AskQuestionPrompt(BaseModel):
             If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
             Use the meta_answer field to indicate if you were able to complete the task by writing "SUCCESS", or explanation why not.
             If you don't know the answer, please don't share false information.
-            Ensure you include citations of the most essential sentences/text you relied on to answer the questions. 
-            To reduce the number of tokens in the response, use the begging and end of the string to reference the citation.\n 
+            Ensure you include the citations with the verbatim text of up to ten sentences/text you used to answer the question.
+            Output should be valid JSON
             Question: {QUESTION}\n {ARTICLES}""".format(QUESTION=question, ARTICLES=_articles) 
     
     def question_answer_builder(self, question: str) -> RagAnswerPublic: 
