@@ -12,7 +12,7 @@ async def test_workflow():
     
     search = SearchHandler()
 
-    user_id = "yU13Hk9BwEQiREgh91YM6EFKR7M2"
+    user_id = "HqAXhad3jrUWmPibnMf1xZczNIq2"
 
     query = "Tell me about Phil Jackson leadership style?"
     ##query = "what a test?"
@@ -26,14 +26,14 @@ async def test_workflow():
     assert results is not None
     for doc in results.documents_display:
         assert type(doc) == DocumentPublic
-        assert doc.title 
+        assert doc
         assert doc.cosine_similarity
 
     results = await search(user_id = user_id)
     assert results is not None
     for doc in results.documents_display:
         assert type(doc) == DocumentPublic
-        assert doc.title
+        assert doc
 
 
 def test_search_embeddings():

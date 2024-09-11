@@ -299,7 +299,7 @@ async def get_bookmarks_by_user_id(payload: PagePayload):
 )
 async def get_documents_plus_by_user_id(user_id: str):
     
-    documents = getter.get_documents_display_by_user_id(user_id)
+    documents = getter.get_documents_public_by_user_id(user_id)
     
     if documents is None:
         raise HTTPException(status_code=404, detail="Documents not found")

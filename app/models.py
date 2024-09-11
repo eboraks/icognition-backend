@@ -384,7 +384,7 @@ class Document(SQLModel, table=True):
 class RagAnswerPublic(BaseModel):
     question: Optional[str] = None
     answer: Optional[str] = None
-    documents_used: Optional[List[int]] = None
+    documents_used: Optional[List[str]] = None
     citations: list[dict] = None
     llm_service_meta: Optional[dict] = None
 

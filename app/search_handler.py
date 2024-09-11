@@ -61,7 +61,7 @@ class SearchHandler:
 
         """
         if not query:
-            docs = [d.to_public for d in getter.get_documents_by_user_id(user_id)]
+            docs = getter.get_documents_public_by_user_id(user_id)
             return SearchResults(documents_display=docs, rag_answer=None)
 
         is_question = re.match(self._question_regex, query, re.IGNORECASE)

@@ -1,6 +1,6 @@
 from app.db_connector import get_engine
 from app.models import Source, Document, Document_Entity_Link, DocumentPublic, Entity, Question_Answer, SubTopic, SubTopic_Document_Link, SubTopic_Embedding_Link, Embedding, SubTopic_Entity_Link, SubTopicDisplay, TreeNode
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import (
     and_,
     select,
@@ -38,7 +38,7 @@ def get_documents_by_ids(document_ids: set[int]) -> list[Document]:
         list[Document]: The list of documents.
     """
     with Session(engine) as session:
-        documents = session.scalars(select(Document).where(Document.id.in_(document_ids))).unique().all()
+        documents = session.scalars(select(Document).where(Document.id.in_(document_ids))).all()
 
     return documents
 
@@ -61,29 +61,36 @@ def get_document_by_source_id(source_id) -> Document:
     return doc
 
 def get_documents_by_user_id(user_id: str, document_status = "Done") -> list[Document]:
-    session = Session(engine)
-    docs = session.scalars(
-        select(Document)
-        .join(Source, Source.document_id == Document.id)
-        .where(and_(
-            Source.user_id == user_id,
-            Document.status == document_status))
-        .order_by(Source.update_at.desc())
-    ).unique().all()
-    session.close()
+    
+    with Session(engine) as session:
+        docs = session.scalars(
+            select(Document)
+            .options(joinedload(Document.entities))
+            .join(Source, Source.document_id == Document.id)
+            .where(and_(
+                Source.user_id == user_id,
+                Document.status == document_status))
+            .order_by(Source.update_at.desc())
+        ).unique().all()
+    
     return docs
 
-def get_documents_display_by_user_id(user_id: str, document_status = "Done") -> list[DocumentPublic]:
+
+
+def get_documents_public_by_user_id(user_id: str, document_status = "Done") -> list[DocumentPublic]:
     results = []
-    session = Session(engine)
-    docs = session.scalars(
-        select(Document)
-        .join(Source, Source.document_id == Document.id)
-        .where(and_(
-            Source.user_id == user_id,
-            Document.status == document_status))
-        .order_by(Source.update_at.desc())
-    ).unique().all()
+    with Session(engine) as session:
+
+        docs = session.scalars(
+            select(Document)
+            .options(joinedload(Document.entities))
+            .join(Source, Source.document_id == Document.id)
+            .where(and_(
+                Source.user_id == user_id,
+                Document.status == document_status))
+            .order_by(Source.update_at.desc())
+            
+        ).unique().all()
 
     for doc in docs:
         results.append(doc.to_public())
@@ -95,6 +102,7 @@ def get_document_by_url(url) -> Document:
     session = Session(engine)
     doc = session.scalar(select(Document).where(Document.url == url))
     session.close()
+    return doc
 
 
 def get_documents_ids() -> list[int]:
