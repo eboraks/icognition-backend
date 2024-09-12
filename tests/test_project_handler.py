@@ -9,7 +9,7 @@ genimi_client = GeminiClient()
 @pytest.mark.asyncio
 async def test_create_study_project():
 
-    existing_projects = handler.get_study_projects("test_project")
+    existing_projects = handler.get_study_projects_public("test_project")
 
     for project in existing_projects:
         handler.delete_study_project(project.id)

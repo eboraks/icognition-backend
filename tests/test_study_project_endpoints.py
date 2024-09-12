@@ -96,5 +96,20 @@ def test_delete_project_document_link():
     response = client.post("/project_document_unlink", json=payload)
     assert response.status_code == 200
     
-
+def test_get_user_projects():
+    # Test get_users_projects endpoint
+    user_id = "test_user_id_123"
+    
+    for i in range(3):
+        payload = {
+            "name": f"test_project_{i}",
+            "objective": f"test_objective_{i}",
+            "user_id": user_id,
+            "tasks": [{"description": f"description of the test task {i}"}]
+        }
+        response = client.post("/study_project", json=payload)
+      
+    response = client.get(f"/study_projects/{user_id}")
+    assert response.status_code == 200
+    assert len(response.json()) > 0
     

@@ -570,7 +570,7 @@ async def get_icon(icon_name: str):
 @app.get("/study_projects/{user_id}", tags=["Study Project"], response_model=List[StudyProjectPublic], status_code=200)
 async def get_study_projects(user_id: str):
     try:
-        projects = project_handler.get_study_projects(user_id)
+        projects = project_handler.get_study_projects_public(user_id)
         return projects
     except Exception as e:
         logging.error(e)

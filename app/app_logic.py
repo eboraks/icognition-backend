@@ -215,7 +215,7 @@ async def generate_summary(doc: Document, testing: bool = False) -> Document:
     try:
         logging.info(f"Generating summary for document {doc.id}")
 
-        ## If file exists, load it and return payload
+        ## For testing, if file exists, load it and return payload
         filename = f"response_one_{doc.id}.json"
         if os.path.exists(filename):
             with open(filename, "rb") as f:

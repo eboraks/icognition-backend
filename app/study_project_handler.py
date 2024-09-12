@@ -64,11 +64,11 @@ async def update_study_project(project_id: int, name: str, objective: str) -> St
 
 
     
-def get_study_projects(user_id: str) -> list[StudyProjectPublic]:
+def get_study_projects_public(user_id: str) -> list[StudyProjectPublic]:
 
     with Session(engine) as session:
         projects = session.scalars(select(Study_Project).where(Study_Project.user_id == user_id)).all()
-        return [project.to_public for project in projects]
+        return [project.to_public() for project in projects]
 
 def delete_study_project(project_id: int) -> bool:
     

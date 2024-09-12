@@ -112,7 +112,7 @@ def get_documents_ids() -> list[int]:
     return docs_ids
 
 
-def get_entities_by_document_id(document_id) -> Entity:
+def get_entities_by_document_id(document_id) -> list[Entity]:
     session = Session(engine)
     entities = session.scalars(
         select(Entity).join(Document_Entity_Link, Document_Entity_Link.entity_id == Entity.id).where(Document_Entity_Link.document_id == document_id)
