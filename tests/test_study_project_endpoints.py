@@ -58,7 +58,8 @@ def test_get_study_tasks():
 
 def test_study_related_entities():
     # Test get_study_related_entities endpoint
-    project_id = '2f2c29b9-2a58-4349-8fc6-672ef5e1df71'
+     # French Revolution project
+    project_id = '60700311-8bfd-4cb0-a654-99d1ec0fdcdc'
                             
     response = client.get(f"/study_project/{project_id}/related_entities")
     assert response.status_code == 200
@@ -70,11 +71,23 @@ def test_study_related_entities():
             assert entity["data"] is not None
 
 
+def test_generate_study_project_summary():
+    # Test generate_study_project_summary endpoint
+    # French Revolution project
+    project_id = '60700311-8bfd-4cb0-a654-99d1ec0fdcdc'
+    
+    response = client.get(f"/generate_study_project/{project_id}")
+    assert response.status_code == 200
+    
 
 def test_create_project_document_link():
     # Test create_project_document_link endpoint
-    project_id = 18
-    document_id = 129
+    
+    # French Revolution project
+    project_id = '60700311-8bfd-4cb0-a654-99d1ec0fdcdc'
+    # Storming the bastille document
+    document_id = '199260dd-92f7-467d-9631-669d81c0faa4'
+
     payload = {
         "project_id": project_id,
         "document_id": document_id
@@ -87,8 +100,12 @@ def test_create_project_document_link():
 
 def test_delete_project_document_link():
     # Test delete_project_document_link endpoint
-    project_id = 18
-    document_id = 129
+    
+    # French Revolution project
+    project_id = '60700311-8bfd-4cb0-a654-99d1ec0fdcdc'
+    # Storming the bastille document
+    document_id = '199260dd-92f7-467d-9631-669d81c0faa4'
+    
     payload = {
         "project_id": project_id,
         "document_id": document_id
@@ -113,3 +130,23 @@ def test_get_user_projects():
     assert response.status_code == 200
     assert len(response.json()) > 0
     
+
+## Test for /study_project/{id}/related_documents
+def test_study_related_documents():
+    # Test get_study_related_documents endpoint
+    # French Revolution project
+    project_id = '60700311-8bfd-4cb0-a654-99d1ec0fdcdc'
+    # Storming the bastille document
+    document_id = '199260dd-92f7-467d-9631-669d81c0faa4'
+                            
+    response = client.get(f"/study_project/{project_id}/related_documents")
+    assert response.status_code == 200
+    assert len(response.json()) > 0
+    doc_ids = []
+    for doc in response.json():
+        assert doc["title"] is not None
+        assert doc["id"] is not None
+        doc_ids.append(doc["id"])
+
+    assert document_id in doc_ids
+        

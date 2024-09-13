@@ -567,8 +567,17 @@ async def get_icon(icon_name: str):
 
 
 ## Study project endpoints
-@app.get("/study_projects/{user_id}", tags=["Study Project"], response_model=List[StudyProjectPublic], status_code=200)
+@app.get("/study_projects/{user_id}", tags=[Groups.STUDY_PROJECT], response_model=List[StudyProjectPublic], status_code=200)
 async def get_study_projects(user_id: str):
+    try:
+        projects = project_handler.get_study_projects_public(user_id)
+        return projects
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=404, detail="Study projects not found")
+
+@app.get("/user_study_projects/{user_id}", tags=[Groups.STUDY_PROJECT], response_model=List[StudyProjectPublic], status_code=200)
+async def get_user_study_projects(user_id: str):
     try:
         projects = project_handler.get_study_projects_public(user_id)
         return projects
@@ -577,7 +586,7 @@ async def get_study_projects(user_id: str):
         raise HTTPException(status_code=404, detail="Study projects not found")
     
 
-@app.post("/study_project", tags=["Study Project"], response_model=StudyProjectPublic, status_code=200)
+@app.post("/study_project", tags=[Groups.STUDY_PROJECT], response_model=StudyProjectPublic, status_code=200)
 async def create_study_project(project: StudyProjectPublic, background_tasks: BackgroundTasks):
     try:
         project = await project_handler.create_study_project(name=project.name, 
@@ -591,11 +600,36 @@ async def create_study_project(project: StudyProjectPublic, background_tasks: Ba
         logging.error(e)
         raise HTTPException(status_code=500, detail="Study project creation failed")
     
+@app.get("/generate_study_project/{project_id}", tags=[Groups.STUDY_PROJECT], response_model=StudyProjectPublic, status_code=200)
+async def create_study_project(project_id: str, background_tasks: BackgroundTasks):
+    try:
+        project = project_handler.get_study_project_by_id(project_id)
+
+        if project is None:
+            raise HTTPException(status_code=404, detail="Study project not found")
+        
+        background_tasks.add_task(project_handler.generate_project_response, project_id = project.id, listener = event_listener)
+        return project
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Study project creation failed")
+
 def event_listener(event):
     logging.info(f"Event listner called with event: {event}")
 
+@app.get("/study_project/{id}/related_documents", tags=[Groups.STUDY_PROJECT], response_model=List[DocumentPublic], status_code=200)
+async def get_project_related_documents(id: str):
+    try:
+        documents = project_handler.find_related_docs(id)
+        return documents
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=404, detail="Documents not found")
+    
 
-@app.get("/study_project/{id}", tags=["Study Project"], response_model=StudyProjectPublic, status_code=200)
+
+
+@app.get("/study_project/{id}", tags=[Groups.STUDY_PROJECT], response_model=StudyProjectPublic, status_code=200)
 async def get_study_project(id: str):
     try:
         project = project_handler.get_study_project_by_id(id)
@@ -605,7 +639,7 @@ async def get_study_project(id: str):
         raise HTTPException(status_code=404, detail=f"Study project not found. Error {str(e)}")
     
 
-@app.delete("/study_project/{id}", tags=["Study Project"], status_code=204)
+@app.delete("/study_project/{id}", tags=[Groups.STUDY_PROJECT], status_code=204)
 async def delete_study_project(id: str):
     try:
         project_handler.delete_study_project(id)
@@ -614,7 +648,7 @@ async def delete_study_project(id: str):
         raise HTTPException(status_code=500, detail="Study project deletion failed")
     
 
-@app.post("/study_task", tags=["Study Project"], response_model=StudyTaskPublic, status_code=200)
+@app.post("/study_task", tags=[Groups.STUDY_PROJECT], response_model=StudyTaskPublic, status_code=200)
 async def create_study_task(task: StudyTaskPublic):
     try:
         task = project_handler.create_study_task(project_id=task.project_id, description=task.description)
@@ -623,7 +657,7 @@ async def create_study_task(task: StudyTaskPublic):
         logging.error(e)
         raise HTTPException(status_code=500, detail="Study task creation failed")
     
-@app.post("/study_tasks", tags=["Study Project"], response_model=List[StudyTaskPublic], status_code=200)
+@app.post("/study_tasks", tags=[Groups.STUDY_PROJECT], response_model=List[StudyTaskPublic], status_code=200)
 async def create_study_tasks(tasks: List[StudyTaskPublic]):
     try:
         created_tasks = []
@@ -634,7 +668,7 @@ async def create_study_tasks(tasks: List[StudyTaskPublic]):
         logging.error(e)
         raise HTTPException(status_code=500, detail="Study task creation failed")
     
-@app.get("/study_project_tasks/{project_id}", tags=["Study Project"], response_model=List[StudyTaskPublic], status_code=200)
+@app.get("/study_project_tasks/{project_id}", tags=[Groups.STUDY_PROJECT], response_model=List[StudyTaskPublic], status_code=200)
 async def get_study_tasks(project_id: str):
     try:
         tasks = project_handler.get_study_tasks(project_id)
@@ -644,7 +678,7 @@ async def get_study_tasks(project_id: str):
         raise HTTPException(status_code=404, detail="Study tasks not found")
     
 
-@app.get("/study_project/{project_id}/related_entities", tags=["Study Project"], response_model=List[TreeNode], status_code=200)
+@app.get("/study_project/{project_id}/related_entities", tags=[Groups.STUDY_PROJECT], response_model=List[TreeNode], status_code=200)
 async def get_project_entities(project_id: str):
     try:
         entities = project_handler.get_project_entities(project_id)
@@ -654,7 +688,7 @@ async def get_project_entities(project_id: str):
         raise HTTPException(status_code=404, detail="Entities not found")
     
 
-@app.post("/project_document_link", tags=["Study Project"], status_code=200, response_model= Study_Project_Document_Link)
+@app.post("/project_document_link", tags=[Groups.STUDY_PROJECT], status_code=200, response_model= Study_Project_Document_Link)
 async def link_project_document(payload: ProjectDocumentlinkPayload):
     try:
         return project_handler.link_project_document(project_id = payload.project_id, document_id = payload.document_id)
@@ -662,7 +696,7 @@ async def link_project_document(payload: ProjectDocumentlinkPayload):
         logging.error(e)
         raise HTTPException(status_code=500, detail="Project document link failed")
     
-@app.post("/project_document_unlink", tags=["Study Project"], status_code=200)
+@app.post("/project_document_unlink", tags=[Groups.STUDY_PROJECT], status_code=200)
 async def unlink_project_document(payload: ProjectDocumentlinkPayload):
     try:
         return project_handler.unlink_project_document(project_id = payload.project_id, document_id = payload.document_id)

@@ -103,13 +103,13 @@ def get_study_task(task_id: int) -> StudyTaskPublic:
         task = session.scalar(select(Study_Task).options(joinedload(Study_Task.citations)).where(Study_Task.id == task_id))
         return task.to_public()
 
-def get_study_tasks(project_id: int) -> list[StudyTaskPublic]:
+def get_study_tasks(project_id: str) -> list[StudyTaskPublic]:
     with Session(engine) as session:
         tasks = session.scalars(select(Study_Task).options(joinedload(Study_Task.citations)).where(Study_Task.project_id == project_id)).unique().all()
         return [task.to_public() for task in tasks]
 
 
-def find_related_docs(project_id: int, cosine_distance_freshhold: float = 0.30) -> list[Document]:
+def find_related_docs(project_id: str, cosine_distance_freshhold: float = 0.30) -> list[Document]:
     with Session(engine) as session:
         stmt = select(Study_Project.objective_tasks_vector).where(Study_Project.id == project_id).scalar_subquery()
         docs = session.scalars(select(Document).filter(Document.ai_summary_vector.cosine_distance(stmt) <= cosine_distance_freshhold)).all()
@@ -125,7 +125,7 @@ def find_related_docs(project_id: int, cosine_distance_freshhold: float = 0.30) 
         return docs
 
 
-async def generate_project_response(project_id: int, listener: any = None) -> None:
+async def generate_project_response(project_id: str, listener: any = None) -> None:
     
     with Session(engine) as session:
         project = session.scalar(select(Study_Project).options(joinedload(Study_Project.tasks)).where(Study_Project.id == project_id))
@@ -161,9 +161,8 @@ def get_project_entities(project_id: int) -> list[TreeNode]:
     if len(document) == 0:
         return []
     
-    docs_ids_str = ', '.join([str(doc.id) for doc in document])
-    docs_ids = [doc.id for doc in document]
-
+    docs_ids_str = ', '.join([f"'{doc.id}'" for doc in document])
+    
     results = []
     stmt = text(f"""
         SELECT a.type, a.ents_count, a.docs_count, a.ents_names, a.docs_ids 
@@ -178,24 +177,26 @@ def get_project_entities(project_id: int) -> list[TreeNode]:
             WHERE l.document_id IN ({docs_ids_str})
         GROUP BY 1) a
         """)
+    try:
 
-    with Session(engine) as session:
+        with Session(engine) as session:
 
-        types = session.execute(stmt).fetchall()
+            types = session.execute(stmt).fetchall()
 
-        for k, t in enumerate(types):
-            top_node = TreeNode(label=t.type.title(), key=k, doc_count=t.docs_count, doc_ids=t.docs_ids, children=[])
-            for e_name in t.ents_names:
-                ent_node = session.scalar(select(Entity).where(Entity.name == e_name)).to_node()
-                if ent_node.doc_count > 0:
-                    top_node.children.append(ent_node)
-            # Only add the top node if it has children
-            
-            if len(top_node.children) > 0:
-                results.append(top_node)
-            
-            
-    return results
+            for k, t in enumerate(types):
+                top_node = TreeNode(label=t.type.title(), key=str(k), doc_count=t.docs_count, doc_ids=t.docs_ids, children=[])
+                for e_name in t.ents_names:
+                    ent_node = session.scalar(select(Entity).where(Entity.name == e_name)).to_node()
+                    if ent_node.doc_count > 0:
+                        top_node.children.append(ent_node)
+                # Only add the top node if it has children
+                
+                if len(top_node.children) > 0:
+                    results.append(top_node)
+    except Exception as e:
+        logging.error(f"Error while getting project entities. Error: {e}")
+    finally:                
+        return results
 
 
 
@@ -251,7 +252,7 @@ def delete_task_citations(task_id: int) -> int:
         session.commit()
         return results.rowcount
     
-def link_project_document(project_id: int, document_id: int) -> Study_Project_Document_Link:
+def link_project_document(project_id: str, document_id: str) -> Study_Project_Document_Link:
 
     with Session(engine) as session:
         session.merge(Study_Project_Document_Link(project_id=project_id, document_id=document_id))
@@ -261,7 +262,7 @@ def link_project_document(project_id: int, document_id: int) -> Study_Project_Do
 
     return link
 
-def unlink_project_document(project_id: int, document_id: int) -> bool:
+def unlink_project_document(project_id: str, document_id: str) -> bool:
 
     with Session(engine) as session:
         session.execute(delete(Study_Project_Document_Link)\
