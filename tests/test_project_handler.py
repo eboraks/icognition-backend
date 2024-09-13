@@ -9,18 +9,17 @@ genimi_client = GeminiClient()
 @pytest.mark.asyncio
 async def test_create_study_project():
 
-    existing_projects = handler.get_study_projects("test_project")
+    existing_projects = handler.get_study_projects_public("test_project")
 
     for project in existing_projects:
         handler.delete_study_project(project.id)
 
     project = await handler.create_study_project(name="test_project", objective="test_objective", user_id = "test_user", tasks_descriptions=["task1", "task2"])
 
-    project = await handler.get_study_project(project.id)
+    project = handler.get_study_project_by_id(project.id)
     assert project.name == "test_project"
     assert project.objective == "test_objective"
     assert project.user_id == "test_user"
-    assert project.objective_tasks_vector is not None
     assert len(project.tasks) > 0
 
 @pytest.mark.asyncio
@@ -49,12 +48,11 @@ async def test_create_frech_revolution_project():
 
     project = await handler.create_study_project(name=name, objective=objective, user_id = "HqAXhad3jrUWmPibnMf1xZczNIq2", tasks_descriptions=tasks)
 
-    project = await handler.get_study_project(project.id)
+    project = handler.get_study_project_by_id(project.id)
 
     assert project.name == name
     assert project.objective == objective
     assert project.user_id == "HqAXhad3jrUWmPibnMf1xZczNIq2"
-    assert project.objective_tasks_vector is not None
     assert len(project.tasks) == len(tasks)
 
 
@@ -63,21 +61,21 @@ async def test_generate_docs_vector():
     docs = getter.get_documents()
 
     for doc in docs:
-        if doc.summary_vector is None:
-            doc.summary_vector = await doc.generate_vector(geminiClient=genimi_client)
+        if doc.ai_summary_vector is None:
+            doc.ai_summary_vector = await doc.generate_vector(geminiClient=genimi_client)
             update_document(doc)
 
 
     docs = getter.get_documents()
     for doc in docs:
-        if doc.is_about and doc.summary_bullet_points:
-            assert doc.summary_vector is not None
+        if doc.ai_is_about and doc.ai_bullet_points:
+            assert doc.ai_summary_vector is not None
 
 @pytest.mark.asyncio
 async def test_find_related_docs():
     
     name = "French Revolution Highschool paper"
-    project = handler.get_study_project(name)
+    project = handler.get_study_project_by_name(name)
     documents = handler.find_related_docs(project.id)
     assert len(documents) > 3
 
@@ -88,7 +86,7 @@ async def test_find_related_docs():
 async def test_generate_task_response():
     
     name = "French Revolution Highschool paper"
-    project = handler.get_study_project(name)
+    project = handler.get_study_project_by_name(name)
     
     documents = handler.find_related_docs(project.id)
     

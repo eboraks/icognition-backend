@@ -1,23 +1,22 @@
 import json
 from pydantic import BaseModel
 
-from app.models import Answer, Document, Entity, Question_Answer, RagAnswerDisplay
+from app.models import Answer, Document, Entity, Question_Answer, RagAnswerPublic
 import app.transformers_util as transformers_util
 
 
 
 ## Models to be used in the Gemini API responses
-class Citation(BaseModel):
-    start_str: str
-    end_str: str
+class Verbatim(BaseModel):
+    verbatim_text: str
 
 class DocumentCitation(BaseModel):
-    document_id: int
-    citations: list[Citation]
+    document_id: str
+    verbatims: list[Verbatim]
 
-    def get_citations(self) -> list[dict]:
+    def get_verbatims(self) -> list[dict]:
         """"Return the citations as a list of dictionaries for stroing as JSON in DB"""
-        return [c.__dict__ for c in self.citations]
+        return [c.__dict__ for c in self.verbatims]
 
 
 class FoundEntity(BaseModel):
@@ -28,7 +27,7 @@ class FoundEntity(BaseModel):
 class FoundQuestionAnswer(BaseModel):
     question: str
     answer: str
-    citiation: list[Citation]
+    citiation: list[Verbatim]
 
 ## Prompts class
 class SummarizePrompt(BaseModel):
@@ -37,9 +36,8 @@ class SummarizePrompt(BaseModel):
     """
 
     what_this_article_is_about: str
-    key_learning_from_article: str
     key_points: list[str]
-    citations_sentances: list[Citation]
+    citations_sentances: list[Verbatim]
     meta_answer: str
 
     
@@ -55,13 +53,15 @@ class SummarizePrompt(BaseModel):
             str: The prompt for the summarize task.
         """
         # Prompt for summarizing an article
-        return """You are a researcher tasked with summarizing the article into what the article is about, key learnings, and critical points. 
+        return """You are a researcher tasked with summarizing the article into what the article is about, key critical points the article make.  
         Please ensure that your responses are socially unbiased and positive in nature. If the ask does not make any sense, or is not factually coherent, 
         or you don't know the answer explain why. Please don't share false information. 
         Use the meta_answer field to indicate if you were able to complete the task by writing "SUCCESS", or explanation why not  
-        Ensure you include citations of the most essential sentences/text you relied on to answer the questions. 
-        To reduce the number of tokens in the response, use the begging and end of the string to reference the citation. 
+        Ensure you include citations of the sentences/text you used on to answer the questions, 
+        try to keep the number of citations to the five most important. 
+        The response must be valid JSON. 
         Article: {BODY}""".format(BODY=text)
+    
 
     def populate_document(self, document: Document) -> Document:
         """
@@ -73,10 +73,9 @@ class SummarizePrompt(BaseModel):
         Returns:
             Document: The populated document.
         """
-        document.is_about = self.what_this_article_is_about
-        document.learning_from_document = self.key_learning_from_article
-        document.summary_bullet_points = self.key_points
-        document.summary_citations = [c.__dict__ for c in self.citations_sentances]
+        document.ai_is_about = self.what_this_article_is_about
+        document.ai_bullet_points = self.key_points
+        document.ai_citations = [c.__dict__ for c in self.citations_sentances]
 
         return document
 
@@ -103,10 +102,11 @@ class EntitiesPrompt(BaseModel):
             str: The prompt for the summarize task.
         """
         # Prompt for summarizing an article
-        return """You are a researcher tasked with identifying the most relevent entities (such as people, products, companies, locations, events, etc.) 
-        to the article subjects. Try to focus on the most important entities. Include the name, type, and description of each entity or topic. 
-        Merge entities with name variation for example Voter and Voters, or Anti-Woke and anti-wokeness. Deduplicates entities on name and do not include irrelevant entities.
-        Response most be valid JSON. Ensure that your responses are socially unbiased and positive in nature.
+        return """You are a researcher tasked with identifying the twenty most relevent entities (such as people, products, companies, locations, events, etc.) 
+        to the article subjects. Include the name, type, and description of each entity in the response. 
+        Those fields are required for the response to be valid JSON. 
+        Merge entities with name variation for example Voter and Voters. Deduplicates entities on name and do not include irrelevant entities.
+        Ensure that your responses are socially unbiased and positive in nature.
         If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
         If you don't know the answer, please don't share false information. 
         Article: {BODY}""".format(BODY=text)
@@ -192,7 +192,8 @@ class IdentifyQuestionsAnswerPrompt(BaseModel):
         """ 
 
         # Prompt
-        return """You are a researcher tasked with identifying the essential questions and answers an article(s) addresses. 
+        return """You are a researcher tasked with identifying the ten most important questions and answers an article(s) addresses. 
+        Keep your answers short, concise and informative. The response should include the question, answer, and citations of the most essential sentences/text you relied on to answer the questions. 
         Please ensure that your responses are socially unbiased and positive in nature.
         If the article does address any question, or is not factually coherent, or you don't know the answer explain why in the meta_answer field.
         Use the meta_answer field to indicate if you were able to complete the task by writing "SUCCESS", or explanation why not.
@@ -240,6 +241,21 @@ class AskQuestionPrompt(BaseModel):
             list[dict]: The list of messages for the subtopic prompt.
         """
         
+        example_json_output = {
+            "answer": "Paris is the capital of France.",
+            "meta_answer": "SUCCESS",
+            "documents_citations": [
+                {
+                    "document_id": "fe32b94b-de9c-4aa4-87a3-c5cbbfaaab0b",
+                    "verbatims": [
+                        {
+                            "verbatim_text": "Paris is the capital of France."
+                        }
+                    ]
+                }
+            ]
+        }
+
         _articles = "Articles:\n"
         for d in docs:
             _articles += """Article_ID: {ID}, Article_Name: {TITLE}, Article: {CONTEXT}\n""".format(
@@ -251,12 +267,12 @@ class AskQuestionPrompt(BaseModel):
             If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
             Use the meta_answer field to indicate if you were able to complete the task by writing "SUCCESS", or explanation why not.
             If you don't know the answer, please don't share false information.
-            Ensure you include citations of the most essential sentences/text you relied on to answer the questions. 
-            To reduce the number of tokens in the response, use the begging and end of the string to reference the citation.\n 
+            Ensure you include the citations with the verbatim text of up to ten sentences/text you used to answer the question.
+            Output should be valid JSON
             Question: {QUESTION}\n {ARTICLES}""".format(QUESTION=question, ARTICLES=_articles) 
     
-    def question_answer_builder(self, question: str) -> RagAnswerDisplay: 
-        return RagAnswerDisplay(
+    def question_answer_builder(self, question: str) -> RagAnswerPublic: 
+        return RagAnswerPublic(
             question=question, 
             answer=self.answer, 
             citations=[dc.__dict__ for dc in self.documents_citations],

@@ -231,7 +231,7 @@ def get_webpage(payload: PagePayload) -> BeautifulSoup:
 def find_main_article_element(soup: BeautifulSoup) -> list[str]:
 
     articles = []
-    selectors = ["div#article", "div.article-body", "div.article", "div.article-container", "article", "main"]
+    selectors = ["div#article", "div.article-body", "div.article", "div.article-container", "article", "main", "body"]
 
     for selector in selectors:
         for element in soup.select(selector):
@@ -259,6 +259,22 @@ def find_main_article_element(soup: BeautifulSoup) -> list[str]:
     return main_article
 
 
+def get_title_from_h1(soup: BeautifulSoup) -> str:
+    """Extract title from h1 tag using BeautifulSoup
+
+    Args:
+        soup (BeautifulSoup): BeautifulSoup object
+
+    Returns:
+        str: title
+    """
+    title = None
+    h1_tag = soup.find("h1")
+    if h1_tag:
+        title = h1_tag.text.strip()
+    return title
+
+
 def get_paragraphs(soup: BeautifulSoup) -> list[str]:
     header_pattern = re.compile(r"h\d")
     text_elements = []
@@ -279,7 +295,7 @@ def get_elements(soup: BeautifulSoup) -> list[dict]:
         ## Collect only paragraph and headers with enough content
         if element.name == "p" and len(element.text.split(" ")) > 8:
             elements.append({'element': element.name, 'text': element.text})
-        elif header_pattern.match(element.name) and len(element.text.split(" ")) > 3:
+        elif header_pattern.match(element.name) and len(element.text.split(" ")) > 1:
             elements.append({'element': element.name, 'text': element.text})
         else:
             None
@@ -319,16 +335,20 @@ def create_page(payload: PagePayload) -> Page:
         logging.error("No webpage found")
         return None
 
-    
+    if payload.source == "web":
+        article_element = find_main_article_element(html)
 
-    article_element = find_main_article_element(html)
+        if article_element is None:
+            logging.error("No article element found in webpage")
+            return None
 
-    if article_element is None:
-        return None
+        paragraphs = get_paragraphs(article_element)
+        elements = json.dumps(get_elements(article_element))
+    elif payload.source == "pdf":
+        paragraphs = get_paragraphs(html)
+        elements = json.dumps(get_elements(html))
 
-    paragraphs = get_paragraphs(article_element)
-    elements = json.dumps(get_elements(article_element))
-
+ 
     if paragraphs is None:
         logging.error("No paragraphs found in webpage")
         return None
@@ -341,6 +361,8 @@ def create_page(payload: PagePayload) -> Page:
     page.html_elements = elements
     page.full_text = "\n".join(paragraphs)
     page.title = get_title(metatags)
+    if page.title is None:
+        page.title = get_title_from_h1(html)
     page.keywords = get_keywords(metatags)
     page.locale = get_locale(metatags)
     page.publish_date = get_publish_date(metatags)

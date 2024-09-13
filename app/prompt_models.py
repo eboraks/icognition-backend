@@ -61,7 +61,7 @@ class DocumentPromptTwo(DocumentPrompt):
         Returns:
             Document: The populated document.
         """
-        document.short_summary = cls.oneSentenceSummary
+        document.ai_short_summary = cls.oneSentenceSummary
         document.llm_service_meta = cls.usage
 
         return document
@@ -147,10 +147,10 @@ class DocumentPromptOne(DocumentPrompt):
         Returns:
             Document: The populated document.
         """
-        document.is_about = self.whatThisArticleIsAbout
-        document.short_summary = self.oneSentenceSummary
+        document.ai_is_about = self.whatThisArticleIsAbout
+        document.ai_short_summary = self.oneSentenceSummary
         bullet_points = [re.sub(r"[1-9]{,2}\.", "", bullet_point).strip() for bullet_point in self.summaryInNumericBulletPoints]
-        document.summary_bullet_points = bullet_points
+        document.ai_bullet_points = bullet_points
         document.llm_service_meta = self.usage
 
         return document
@@ -240,10 +240,9 @@ class DocumentPromptVerbatim(DocumentPrompt):
         Returns:
             Document: The populated document.
         """
-        document.is_about = self.whatThisArticleIsAbout.answer
-        document.learning_from_document = self.learningsFromTheArticle.answer
+        document.ai_is_about = self.whatThisArticleIsAbout.answer
         bullet_points = [re.sub(r"[1-9]{,2}\.", "", bullet_point.answer).strip() for bullet_point in self.summaryInBulletPoints]
-        document.summary_bullet_points = bullet_points
+        document.ai_bullet_points = bullet_points
         document.llm_service_meta = self.usage
 
 

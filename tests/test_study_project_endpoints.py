@@ -24,20 +24,20 @@ async def test_create_study_project():
 
 def test_get_study_project():
     # Test get_study_project endpoint
-    id = 29
+    id = '0d64caf4-dcf3-4a49-8dfe-770159480523'
     response = client.get(f"/study_project/{id}")
     assert response.status_code == 200
     assert response.json()["id"] == id
 
 def test_delete_study_project():
     # Test delete_study_project endpoint
-    id = 30
+    id = '0d64caf4-dcf3-4a49-8dfe-770159480523'
     response = client.delete(f"/study_project/{id}")
     assert response.status_code == 204
 
 def test_create_study_task():
     # Test create_study_task endpoint
-    project_id = 19
+    project_id = '2f2c29b9-2a58-4349-8fc6-672ef5e1df71'
     description = f"test_description for task {project_id}"
     payload = {
         "project_id": project_id,
@@ -50,7 +50,7 @@ def test_create_study_task():
 
 def test_get_study_tasks():
     # Test get_study_tasks endpoint
-    project_id = 18
+    project_id = '2f2c29b9-2a58-4349-8fc6-672ef5e1df71'
     response = client.get(f"/study_project_tasks/{project_id}")
     assert response.status_code == 200
     assert len(response.json()) > 0
@@ -58,7 +58,7 @@ def test_get_study_tasks():
 
 def test_study_related_entities():
     # Test get_study_related_entities endpoint
-    project_id = 18
+    project_id = '2f2c29b9-2a58-4349-8fc6-672ef5e1df71'
                             
     response = client.get(f"/study_project/{project_id}/related_entities")
     assert response.status_code == 200
@@ -96,5 +96,20 @@ def test_delete_project_document_link():
     response = client.post("/project_document_unlink", json=payload)
     assert response.status_code == 200
     
-
+def test_get_user_projects():
+    # Test get_users_projects endpoint
+    user_id = "test_user_id_123"
+    
+    for i in range(3):
+        payload = {
+            "name": f"test_project_{i}",
+            "objective": f"test_objective_{i}",
+            "user_id": user_id,
+            "tasks": [{"description": f"description of the test task {i}"}]
+        }
+        response = client.post("/study_project", json=payload)
+      
+    response = client.get(f"/study_projects/{user_id}")
+    assert response.status_code == 200
+    assert len(response.json()) > 0
     

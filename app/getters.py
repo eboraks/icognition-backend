@@ -1,6 +1,6 @@
 from app.db_connector import get_engine
-from app.models import Bookmark, Document, Document_Entity_Link, DocumentPublic, Entity, Question_Answer, SubTopic, SubTopic_Document_Link, SubTopic_Embedding_Link, Embedding, SubTopic_Entity_Link, SubTopicDisplay, TreeNode
-from sqlalchemy.orm import Session
+from app.models import Source, Document, Document_Entity_Link, DocumentPublic, Entity, Question_Answer, SubTopic, SubTopic_Document_Link, SubTopic_Embedding_Link, Embedding, SubTopic_Entity_Link, SubTopicDisplay, TreeNode
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import (
     and_,
     select,
@@ -11,7 +11,7 @@ import app.html_parser as html_parser
 engine = get_engine()
 
 
-def get_document_public_by_id(document_id) -> DocumentPublic:
+def get_document_public_by_id(document_id: str) -> DocumentPublic:
     with Session(engine) as session:
         doc = session.scalar(select(Document).where(Document.id == document_id))
         if doc is None:
@@ -20,7 +20,7 @@ def get_document_public_by_id(document_id) -> DocumentPublic:
         
         return doc.to_public()
     
-def get_document_by_id(document_id) -> Document:
+def get_document_by_id(document_id: str) -> Document:
     with Session(engine) as session:
         doc = session.scalar(select(Document).where(Document.id == document_id))
         if doc is None:
@@ -38,7 +38,7 @@ def get_documents_by_ids(document_ids: set[int]) -> list[Document]:
         list[Document]: The list of documents.
     """
     with Session(engine) as session:
-        documents = session.scalars(select(Document).where(Document.id.in_(document_ids))).unique().all()
+        documents = session.scalars(select(Document).where(Document.id.in_(document_ids))).all()
 
     return documents
 
@@ -48,12 +48,12 @@ def get_documents() -> list[Document]:
     session.close()
     return docs
 
-def get_document_by_bookmark_id(bookmark_id) -> Document:
+def get_document_by_source_id(source_id) -> Document:
     session = Session(engine)
     doc = session.scalar(
         select(Document)
-        .join(Bookmark, Bookmark.document_id == Document.id)
-        .where(Bookmark.id == bookmark_id)
+        .join(Source, Source.document_id == Document.id)
+        .where(Source.id == source_id)
     )
     session.add_all(doc.entities)
     session.add_all(doc.subtopics)
@@ -61,29 +61,36 @@ def get_document_by_bookmark_id(bookmark_id) -> Document:
     return doc
 
 def get_documents_by_user_id(user_id: str, document_status = "Done") -> list[Document]:
-    session = Session(engine)
-    docs = session.scalars(
-        select(Document)
-        .join(Bookmark, Bookmark.document_id == Document.id)
-        .where(and_(
-            Bookmark.user_id == user_id,
-            Document.status == document_status))
-        .order_by(Bookmark.update_at.desc())
-    ).unique().all()
-    session.close()
+    
+    with Session(engine) as session:
+        docs = session.scalars(
+            select(Document)
+            .options(joinedload(Document.entities))
+            .join(Source, Source.document_id == Document.id)
+            .where(and_(
+                Source.user_id == user_id,
+                Document.status == document_status))
+            .order_by(Source.update_at.desc())
+        ).unique().all()
+    
     return docs
 
-def get_documents_display_by_user_id(user_id: str, document_status = "Done") -> list[DocumentPublic]:
+
+
+def get_documents_public_by_user_id(user_id: str, document_status = "Done") -> list[DocumentPublic]:
     results = []
-    session = Session(engine)
-    docs = session.scalars(
-        select(Document)
-        .join(Bookmark, Bookmark.document_id == Document.id)
-        .where(and_(
-            Bookmark.user_id == user_id,
-            Document.status == document_status))
-        .order_by(Bookmark.update_at.desc())
-    ).unique().all()
+    with Session(engine) as session:
+
+        docs = session.scalars(
+            select(Document)
+            .options(joinedload(Document.entities))
+            .join(Source, Source.document_id == Document.id)
+            .where(and_(
+                Source.user_id == user_id,
+                Document.status == document_status))
+            .order_by(Source.update_at.desc())
+            
+        ).unique().all()
 
     for doc in docs:
         results.append(doc.to_public())
@@ -95,6 +102,7 @@ def get_document_by_url(url) -> Document:
     session = Session(engine)
     doc = session.scalar(select(Document).where(Document.url == url))
     session.close()
+    return doc
 
 
 def get_documents_ids() -> list[int]:
@@ -104,7 +112,7 @@ def get_documents_ids() -> list[int]:
     return docs_ids
 
 
-def get_entities_by_document_id(document_id) -> Entity:
+def get_entities_by_document_id(document_id) -> list[Entity]:
     session = Session(engine)
     entities = session.scalars(
         select(Entity).join(Document_Entity_Link, Document_Entity_Link.entity_id == Entity.id).where(Document_Entity_Link.document_id == document_id)
@@ -139,7 +147,7 @@ def get_similar_entity_by_name_vector(user_id: str, vector, threshold: float = 0
                 FROM (SELECT e.id AS entity_id, MAX(1 - (e.name_vector <=> :vector)) AS cosine_similarity 
                         FROM entity AS e
                         JOIN document_entity_link del ON del.entity_id = e.id
-                        JOIN bookmark b ON b.document_id = del.document_id
+                        JOIN source b ON b.document_id = del.document_id
                         WHERE b.user_id = :user_id
                         GROUP BY 1) a
             WHERE a.cosine_similarity >= :threshold
@@ -168,47 +176,47 @@ def get_question_answer_by_document_id(document_id: int) -> list[Question_Answer
 
 
 
-def get_bookmarks_by_user_id(user_id: str) -> list[Bookmark]:
+def get_sources_by_user_id(user_id: str) -> list[Source]:
     session = Session(engine)
-    bookmarks = session.scalars(
-        select(Bookmark)
-        .where(Bookmark.user_id == user_id)
-        .order_by(Bookmark.update_at.desc())
+    sources = session.scalars(
+        select(Source)
+        .where(Source.user_id == user_id)
+        .order_by(Source.update_at.desc())
     ).all()
     session.close()
-    return bookmarks
+    return sources
 
 
-def get_bookmark_by_document_id(document_id: int) -> Bookmark:
+def get_source_by_document_id(document_id: str) -> Source:
     session = Session(engine)
-    bookmark = session.scalar(
-        select(Bookmark).where(Bookmark.document_id == document_id)
+    source = session.scalar(
+        select(Source).where(Source.document_id == document_id)
     )
     session.close()
-    return bookmark
+    return source
 
 
-def get_bookmark_by_url(user_id: str, url: str) -> Bookmark:
+def get_source_by_url(user_id: str, url: str) -> Source:
     url = html_parser.clean_url(url)
     session = Session(engine)
-    bookmark = session.scalar(select(Bookmark).where(
-        and_(Bookmark.url == url, Bookmark.user_id == user_id)))
+    source = session.scalar(select(Source).where(
+        and_(Source.url == url, Source.user_id == user_id)))
     session.close()
-    return bookmark
+    return source
 
 
-def get_bookmark_document(id: int) -> Document:
+def get_source_document(id: int) -> Document:
     session = Session(engine)
-    doc = session.scalar(select(Document).where(Document.bookmark_id == id))
+    doc = session.scalar(select(Document).where(Document.source_id == id))
     session.close()
     return doc
 
 
-def get_bookmark_by_id(id: int) -> Bookmark:
+def get_source_by_id(id: str) -> Source:
     session = Session(engine)
-    bookmark = session.scalar(select(Bookmark).where(Bookmark.id == id))
+    source = session.scalar(select(Source).where(Source.id == id))
     session.close()
-    return bookmark
+    return source
 
 
 def get_entities_by_document_id(document_id) -> list[Entity]:
@@ -227,8 +235,8 @@ def get_entities_names_by_user_id(user_id: str) -> list[str]:
     entities = session.scalars( 
         select(Entity.name)
         .join(Document_Entity_Link, Document_Entity_Link.entity_id == Entity.id)
-        .join(Bookmark, Bookmark.document_id == Document_Entity_Link.document_id)
-        .where(Bookmark.user_id == user_id).order_by(Entity.name).distinct()
+        .join(Source, Source.document_id == Document_Entity_Link.document_id)
+        .where(Source.user_id == user_id).order_by(Entity.name).distinct()
     ).all()
     session.close()
     return entities
@@ -239,8 +247,8 @@ def get_entities_by_user_id_and_type(user_id: str, type: str) -> list[Entity]:
     entities = session.scalars(
         select(Entity)
         .join(Document, Document.id == Entity.document_id)
-        .join(Bookmark, Bookmark.document_id == Document.id)
-        .where(Bookmark.user_id == user_id, Entity.type == type)
+        .join(Source, Source.document_id == Document.id)
+        .where(Source.user_id == user_id, Entity.type == type)
     ).all()
     session.close()
     return entities
@@ -365,8 +373,20 @@ def get_embedding_by_id(embedding_id: int) -> Embedding:
     return embedding
 
 
+def calculate_number_of_docs_thredhold(user_id: str) -> int:
+    with Session(engine) as session:
+        stmt = text("""
+            SELECT count(distinct document_id) as docs_count
+            FROM public.source
+            WHERE user_id = :user_id
+            """)
+        docs_count = session.scalar(stmt, {"user_id": user_id})
+        
+        return int(docs_count / 10)
+
 def get_entities_tree_nodes_by_user_id(user_id: str) -> list[TreeNode]:
     
+    min_num_docs = calculate_number_of_docs_thredhold(user_id)
     results = []
     stmt = text("""
         SELECT a.type, a.ents_count, a.docs_count, a.ents_names, a.docs_ids 
@@ -377,20 +397,20 @@ def get_entities_tree_nodes_by_user_id(user_id: str) -> list[TreeNode]:
             json_agg(distinct l.document_id) as docs_ids
         FROM public.entity e
         JOIN public.document_entity_link l ON l.entity_id = e.id
-        JOIN public.bookmark b ON b.document_id = l.document_id
+        JOIN public.source b ON b.document_id = l.document_id
             WHERE b.user_id = :user_id 
         GROUP BY 1) a
-        WHERE a.ents_count > 10 AND a.docs_count > 10
+        WHERE a.docs_count > :min_num_docs
         """)
 
     with Session(engine) as session:
-        types = session.execute(stmt, {"user_id": user_id}).fetchall()
+        types = session.execute(stmt, {"user_id": user_id, "min_num_docs": min_num_docs}).fetchall()
 
         for k, t in enumerate(types):
-            top_node = TreeNode(label=t.type.title(), key=k, doc_count=t.docs_count, doc_ids=t.docs_ids, children=[])
+            top_node = TreeNode(label=t.type.title(), key=(t.type.title().replace(" ", "").lower()), doc_count=t.docs_count, doc_ids=[str(id) for id in t.docs_ids], children=[])
             for e_name in t.ents_names:
                 ent_node = session.scalar(select(Entity).where(Entity.name == e_name)).to_node()
-                if ent_node.doc_count > 1:
+                if ent_node.doc_count > min_num_docs:
                     top_node.children.append(ent_node)
             # Only add the top node if it has children
             
@@ -405,25 +425,8 @@ def get_entities_tree_nodes_by_user_id(user_id: str) -> list[TreeNode]:
 
 def get_filter_nodes_by_user_id(user_id: str) -> list[TreeNode]:
     
-    filter_nodes = []
+    filter_nodes = get_entities_tree_nodes_by_user_id(user_id)
     
-    # Get entities tree nodes by entity.type. Example 'person', 'organization', 'location'
-    filter_nodes.extend(get_entities_tree_nodes_by_user_id(user_id))   
-
-    # Get subtopics tree nodes as children of 'Areas Of Interest'
-    # The reason this operation require session is that to_node() method requires session to load the subtopics related entities and documents
-    with Session(engine) as session:
-        
-        areas_of_interest = TreeNode(label="Areas Of Interest", key=len(filter_nodes), children=[], doc_ids=[])
-        subtopics = get_subtopics(user_id)
-        for subtopic in subtopics:
-            session.add(subtopic)
-            area = subtopic.to_node()
-            areas_of_interest.doc_count = len(area.doc_ids)
-            areas_of_interest.doc_ids.extend(area.doc_ids)
-            areas_of_interest.children.append(area)
-        filter_nodes.append(areas_of_interest)
-
     filter_nodes.sort(key=lambda x: x.doc_count, reverse=True)
 
     return filter_nodes

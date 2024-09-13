@@ -13,7 +13,7 @@ The backend application for icognition
 2. DO NOT USE: Build icogapi image using `docker build -t icogapi:latest .`
 
 # Run database migration
-* Load env variable from .env in local. Ths mostly use for testing 
+* Load env variable from .env in local. This is mostly used for testing.
 * export $(cat .env | xargs) && env
 
 * For local develop: See instructions in migration-local
@@ -38,3 +38,8 @@ The backend application for icognition
 
 ## GCP
 ## STG DB: see .env files
+
+## GCP Fuse Mount to Bucket
+1. gcloud auth application-default login
+2. gcsfuse icog-dev-bucket-01 icog-dev-bucket-01
+3. fusermount -u icog-dev-bucket-01

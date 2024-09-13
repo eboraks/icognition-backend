@@ -21,11 +21,11 @@ logging.basicConfig(
 class GeminiClient:
 
     ## Set default model name, gcp key and configure the generative model
-    def __init__(self, _model_name: str = os.getenv("GEMINI_FLASH_MODEL")):
-        self.model_name = _model_name
+    def __init__(self, _flash_model_name: str = os.getenv("GEMINI_FLASH_MODEL"), _pro_model_name: str = os.getenv("GEMINI_PRO_MODEL")):
+        self.flash_model_name = _flash_model_name
+        self.pro_model_name = _pro_model_name
         genai.configure(api_key = os.getenv("GCP_AI_KEY"))
-        self.client = genai.GenerativeModel(_model_name)
-
+        
 
     def get_models_names(self):
         """ 
@@ -43,10 +43,12 @@ class GeminiClient:
         return models_names 
 
 
-    async def generate_response(self, prompt: str, prompt_model: BaseModel, attempts: int = 3):
+    async def generate_response(self, prompt: str, prompt_model: BaseModel, gemini_model = os.getenv("GEMINI_FLASH_MODEL"), attempts: int = 3):
         
+
+        client = genai.GenerativeModel(gemini_model)
         logging.debug(f"Generating response for prompt_model: {prompt_model}")
-        response = await self.client.generate_content_async(prompt, 
+        response = await client.generate_content_async(prompt, 
                 generation_config={"response_mime_type": "application/json",  "response_schema": prompt_model})
         
         try:
@@ -55,7 +57,8 @@ class GeminiClient:
             logging.error(f"Error validating the response: {e}")
             if (attempts > 0):
                 logging.info(f"Retrying the response generation for prompt_model: {prompt_model}")
-                return await self.generate_response(prompt, prompt_model, attempts - 1)
+                return await self.generate_response(prompt=prompt, prompt_model=prompt_model, gemini_model=os.getenv("GEMINI_FLASH_MODEL"), attempts = attempts - 1)
+            
         except Exception as e:
             logging.error(f"Error validating the response: {e}")
             raise e

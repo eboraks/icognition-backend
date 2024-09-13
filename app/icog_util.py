@@ -16,8 +16,6 @@ from sumy.utils import get_stop_words
  
 config = os.environ
  
-model_name = config["TOGETHER_MODEL"] # "mistralai/Mixtral-8x7B-Instruct-v0.1"
-# tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True, use_cache=False)
 
 nltk.download('punkt')
 
