@@ -9,7 +9,6 @@ from typing import Optional, List, Dict
 from datetime import datetime
 from pydantic import BaseModel, model_serializer
 
-from app.icog_util import original_text_to_sentences, sentences_to_text
 from app.gemini_client import GeminiClient
 
 
@@ -359,24 +358,7 @@ class Document(SQLModel, table=True):
             logging.error(f"An error occurred while generating summary vector for document_id: {self.id}. Error: {e}")
             return None
 
-    def get_sentences_can_be_delete(self): 
-        sentences = []
-        for element in json.loads(self.html_elements, object_hook=lambda d: SimpleNamespace(**d)):
-
-            if (element.element == 'p'):
-                temp = original_text_to_sentences(element.text)
-                sentences.extend(temp)
-            else:
-                sentences.append(element.text)
-
-        return sentences
-
-    def get_text_with_sentences_index_can_be_delete(self, sentences: list[str] = None):
-
-        if sentences is None:
-            sentences = self.get_sentences()
-
-        return sentences_to_text(sentences)
+    
 
 
 
