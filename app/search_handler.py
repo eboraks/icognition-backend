@@ -22,10 +22,6 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
-from app.together_api_client import (
-    TogetherMixtralClient,
-    ApiCallException,
-)
 
 env_vers = os.environ
 
@@ -45,7 +41,6 @@ class SearchHandler:
         self._db_engine = get_engine()
         self._question_regex = r"(?:What|How|Tell me|Find|Who|Explain|Give).*\?"
         self._summarizer = DocSummarizer()
-        self._mixtralClient = TogetherMixtralClient()
 
 
     async def __call__(self, user_id: str, query: str = None) -> SearchResults:
@@ -115,8 +110,8 @@ class SearchHandler:
 
             logging.info(f"Generated RAG answer for search term {search_term}")
             return rag_answer
-        except ApiCallException as e:
-            logging.error(f"Error calling TogetherMixtral API: {str(e)}")
+        except Exception as e:
+            logging.error(f"Error calling AI API: {str(e)}")
             return None
            
     def search_embeddings(self, user_id: str, search_term: str, threshold: float = 0.5, max_results: int = 20, attempts: int = 0) -> list[MatchedDocument]:

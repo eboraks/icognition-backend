@@ -15,7 +15,6 @@ from sqlalchemy import (
     func,
     text,
 )
-from app.together_api_client import ApiCallException, TogetherMixtralClient
 import logging, sys
 
 logging.basicConfig(
@@ -25,8 +24,6 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S", 
 )
 
-
-client = TogetherMixtralClient()
 
 engine = get_engine()
 st_util = get_util()

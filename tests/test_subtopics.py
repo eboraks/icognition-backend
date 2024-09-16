@@ -2,7 +2,7 @@ import json
 from app.transformers_util import get_util, get_model
 from app.models import Document, SubTopic, SubTopic_Document_Link, SubTopic_Embedding_Link, SubTopic_Entity_Link, Entity
 from app.db_connector import get_engine
-import app.subtopics_util as subtopics_util
+import subtopics_util_old as subtopics_util_old
 import app.getters as getter
 import app.app_logic as app_logic
 from sqlalchemy.orm import Session
@@ -47,7 +47,7 @@ async def test_factory():
     ## Clear the database before the test
     clear_database()
 
-    import app.subtopics_util as subtopics_util ## Need to be imported within async becuase it's calling aiohttp via togeter client
+    import subtopics_util_old as subtopics_util_old ## Need to be imported within async becuase it's calling aiohttp via togeter client
     engine = get_engine()
     ts_util = get_util()
     model = get_model()
@@ -69,7 +69,7 @@ async def test_factory():
     
     ##insert_entities_group(ent_str_group_one)  
    
-    subtopics =  await subtopics_util.subtopics_factory(user_id, minimum_community_size=2)
+    subtopics =  await subtopics_util_old.subtopics_factory(user_id, minimum_community_size=2)
     assert len(subtopics) > 0
      
 

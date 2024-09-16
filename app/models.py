@@ -662,7 +662,7 @@ class Embedding(SQLModel, table=True):
 
 
 """ 
-The pydantic class is used to give JSON Schema to the Together.AI API. See how it's being used in togeher_api_client.py 
+The pydantic class is used to give JSON Schema to the AI. See how it's being used in togeher_api_client.py 
 Why I used Pydantic instead of SQLModel? Good question, in my testing I was not able to get a complete JSON Schema from SQLModel.
 """
  

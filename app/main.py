@@ -30,7 +30,6 @@ from app.source_doc_handler import SourceDocHandler
 import logging
 import sys, json
 import app.app_logic as app_logic
-import app.subtopics_util as subtopics_util
 import app.html_parser as html_parser
 import app.getters as getter
 import app.deleters as deleters
