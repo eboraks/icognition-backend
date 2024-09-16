@@ -70,7 +70,7 @@ regex==2023.12.25
 requests==2.31.0
 safetensors==0.4.2
 scramp==1.4.4
-sentence-transformers==2.6.1
+#sentence-transformers==2.6.1
 setuptools==68.2.2
 six==1.16.0
 smart-open==6.4.0
@@ -85,14 +85,13 @@ srsly==2.4.8
 stack-data==0.6.3
 starlette==0.35.1
 stop-words==2018.7.23
-sumy==0.11.0
-thinc==8.2.2
-tokenizers==0.15.1
+#sumy==0.11.0
+#thinc==8.2.2
+#tokenizers==0.15.1
 tornado==6.4
 #torch==2.2.2
 tqdm==4.66.1
 traitlets==5.14.1
-#transformers==4.37.1
 typer==0.9.0
 typing_extensions==4.9.0
 urllib3==2.1.0
