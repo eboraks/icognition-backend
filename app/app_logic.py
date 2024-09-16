@@ -4,9 +4,7 @@ import sys
 import logging
 import os, pickle
 import app.transformers_util as transformers_util
-import app.subtopics_util as subtopics_util
 import app.getters as getter
-from types import SimpleNamespace
 from app import html_parser
 from app.db_connector import get_engine
 from app.source_doc_handler import SourceDocHandler
@@ -18,12 +16,8 @@ from app.models import (
     PagePayload,
     Embedding,
     Document_Entity_Link,
-    Question_Answer,
     RagAnswerPublic,
-    SubTopic_Document_Link,
-    SubTopic_Embedding_Link
 )
-from app.prompt_models import CustomQuestionPrompt, DocumentPromptTwo, DocumentPromptVerbatim
 from app.gemini_client import GeminiClient
 from sqlalchemy import (
     select,

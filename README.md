@@ -23,7 +23,7 @@ The backend application for icognition
 ## GCP Proxy Connection (not needed if using docker-databases)
 * path '/home/eboraks/Projects/gcp-sql-proxy'
 * Command ./cloud-sql-proxy --port 3306 {connection_name}
-* Connect to DB: psql -h 127.0.0.1 -p 3306 -d icog-db -U icog-db-user -W Case2214 
+* Connect to DB: psql -h 127.0.0.1 -p 3306 -d icog-db -U user-icog-dev -W Case22145 
 
 # Run application in VSCode
 1. Associate the vscode with the python env created above. 

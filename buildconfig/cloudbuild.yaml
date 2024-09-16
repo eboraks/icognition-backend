@@ -37,7 +37,6 @@ steps:
     '--set-env-vars', 'CLUSTERS_SIMILARITY_THRESHOLD=0.7',
     '--set-env-vars', 'CLUSTERS_MIN_SIZE=3',
     '--set-secrets', 'DATABASE_URL=icog-db-stg-secret:latest',
-    '--set-secrets', 'TOGETHER_TOKEN=together-token-secret:latest',
     '--set-secrets', 'DB_NAME=central-db-icog-name:latest',
     '--set-secrets', 'DB_USER=central-db-icog-user:latest',
     '--set-secrets', 'DB_PASSWORD=central-db-icog-password:latest',
