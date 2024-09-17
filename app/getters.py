@@ -3,12 +3,19 @@ from app.models import Source, Document, Document_Entity_Link, DocumentPublic, E
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import (
     and_,
+    func,
     select,
     text,
 )
 
 import app.html_parser as html_parser
 engine = get_engine()
+
+
+def get_documents_count() -> int:
+    with Session(engine) as session:
+        count = session.execute(select(func.count(Document.id))).scalar()
+    return count
 
 
 def get_document_public_by_id(document_id: str) -> DocumentPublic:

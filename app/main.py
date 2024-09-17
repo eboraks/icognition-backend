@@ -83,13 +83,39 @@ async def root():
 
 @app.get("/ping", status_code=200)
 async def ping():
+
+    db_status = False
+    db_docs_count = 0
+    fuse_status = False
+
+    sourceHandler = SourceDocHandler()
     try:
         bm = app_logic.test_db_connection()
+        if bm:
+            db_status = True
+
     except Exception as e:
         logging.error(e)
-        raise HTTPException(status_code=500, detail="Database connection failed")
+        raise HTTPException(status_code=500, detail=f"Database connection failed. Error: {str(e)}")
+    
+    try: 
+        db_docs_count = getter.get_documents_count()
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail=f"Database connection failed. Error: {str(e)}")
 
-    return {"Message": "Service is up and running"}
+    try:
+        file_content = 'test'
+        filename = 'test.txt'
+        sourceHandler.write_file(filename=filename, content=file_content)
+        if (file_content == sourceHandler.read_file(filename=filename)):
+            fuse_status = True
+    
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail=f"File system connection failed. Error: {str(e)}")
+
+    return {"Message": f"Service is up and running. DB status: {db_status}, DB docs count: {db_docs_count}, Fuse status: {fuse_status}"}
 
 
 @app.exception_handler(RequestValidationError)
