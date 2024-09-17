@@ -2,7 +2,10 @@ import json
 from pydantic import BaseModel
 
 from app.models import Answer, Document, Entity, Question_Answer, RagAnswerPublic
-import app.transformers_util as transformers_util
+# import app.transformers_util as transformers_util
+from app.gemini_client import GeminiClient
+
+gemini_client = GeminiClient()
 
 
 
@@ -215,7 +218,7 @@ class IdentifyQuestionsAnswerPrompt(BaseModel):
                                      question=qa.question, 
                                      answer=qa.answer, 
                                      citations=[c.__dict__ for c in qa.citiation], 
-                                     question_vector= transformers_util.generate_embeddings(qa.question))
+                                     question_vector= gemini_client.generate_embedding(qa.question))  # transformers_util.generate_embeddings(qa.question)
             qans.append(answer)
 
         return qans  

@@ -3,7 +3,7 @@ import json
 import sys
 import logging
 import os, pickle
-import app.transformers_util as transformers_util
+#import app.transformers_util as transformers_util
 import app.getters as getter
 from app import html_parser
 from app.db_connector import get_engine
@@ -133,7 +133,7 @@ def generate_entities_vectors():
 
         for entity in entities:
             
-            entity.name_vector = transformers_util.generate_embeddings(entity.name)
+            entity.name_vector = genimi_client.generate_embeddings(entity.name)
             session.add(entity)
         
         session.commit()
@@ -169,7 +169,7 @@ def insert_entities(user_id, entities: list[Entity], doc: Document) -> bool:
 def insert_entity_safe(user_id: str, new_entity: Entity) -> Entity: 
     
 
-    needle_vector = transformers_util.generate_embeddings(new_entity.name)
+    needle_vector = genimi_client.generate_embeddings(new_entity.name)
     matched = getter.get_similar_entity_by_name_vector(user_id=user_id, vector=needle_vector)
     
     with Session(engine) as session:
@@ -440,7 +440,7 @@ async def generate_embeddings_for_entities(user_id: str):
         embeddings = []
         for entity in entities:
             emb = entity.to_embeddings()
-            emb.vector = transformers_util.generate_embeddings(emb.text)
+            emb.vector = genimi_client.generate_embeddings(emb.text)
             emb.user_id = user_id
             embeddings.append(emb)
         
@@ -453,7 +453,7 @@ async def generate_embeddings_for_docs(docs: list[Document], user_id: str):
     embeddings = []
     for doc in docs:
         for emb in doc.to_embeddings():
-            emb.vector = transformers_util.generate_embeddings(emb.text)
+            emb.vector = genimi_client.generate_embeddings(emb.text)
             emb.user_id = user_id
             embeddings.append(emb)
     
@@ -465,7 +465,7 @@ async def generate_embeddings_for_docs(docs: list[Document], user_id: str):
 def update_entity_embedding(entity: Entity):
     with Session(engine) as session:
         embedding = session.scalar(select(Embedding).where(Embedding.source_id == entity.id))
-        embedding.vector = transformers_util.generate_embeddings(entity.name)
+        embedding.vector = genimi_client.generate_embedding(entity.name)
         session.add(embedding)
         session.commit()
         logging.info(f"Embedding for entity {entity.id} was updated")

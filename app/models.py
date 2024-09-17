@@ -37,7 +37,7 @@ class Topic(SQLModel, table=True):
     user_id: str | None = Field(default=None)
     name: str = Field(nullable=False)
     description: str | None = Field(default=None)
-    embedding: list[float] | None = Field(sa_column=Column(Vector(384)))
+    embedding: list[float] | None = Field(sa_column=Column(Vector(768)))
     subtopics: list["SubTopic"] = Relationship(back_populates="topic")
 
 
@@ -81,7 +81,7 @@ class SubTopic(SQLModel, table=True):
     user_id: str | None = Field(nullable=False)
     name: str = Field(nullable=False)
     name_update_at: datetime = Field(default = datetime.now(), nullable=True)
-    vector: List[float] | None = Field(sa_column=Column(Vector(384)))
+    vector: List[float] | None = Field(sa_column=Column(Vector(768)))
     description: str | None = Field(default=None, nullable=True)
     key_words: str | None = Field(default=None)
     topic_id: int | None= Field(default=None, foreign_key="topic.id")
@@ -157,7 +157,7 @@ class Entity(SQLModel, table=True):
     id: uuid_pkg.UUID = Field(default_factory=uuid_pkg.uuid4, primary_key=True)
     version: int = Field(default=1, nullable=True)
     name: str = Field(default=None, nullable=True)
-    name_vector: List[float] | None = Field(sa_column=Column(Vector(384)))
+    name_vector: List[float] | None = Field(sa_column=Column(Vector(768)))
     description: str = Field(default=None, nullable=True)
     descriptions_bank: Optional[str] = Field(default=None)
     source: str = Field(default=None, nullable=True)
@@ -381,7 +381,7 @@ class Question_Answer(SQLModel, table=True):
     question: str = Field(default=None, nullable=True)
     answer: str = Field(default=None, nullable=True)
     citations: List[dict] = Field(default=[], sa_column=Column(JSON))
-    question_vector: List[float] = Field(sa_column=Column(Vector(384)))
+    question_vector: List[float] = Field(sa_column=Column(Vector(768)))
     created_at: datetime = Field(default_factory=datetime.now, nullable=True)
     created_by: str = Field(default="AI", nullable=True)
 
@@ -642,7 +642,7 @@ class Embedding(SQLModel, table=True):
     text: str = Field(default=None, nullable=True)
     source_type: str = Field(default=None, nullable=False)
     source_id: uuid_pkg.UUID = Field(default=None, nullable=False)
-    vector: List[float] = Field(sa_column=Column(Vector(384)))
+    vector: List[float] = Field(sa_column=Column(Vector(768)))
     update_at: datetime = Field(default_factory=datetime.now, nullable=True)
     subtopics: list["SubTopic"] = Relationship(back_populates="embeddings", link_model=SubTopic_Embedding_Link, sa_relationship_kwargs={"cascade": "delete"})
 

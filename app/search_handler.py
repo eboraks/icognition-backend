@@ -1,15 +1,14 @@
 import logging, re, sys, os
-from app.transformers_util import generate_embeddings
-from app.db_connector import get_engine
-from app.models import DocumentPublic, RagAnswerPublic, SearchResults
 import app.getters as getter
 import app.icog_util as util
+
+from app.db_connector import get_engine
+from app.models import DocumentPublic, RagAnswerPublic, SearchResults
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from app.icog_util import DocSummarizer
-from app.prompt_models import RAGPrompt
 from app.db_connector import get_engine
 from app.gemini_prompts_models import AskQuestionPrompt
 from app.gemini_client import GeminiClient
@@ -119,7 +118,7 @@ class SearchHandler:
         This function searches for document embeddings by search term
         """
         logging.info(f"Generate embeddings for term {search_term}")
-        embedded_term = generate_embeddings(search_term) ## Generate embeddings for search term
+        embedded_term = gemini_client.generate_embeddings(search_term) ## Generate embeddings for search term
         logging.info(f"Embeddings for term {search_term} are length is {len(embedded_term)}")
 
         # Get document with some embeddings that are closest to the search term
