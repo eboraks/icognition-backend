@@ -23,12 +23,12 @@ logging.basicConfig(
 engine = get_engine()
 genimi_client = GeminiClient()
 
-async def create_study_project(name: str, objective: str, user_id: str, tasks_descriptions: list[str] = []) -> StudyProjectPublic:
+async def create_study_project(name: str, objective: str, user_id: str, tasks: list[str] = []) -> StudyProjectPublic:
     with Session(engine) as session:
         project = Study_Project(objective=objective, name=name, user_id=user_id)
         
-        for task_description in tasks_descriptions:
-            task = Study_Task(description=task_description)
+        for task in tasks:
+            task = Study_Task(description=task.description)
             session.add(task)
             project.tasks.append(task)
 
