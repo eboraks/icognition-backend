@@ -85,6 +85,24 @@ async def root():
 async def ping():
 
     db_status = False
+    try:
+        bm = app_logic.test_db_connection()
+        if bm:
+            db_status = True
+
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail=f"Database connection failed. Error: {str(e)}")
+    
+    
+    return {"Message": f"Service is up and running. DB status: {db_status}"}
+
+
+
+@app.get("/status", status_code=200)
+async def ping():
+
+    db_status = False
     db_docs_count = 0
     fuse_status = False
 
@@ -116,7 +134,6 @@ async def ping():
         raise HTTPException(status_code=500, detail=f"File system connection failed. Error: {str(e)}")
 
     return {"Message": f"Service is up and running. DB status: {db_status}, DB docs count: {db_docs_count}, Fuse status: {fuse_status}"}
-
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
@@ -505,14 +522,6 @@ async def get_user_filter_nodes(user_id: str):
         logging.error(e)
         raise HTTPException(status_code=404, detail="Error getting filter nodes")
 
-@app.get("/subtopics_name_regenerate/{user_id}", tags=["User Data (Entities, Document)"], status_code=200)
-async def regenerate_user_subtopics(user_id: str, background_tasks: BackgroundTasks):
-    try:
-        background_tasks.add_task(subtopics_util.rename_subtopics, user_id)
-        return {"Message": "Subtopics regeneration submitted"}
-    except Exception as e:
-        logging.error(e)
-        raise HTTPException(status_code=404, detail="Subtopics regeneration failed")
 
 
 @app.post("/search", tags=["Library Search"], status_code=200, response_model=SearchResults)
@@ -551,23 +560,7 @@ async def generate_embedding(user_id: str):
         raise HTTPException(status_code=500, detail="Embedding generation failed")
 
 
-@app.get("/regenerate/subtopics/{user_id}", tags=["User Data (Entities, Document)"], status_code=200)
-async def regenerate_subtopics(user_id: str, background_tasks: BackgroundTasks):
-    try:
-        subtopics_util.delete_user_id_subtopics(user_id)
-        background_tasks.add_task(subtopics_util.subtopics_factory, _user_id = user_id, _force_run = True)
-    except Exception as e:
-        logging.error(e)
-        raise HTTPException(status_code=500, detail="Subtopics generation failed")
-    
-@app.get("/generate/subtopics/{user_id}", tags=["User Data (Entities, Document)"], status_code=200)
-async def generate_subtopics(user_id: str, background_tasks: BackgroundTasks):
-    try:
-        background_tasks.add_task(subtopics_util.subtopics_factory, 
-                                  _user_id = user_id, _force_run = True)
-    except Exception as e:
-        logging.error(e)
-        raise HTTPException(status_code=500, detail="Subtopics generation failed")
+
     
 
 @app.get("/entities_names/{user_id}", tags=["User Data (Entities, Document)"], status_code=200)
@@ -624,7 +617,16 @@ async def create_study_project(project: StudyProjectPublic, background_tasks: Ba
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Study project creation failed")
-    
+
+@app.put("/study_project", tags=[Groups.STUDY_PROJECT], response_model=StudyProjectPublic, status_code=200)
+async def update_study_project(project: StudyProjectPublic):
+    try:
+        project = await project_handler.update_study_project(project)
+        return project
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Study project update failed")
+
 @app.get("/generate_study_project/{project_id}", tags=[Groups.STUDY_PROJECT], response_model=StudyProjectPublic, status_code=200)
 async def create_study_project(project_id: str, background_tasks: BackgroundTasks):
     try:
@@ -681,6 +683,15 @@ async def create_study_task(task: StudyTaskPublic):
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Study task creation failed")
+    
+@app.put("/study_task/{id}", tags=[Groups.STUDY_PROJECT], response_model=StudyTaskPublic, status_code=200)
+async def update_study_task(id: str, task: StudyTaskPublic):
+    try:
+        task = project_handler.update_study_task(id, task)
+        return task
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Study task update failed")
     
 @app.post("/study_tasks", tags=[Groups.STUDY_PROJECT], response_model=List[StudyTaskPublic], status_code=200)
 async def create_study_tasks(tasks: List[StudyTaskPublic]):

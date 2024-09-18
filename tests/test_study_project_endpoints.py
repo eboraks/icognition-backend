@@ -24,10 +24,41 @@ async def test_create_study_project():
 
 def test_get_study_project():
     # Test get_study_project endpoint
-    id = '0d64caf4-dcf3-4a49-8dfe-770159480523'
+    id = '920a386f-ee85-4630-bf82-518b3ef5ee38'
     response = client.get(f"/study_project/{id}")
     assert response.status_code == 200
     assert response.json()["id"] == id
+
+def test_update_study_project():
+
+    # Test create_study_project endpoint
+    payload = {
+        "name": "test_project",
+        "objective": "test_objective",
+        "user_id": "test_user",
+        "tasks": [{"description": "description of the test task"}]
+    }
+    response = client.post("/study_project", json=payload)
+    assert response.status_code == 200
+    assert response.json()["name"] == "test_project"
+    assert response.json()["objective"] == "test_objective"
+    assert response.json()["user_id"] == "test_user"
+    assert len(response.json()["tasks"]) > 0
+
+    # Test update_study_project endpoint
+    id = response.json()["id"]
+    update_payload = {
+        "name": "test_project",
+        "objective": "updated_test_objective",
+        "user_id": "test_user",
+    }
+    response = client.put(f"/study_project/{id}", json=update_payload)
+    assert response.status_code == 200
+    assert response.json()["objective"] == "updated_test_objective"
+
+    response = client.delete(f"/study_project/{id}")
+
+
 
 def test_delete_study_project():
     # Test delete_study_project endpoint
@@ -55,6 +86,29 @@ def test_get_study_tasks():
     assert response.status_code == 200
     assert len(response.json()) > 0
 
+
+def test_update_study_task():
+    # Test create_study_task endpoint
+    project_id = '2f2c29b9-2a58-4349-8fc6-672ef5e1df71'
+    description = f"test_description for task {project_id}"
+    payload = {
+        "project_id": project_id,
+        "description": description
+    }
+    response = client.post("/study_task", json=payload)
+    task_id = response.json()["id"]
+    assert response.status_code == 200
+    assert response.json()["project_id"] == project_id
+    assert response.json()["description"] == description
+
+    # Test update_study_task endpoint
+    update_payload = {
+        "project_id": project_id,
+        "description": "updated_description"
+    }
+    response = client.put(f"/study_task/{task_id}", json=update_payload)
+    assert response.status_code == 200
+    assert response.json()["description"] == "updated_description"
 
 def test_study_related_entities():
     # Test get_study_related_entities endpoint

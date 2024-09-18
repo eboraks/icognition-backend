@@ -51,16 +51,20 @@ def get_study_project_by_name(project_name: str) -> StudyProjectPublic:
         project = session.scalar(select(Study_Project).options(joinedload(Study_Project.tasks)).where(Study_Project.name == project_name))
         return project.to_public()
 
-async def update_study_project(project_id: int, name: str, objective: str) -> StudyProjectPublic:
+async def update_study_project(project: StudyProjectPublic) -> StudyProjectPublic:
     with Session(engine) as session:
-        project = session.scalar(Study_Project).where(Study_Project.id == project_id)
-        if project:
-            project.name = name
-            project.objective = objective
-            project.generate_vector(genimi_client)
+        proj_exist = session.scalar(select(Study_Project).where(Study_Project.id == project.id))
+        if proj_exist:
+            if proj_exist.name != project.name:
+                proj_exist.name = project.name
+            if proj_exist.objective != project.objective:
+                proj_exist.objective = project.objective
+            
+            await proj_exist.generate_vector(genimi_client)
         session.commit()
-        session.refresh(project)
-    return project.to_public()
+        session.refresh(proj_exist)
+        return proj_exist.to_public()
+
 
 
     
@@ -107,6 +111,27 @@ def get_study_tasks(project_id: str) -> list[StudyTaskPublic]:
     with Session(engine) as session:
         tasks = session.scalars(select(Study_Task).options(joinedload(Study_Task.citations)).where(Study_Task.project_id == project_id)).unique().all()
         return [task.to_public() for task in tasks]
+
+async def update_study_task(task_id: int, description: str) -> StudyTaskPublic:
+    
+    try:
+        with Session(engine) as session:
+            task = session.scalar(select(Study_Task).where(Study_Task.id == task_id))
+            if task:
+                task.description = description
+                session.commit()
+    except Exception as e:
+        logging.error(f"Error while updating task. Error: {e}")
+        return None
+    
+    try:
+        docs = find_related_docs(task.project_id)
+        await generate_task_response(task=task, documents=docs)
+    except Exception as e:
+        logging.error(f"Error while updating task. Error: {e}")
+        return None
+    
+    return task.to_public()
 
 
 def find_related_docs(project_id: str, cosine_distance_freshhold: float = 0.30) -> list[Document]:

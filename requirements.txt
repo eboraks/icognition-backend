@@ -1,4 +1,5 @@
 aiohttp==3.9.3
+httpx==0.23.2
 alembic==1.13.1
 annotated-types==0.6.0
 anyio==4.2.0
@@ -52,7 +53,7 @@ pexpect==4.9.0
 pg8000==1.30.4
 pgvector==0.2.4
 platformdirs==4.1.0
-pluggy==1.4.0
+pluggy==1.5.0
 preshed==3.0.9
 prompt-toolkit==3.0.43
 psutil==5.9.8
@@ -62,7 +63,8 @@ pycountry==23.12.11
 pydantic==2.5.3
 pydantic_core==2.14.6
 Pygments==2.17.2
-pytest==8.0.0
+pytest==8.3.3
+pytest-asyncio
 python-dateutil==2.8.2
 PyYAML==6.0.1
 pyzmq==25.1.2

@@ -133,7 +133,7 @@ def generate_entities_vectors():
 
         for entity in entities:
             
-            entity.name_vector = genimi_client.generate_embeddings(entity.name)
+            entity.name_vector = genimi_client.generate_embedding(entity.name)
             session.add(entity)
         
         session.commit()
@@ -169,7 +169,7 @@ def insert_entities(user_id, entities: list[Entity], doc: Document) -> bool:
 def insert_entity_safe(user_id: str, new_entity: Entity) -> Entity: 
     
 
-    needle_vector = genimi_client.generate_embeddings(new_entity.name)
+    needle_vector = genimi_client.generate_embedding(new_entity.name)
     matched = getter.get_similar_entity_by_name_vector(user_id=user_id, vector=needle_vector)
     
     with Session(engine) as session:
@@ -440,7 +440,7 @@ async def generate_embeddings_for_entities(user_id: str):
         embeddings = []
         for entity in entities:
             emb = entity.to_embeddings()
-            emb.vector = genimi_client.generate_embeddings(emb.text)
+            emb.vector = genimi_client.generate_embedding(emb.text)
             emb.user_id = user_id
             embeddings.append(emb)
         
@@ -453,7 +453,7 @@ async def generate_embeddings_for_docs(docs: list[Document], user_id: str):
     embeddings = []
     for doc in docs:
         for emb in doc.to_embeddings():
-            emb.vector = genimi_client.generate_embeddings(emb.text)
+            emb.vector = genimi_client.generate_embedding(emb.text)
             emb.user_id = user_id
             embeddings.append(emb)
     
