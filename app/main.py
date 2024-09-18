@@ -591,7 +591,7 @@ async def create_study_project(project: StudyProjectPublic, background_tasks: Ba
         project = await project_handler.create_study_project(name=project.name, 
                 objective=project.objective, 
                 user_id = project.user_id, 
-                tasks_descriptions=project.tasks)
+                tasks=project.tasks)
         
         background_tasks.add_task(project_handler.generate_project_response, project_id = project.id, listener = event_listener)
         return project
