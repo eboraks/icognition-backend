@@ -43,6 +43,7 @@ steps:
     '--set-secrets', 'DB_NAME=central-db-icog-name:latest',
     '--set-secrets', 'DB_USER=central-db-icog-user:latest',
     '--set-secrets', 'DB_PASSWORD=central-db-icog-password:latest',
+    '--set-secrets', 'GCP_AI_KEY=GCP_AI_KEY:latest',
     '--add-cloudsql-instances', 'stg-icognition:us-central1:psql-icog-dev',
     ]
 timeout: 1200s
