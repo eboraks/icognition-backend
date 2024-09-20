@@ -484,7 +484,7 @@ async def custom_question(document_id: int, question: str) -> RagAnswerPublic:
     """
     This function generates a summary with verbatim sentences
     """
-    doc = getter.get_document_public_by_id(document_id) 
+    doc = getter.get_document_by_id(document_id) 
     
     prompt = AskQuestionPrompt.build_prompt([doc], question)
     generated_response = await genimi_client.generate_response(prompt, AskQuestionPrompt) 
