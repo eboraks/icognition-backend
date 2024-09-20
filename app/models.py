@@ -1,6 +1,5 @@
 import json, logging, sys
 import uuid as uuid_pkg
-from types import SimpleNamespace
 from sqlmodel import SQLModel, Field, Float, JSON, Integer, Relationship, String
 from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import TEXT, JSONB, ARRAY
@@ -288,16 +287,6 @@ class Document(SQLModel, table=True):
         """
         results = []
 
-        if self.title:
-            results.append(
-                Embedding(
-                    source_type="document",
-                    source_id=self.id,
-                    field="title",
-                    text=self.title,
-                )
-            )
-
         if self.ai_is_about:
             results.append(
                 Embedding(
@@ -313,21 +302,12 @@ class Document(SQLModel, table=True):
                 Embedding(
                     source_type="document",
                     source_id=self.id,
-                    field="metadata_keywords",
-                    text=self.metadata_keywords,
+                    field="ai_short_summary",
+                    text=self.ai_short_summary,
                 )
             )
         
-        if self.metadata_description:
-            results.append(
-                Embedding(
-                    source_type="document",
-                    source_id=self.id,
-                    field="metadata_description",
-                    text=self.metadata_description,
-                )
-            )
-
+        
         if self.ai_bullet_points:
             for bullet_point in self.ai_bullet_points:
                 results.append(

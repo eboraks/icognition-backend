@@ -1,4 +1,5 @@
-import logging, sys
+import sys
+from app.log import get_logger
 from datetime import datetime
 from app.models import DocumentPublic, Entity, EntityPublic, Study_Project, Study_Project_Document_Link, Study_Task, Document, Study_Task_Citation, StudyProjectPublic, StudyTaskPublic, StudyTaskCitationPublic, TreeNode
 from app.db_connector import get_engine
@@ -12,12 +13,7 @@ from sqlalchemy import (
     text,
 )
 
-logging.basicConfig(
-    stream=sys.stdout,
-    format="%(asctime)s - %(message)s",
-    level=logging.INFO,
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+logging = get_logger()
 
 
 engine = get_engine()
@@ -112,26 +108,28 @@ def get_study_tasks(project_id: str) -> list[StudyTaskPublic]:
         tasks = session.scalars(select(Study_Task).options(joinedload(Study_Task.citations)).where(Study_Task.project_id == project_id)).unique().all()
         return [task.to_public() for task in tasks]
 
-async def update_study_task(task_id: int, description: str) -> StudyTaskPublic:
+async def update_study_task(task: StudyTaskPublic) -> StudyTaskPublic:
     
     try:
         with Session(engine) as session:
-            task = session.scalar(select(Study_Task).where(Study_Task.id == task_id))
-            if task:
-                task.description = description
+            _task = session.scalar(select(Study_Task).where(Study_Task.id == task.id))
+            if _task:
+                _task.description = task.description
                 session.commit()
+                session.refresh(_task)
+            else:
+                logging.warning(f"Task with id: {task.id} not found")
+                return None
     except Exception as e:
         logging.error(f"Error while updating task. Error: {e}")
         return None
     
     try:
-        docs = find_related_docs(task.project_id)
-        await generate_task_response(task=task, documents=docs)
+        docs = find_related_docs(_task.project_id)
+        return await generate_task_response(task=_task, documents=docs)
     except Exception as e:
         logging.error(f"Error while updating task. Error: {e}")
         return None
-    
-    return task.to_public()
 
 
 def find_related_docs(project_id: str, cosine_distance_freshhold: float = 0.30) -> list[Document]:

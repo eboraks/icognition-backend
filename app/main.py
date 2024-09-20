@@ -1,5 +1,4 @@
 from enum import Enum
-import aiofiles, os
 from fastapi import FastAPI, HTTPException, BackgroundTasks, status, Response, Form, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse
@@ -13,7 +12,6 @@ from app.models import (
     PagePayload,
     DocumentPublic,
     HTTPError,
-    Question_Answer,
     RagAnswerPublic,
     QuestionPlayload,
     SearchPayload,
@@ -27,8 +25,7 @@ from app.models import (
 )
 import app.study_project_handler as project_handler
 from app.source_doc_handler import SourceDocHandler
-import logging
-import sys, json
+import logging, sys, json, aiofiles
 import app.app_logic as app_logic
 import app.html_parser as html_parser
 import app.getters as getter
@@ -36,6 +33,7 @@ import app.deleters as deleters
 from app.search_handler import SearchHandler
 from app.prompt_models import RAGPrompt
 from app.user_handler import UserHandler
+from app.log import get_logger
 
 search = SearchHandler()
 
@@ -52,12 +50,7 @@ class Groups(Enum):
 
 
 
-logging.basicConfig(
-    stream=sys.stdout,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s",
-    level=logging.INFO,
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+logging = get_logger()
 
 app = FastAPI()
 origins = [
@@ -279,29 +272,38 @@ async def post_regenerate_document(old_doc: Document, background_tasks: Backgrou
 async def generate_document(source: Source):
     document = getter.get_document_by_id(source.document_id)
 
-    if document.status in ["Pending", "Done", "Failure"]:
-        logging.info(f"Background task for document ID: {source.document_id}")
-        document = await app_logic.generate_summary(doc= document)
-        await app_logic.generate_embeddings_for_docs(docs = [document], user_id = source.user_id)
-        logging.info(f"Background task for document ID: {source.document_id} completed")
+    try: 
+        if document.status in ["Pending", "Done", "Failure"]:
+            logging.info(f"Background task for document ID: {source.document_id}")
+            document = await app_logic.generate_summary(doc= document)
+            await app_logic.generate_embeddings_for_docs(documents = [document], user_id = source.user_id)
+            logging.info(f"Background task for document ID: {source.document_id} completed")
+    except Exception as e:
+        logging.error(e)
 
-    
-    if len(getter.get_entities_ids_by_document_id(document.id)) == 0:
-        ent_success = await app_logic.generate_entities(user_id= source.user_id, doc = document)
-        topic_success = await app_logic.generate_topics(user_id= source.user_id, doc = document)
-        logging.info(f"Background task for generating entities and topics for: {document.id} completed. Result, entities: {ent_success} topic: {topic_success}")
-        await app_logic.generate_embeddings_for_entities(user_id =  source.user_id)
+    try:
+        if len(getter.get_entities_ids_by_document_id(document.id)) == 0:
+            ent_success = await app_logic.generate_entities(user_id= source.user_id, doc = document)
+            topic_success = await app_logic.generate_topics(user_id= source.user_id, doc = document)
+            logging.info(f"Background task for generating entities and topics for: {document.id} completed. Result, number of entities: {len(ent_success)} number of topics: {len(topic_success)}")
+            await app_logic.generate_embeddings_for_entities(entities=ent_success, user_id =  source.user_id)
+            await app_logic.generate_embeddings_for_entities(entities=topic_success, user_id =  source.user_id)
+    except Exception as e:
+        logging.error(e)
 
 
-    if len(getter.get_question_answer_by_document_id(document.id)) == 0:
-        success = await app_logic.generate_doc_quesions_answers(user_id= source.user_id, doc = document)
-        logging.info(f"Background task for generating questions and answers for: {document.id} completed. Result, {success}")
-        ## For now, we are not generating embeddings for questions and answers
+    try:
+        if len(getter.get_question_answer_by_document_id(document.id)) == 0:
+            success = await app_logic.generate_doc_quesions_answers(user_id= source.user_id, doc = document)
+            logging.info(f"Background task for generating questions and answers for: {document.id} completed. Result, {success}")
+            ## For now, we are not generating embeddings for questions and answers
+    except Exception as e:
+        logging.error(e)
 
 
 ## Background task to regenerate summaries from LLM if not already exists
 async def regenerate_document(doc: Document):
-
+ 
     if doc.status in ["Pending", "Done", "Failure"]:
 
         new_doc = await app_logic.generate_summary(doc)
@@ -400,6 +402,10 @@ async def get_document_plus(source_id: str, response: Response, background_tasks
     """get document with entities and concepts"""
 
     logging.info(f"Document plus -> endpoint called on bookmark {source_id}")
+    source = getter.get_source_by_id(source_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="Bookmark not found")
+
     document = getter.get_document_by_source_id(source_id)
 
     if document is None:
@@ -610,7 +616,7 @@ async def create_study_project(project: StudyProjectPublic, background_tasks: Ba
         project = await project_handler.create_study_project(name=project.name, 
                 objective=project.objective, 
                 user_id = project.user_id, 
-                tasks_descriptions=project.tasks)
+                tasks=project.tasks)
         
         background_tasks.add_task(project_handler.generate_project_response, project_id = project.id, listener = event_listener)
         return project
@@ -684,11 +690,15 @@ async def create_study_task(task: StudyTaskPublic):
         logging.error(e)
         raise HTTPException(status_code=500, detail="Study task creation failed")
     
-@app.put("/study_task/{id}", tags=[Groups.STUDY_PROJECT], response_model=StudyTaskPublic, status_code=200)
-async def update_study_task(id: str, task: StudyTaskPublic):
+@app.put("/study_task", tags=[Groups.STUDY_PROJECT], response_model=StudyTaskPublic, status_code=200)
+async def update_study_task(task: StudyTaskPublic):
     try:
-        task = project_handler.update_study_task(id, task)
-        return task
+        task = await project_handler.update_study_task(task)
+
+        if task is None:
+            raise HTTPException(status_code=404, detail="Error updating study task")
+        else:
+            return task
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Study task update failed")

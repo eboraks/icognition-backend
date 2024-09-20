@@ -205,7 +205,7 @@ class IdentifyQuestionsAnswerPrompt(BaseModel):
         Article: {BODY}""".format(BODY=body)
 
 
-    def questions_answers_builder(self, document_id: int) -> list[Question_Answer]:
+    async def questions_answers_builder(self, document_id: int) -> list[Question_Answer]:
         """
         Build the SQLModel Answers from the LLM results
 
@@ -218,7 +218,7 @@ class IdentifyQuestionsAnswerPrompt(BaseModel):
                                      question=qa.question, 
                                      answer=qa.answer, 
                                      citations=[c.__dict__ for c in qa.citiation], 
-                                     question_vector= gemini_client.generate_embedding(qa.question))  # transformers_util.generate_embeddings(qa.question)
+                                     question_vector= await gemini_client.generate_embedding(qa.question))  # transformers_util.generate_embeddings(qa.question)
             qans.append(answer)
 
         return qans  

@@ -162,7 +162,7 @@ def get_similar_entity_by_name_vector(user_id: str, vector, threshold: float = 0
             LIMIT 1"""
         )
         result = session.execute(query, {
-            'vector':  str(vector.tolist()),
+            'vector':  str(vector),
             'user_id': user_id,
             'threshold': threshold
         }).all()
