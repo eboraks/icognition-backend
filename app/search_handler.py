@@ -42,7 +42,7 @@ class SearchHandler:
         self._summarizer = DocSummarizer()
 
 
-    async def __call__(self, user_id: str, query: str = None, project_id = None) -> SearchResults:
+    async def __call__(self, user_id: str, query: str = None) -> SearchResults:
         """
         Searches for a query and returns a either a list of DocumentDisplay or RAG answer.
 
