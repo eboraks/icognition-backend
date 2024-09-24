@@ -1,7 +1,7 @@
 import logging, re, sys, os
 from app.transformers_util import generate_embeddings
 from app.db_connector import get_engine
-from app.models import DocumentPublic, RagAnswerPublic, SearchResults
+from app.models import Document, DocumentPublic, RagAnswerPublic, SearchResults
 import app.getters as getter
 import app.icog_util as util
 from sqlalchemy import text
@@ -70,7 +70,8 @@ class SearchHandler:
             if query == "what a test?":
                 rag_results = await self.test_rag_workflow()
             else:
-                rag_results =  await self.rag_workflow(user_id = user_id, search_term = query)
+                _docs = [getter.get_document_by_id(doc.id) for doc in matched_docs]
+                rag_results =  await self.rag_workflow(docs=_docs, search_term = query)
             
             if(type(rag_results) == str):
                 return SearchResults(documents_display=[], rag_answer=None, failure=rag_results)
@@ -94,15 +95,8 @@ class SearchHandler:
             llm_service_meta={'prompt_tokens': 2890, 'completion_tokens': 330, 'total_tokens': 3220, 'duration': 4043})
         
 
-    async def rag_workflow(self, user_id: str, search_term: str) -> RagAnswerPublic | str:
-        
-        matched_docs = self.search_embeddings(user_id=user_id, search_term=search_term, threshold=0.5, max_results=3)
-
-        docs = []
-        for doc in matched_docs:
-            docs.append(getter.get_document_by_id(doc.id))    
-
-
+    async def rag_workflow(self, docs: list[Document], search_term: str) -> RagAnswerPublic | str:
+    
         if len(docs) == 0:
             return f"No documents found for the search term '{search_term}'"
 
@@ -115,9 +109,10 @@ class SearchHandler:
 
             logging.info(f"Generated RAG answer for search term {search_term}")
             return rag_answer
-        except ApiCallException as e:
-            logging.error(f"Error calling TogetherMixtral API: {str(e)}")
+        except Exception as e:
+            logging.error(f"Error calling AI API: {str(e)}")
             return None
+
            
     def search_embeddings(self, user_id: str, search_term: str, threshold: float = 0.5, max_results: int = 20, attempts: int = 0) -> list[MatchedDocument]:
         """
