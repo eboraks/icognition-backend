@@ -671,6 +671,22 @@ async def unlink_project_document(payload: ProjectDocumentlinkPayload):
         raise HTTPException(status_code=500, detail="Project document unlink failed")
     
 
+@app.post("/study_project/ask_question", tags=[Groups.STUDY_PROJECT], response_model=SearchResults, status_code=200)
+async def ask_question(payload: QuestionPlayload):
+    try:
+        if payload.project_id is None:
+            raise HTTPException(status_code=400, detail="Project ID is required")
+        if payload.question is None:
+            raise HTTPException(status_code=400, detail="Question is required")
+
+        answer = await project_handler.ask_question(project_id=payload.project_id, question=payload.question)
+        return answer
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Question answering failed")
+
+
+
 async def listen_doc_generation(event: dict):
     logging.info(f"Event listener called with event: {event['message']}")
 

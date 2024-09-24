@@ -586,6 +586,7 @@ class QuestionPlayload(SQLModel, table=False):
 
     question: Optional[str] = Field(default=None)
     document_id: Optional[uuid_pkg.UUID] = Field(default=None)
+    project_id: Optional[uuid_pkg.UUID] = Field(default=None)
 
 
 class HTTPError(SQLModel, table=False):
