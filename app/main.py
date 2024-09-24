@@ -535,7 +535,7 @@ async def search_documents(search_payload: SearchPayload, response: Response):
     logging.info(f"Search documents with query: {search_payload.query}")
     
     try:
-        results = await search(search_payload.user_id, search_payload.query)
+        results = await search(search_payload.user_id, search_payload.query, search_payload.project_id)
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=404, detail="Search failed")
@@ -653,13 +653,26 @@ def event_listener(event):
 @app.get("/study_project/{id}/related_documents", tags=[Groups.STUDY_PROJECT], response_model=List[DocumentPublic], status_code=200)
 async def get_project_related_documents(id: str):
     try:
-        documents = project_handler.find_related_docs(id)
+        documents = project_handler.find_related_docs_public(id)
         return documents
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=404, detail="Documents not found")
     
 
+@app.post("/study_project/ask_question", tags=[Groups.STUDY_PROJECT], response_model=SearchResults, status_code=200)
+async def ask_question(payload: QuestionPlayload):
+    try:
+        if payload.project_id is None:
+            raise HTTPException(status_code=400, detail="Project ID is required")
+        if payload.question is None:
+            raise HTTPException(status_code=400, detail="Question is required")
+
+        answer = await project_handler.ask_question(project_id=payload.project_id, question=payload.question)
+        return answer
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Question answering failed")
 
 
 @app.get("/study_project/{id}", tags=[Groups.STUDY_PROJECT], response_model=StudyProjectPublic, status_code=200)

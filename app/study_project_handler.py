@@ -1,10 +1,11 @@
-import sys
+from scipy.spatial import distance
 from app.log import get_logger
 from datetime import datetime
-from app.models import DocumentPublic, Entity, EntityPublic, Study_Project, Study_Project_Document_Link, Study_Task, Document, Study_Task_Citation, StudyProjectPublic, StudyTaskPublic, StudyTaskCitationPublic, TreeNode
+from app.models import DocumentPublic, Entity, SearchResults, Study_Project, Study_Project_Document_Link, Study_Task, Document, Study_Task_Citation, StudyProjectPublic, StudyTaskPublic, StudyTaskCitationPublic, TreeNode
 from app.db_connector import get_engine
 from app.gemini_client import GeminiClient
 from app.gemini_prompts_models import AskQuestionPrompt
+from app.search_handler import SearchHandler
 
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import (
@@ -144,8 +145,51 @@ def find_related_docs(project_id: str, cosine_distance_freshhold: float = 0.30) 
             if linked.id not in docs_ids:
                 docs.append(linked)
 
-
         return docs
+
+def find_related_docs_public(project_id: str, cosine_distance_freshhold: float = 0.30) -> list[DocumentPublic]:
+    """This is a wrapper function that returns the list of related documents for a project in a public format
+
+    Args:
+        project_id (str): _description_
+        cosine_distance_freshhold (float, optional): _description_. Defaults to 0.30.
+
+    Returns:
+        list[DocumentPublic]: _description_
+    """
+    docs = find_related_docs(project_id, cosine_distance_freshhold)
+    docs_public = calculate_cosine_dist_project_docs(project_id, docs)
+    return docs_public
+
+
+def calculate_cosine_dist_project_docs(project_id: str, documents: list[Document]) -> list[DocumentPublic]:
+    
+
+    with Session(engine) as session:
+        project_vector = session.scalar(select(Study_Project.objective_tasks_vector).where(Study_Project.id == project_id))
+
+        docs_public = []
+        for doc in documents:
+            session.add(doc)
+            doc_vector = doc.ai_summary_vector
+            dis = 1 - distance.cosine(project_vector, doc_vector)
+            pub = doc.to_public(cosine_similarity=dis) 
+            docs_public.append(pub)
+
+    return docs_public
+
+
+
+async def ask_question(project_id: str, question: str) -> SearchResults:
+
+    searcher = SearchHandler()
+    docs = find_related_docs(project_id)
+
+    answer = await searcher.rag_workflow(docs=docs, search_term=question)
+ 
+    docspub = calculate_cosine_dist_project_docs(project_id, docs)
+    return SearchResults(documents_display=docspub, rag_answer=answer)
+
 
 
 async def generate_project_response(project_id: str, listener: any = None) -> None:

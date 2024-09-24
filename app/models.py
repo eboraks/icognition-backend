@@ -547,9 +547,9 @@ class QuestionPlayload(SQLModel, table=False):
     """
     Represents the payload for a question, including the question and user ID.
     """
-
     question: Optional[str] = Field(default=None)
     document_id: Optional[uuid_pkg.UUID] = Field(default=None)
+    project_id: Optional[uuid_pkg.UUID] = Field(default=None)
 
 
 class HTTPError(SQLModel, table=False):
@@ -567,6 +567,7 @@ class SearchPayload(SQLModel, table=False):
 
     query: Optional[str] = Field(default=None)
     user_id: Optional[str] = Field(default=None)
+    project_id: Optional[uuid_pkg.UUID] = Field(default=None)
 
 
 class Page(SQLModel, table=False):
