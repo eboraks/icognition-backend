@@ -7,6 +7,7 @@ from pgvector.sqlalchemy import Vector
 from typing import Optional, List, Dict
 from datetime import datetime
 from pydantic import BaseModel, model_serializer
+from app.icog_util import remove_none_header_elements
 
 from app.gemini_client import GeminiClient
 
@@ -273,7 +274,7 @@ class Document(SQLModel, table=True):
             cosine_similarity=cosine_similarity,
             image_url=self.image_url,
             site_name=self.site_name,
-            html_elements= html_elements
+            html_elements = remove_none_header_elements(html_elements)
         )
 
 
@@ -527,6 +528,7 @@ class StudyProjectPublic(SQLModel, table=False):
     objective: str = Field(default=None)
     ai_explanation: Optional[str] = Field(default=None)
     user_id: str = Field(nullable=False)
+    nunmber_of_docs: Optional[int] = Field(default=None)
     tasks: Optional[list[StudyTaskPublic]] = Field(default=[])
     created_at: Optional[datetime] = Field(default=None)
     
@@ -662,7 +664,6 @@ class DocumentPublic(BaseModel):
     is_about: Optional[str] = None
     tldr: Optional[List[str]] = None
     entities_and_concepts: Optional[List[EntityPublic]] = None
-    tags: Optional[List[str]] = None
     usage: Optional[str] = None
     cosine_similarity: Optional[float] = None
     image_url: Optional[str] = None

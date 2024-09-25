@@ -39,7 +39,10 @@ async def create_study_project(name: str, objective: str, user_id: str, tasks: l
 def get_study_project_by_id(project_id: str) -> StudyProjectPublic:
     with Session(engine) as session:
         project = session.scalar(select(Study_Project).options(joinedload(Study_Project.tasks)).where(Study_Project.id == project_id))
-        return project.to_public()
+        related_docs = find_related_docs(project_id)
+        public = project.to_public()
+        public.num_related_docs = len(related_docs)
+        return public
 
 
 def get_study_project_by_name(project_name: str) -> StudyProjectPublic:
@@ -127,10 +130,17 @@ async def update_study_task(task: StudyTaskPublic) -> StudyTaskPublic:
     
     try:
         docs = find_related_docs(_task.project_id)
+        if len(docs) == 0:
+            logging.warning(f"No related documents found for project_id: {_task.project_id}")
+            with Session(engine) as session:
+                session.add(_task)
+                return _task.to_public()
+        
         return await generate_task_response(task=_task, documents=docs)
     except Exception as e:
         logging.error(f"Error while updating task. Error: {e}")
         return None
+
 
 
 def find_related_docs(project_id: str, cosine_distance_freshhold: float = 0.30) -> list[Document]:
@@ -162,6 +172,21 @@ def find_related_docs_public(project_id: str, cosine_distance_freshhold: float =
     return docs_public
 
 
+def get_list_of_candidates_docs(project_id: str, max_docs = 10) -> list[DocumentPublic]:
+
+    related_docs = find_related_docs(project_id)
+    related_docs_ids = [doc.id for doc in related_docs]
+
+    ## Get the list of all documents that are not linked to the project
+    with Session(engine) as session:
+        
+        stmt = select(Document).filter(Document.id.notin_(related_docs_ids)).limit(max_docs)
+        docs = session.scalars(stmt).all()
+        docs_public = [doc.to_public() for doc in docs]
+
+    return docs_public
+
+
 def calculate_cosine_dist_project_docs(project_id: str, documents: list[Document]) -> list[DocumentPublic]:
     
 
@@ -172,7 +197,11 @@ def calculate_cosine_dist_project_docs(project_id: str, documents: list[Document
         for doc in documents:
             session.add(doc)
             doc_vector = doc.ai_summary_vector
-            dis = 1 - distance.cosine(project_vector, doc_vector)
+            try:
+                dis = 1 - distance.cosine(project_vector, doc_vector)
+            except Exception as e:
+                logging.error(f"Error while calculating cosine distance. Error: {e}")
+                dis = 0.0
             pub = doc.to_public(cosine_similarity=dis) 
             docs_public.append(pub)
 

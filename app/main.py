@@ -685,6 +685,15 @@ async def get_study_project(id: str):
         raise HTTPException(status_code=404, detail=f"Study project not found. Error {str(e)}")
     
 
+@app.get("/study_project/{id}/candidate_documents", tags=[Groups.STUDY_PROJECT], response_model=List[DocumentPublic], status_code=200)
+async def get_project_candidate_documents(id: str):
+    try:
+        documents = project_handler.get_list_of_candidates_docs(id)
+        return documents
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=404, detail="Documents not found")
+
 @app.delete("/study_project/{id}", tags=[Groups.STUDY_PROJECT], status_code=204)
 async def delete_study_project(id: str):
     try:

@@ -72,6 +72,7 @@ regex==2023.12.25
 requests==2.31.0
 safetensors==0.4.2
 scramp==1.4.4
+scipy==1.14.1
 #sentence-transformers==2.6.1
 setuptools==68.2.2
 six==1.16.0

@@ -48,11 +48,12 @@ def test_update_study_project():
     # Test update_study_project endpoint
     id = response.json()["id"]
     update_payload = {
+        "id": id,
         "name": "test_project",
         "objective": "updated_test_objective",
         "user_id": "test_user",
     }
-    response = client.put(f"/study_project/{id}", json=update_payload)
+    response = client.put(f"/study_project", json=update_payload)
     assert response.status_code == 200
     assert response.json()["objective"] == "updated_test_objective"
 
@@ -103,10 +104,11 @@ def test_update_study_task():
 
     # Test update_study_task endpoint
     update_payload = {
+        "id": task_id,
         "project_id": project_id,
         "description": "updated_description"
     }
-    response = client.put(f"/study_task/{task_id}", json=update_payload)
+    response = client.put(f"/study_task", json=update_payload)
     assert response.status_code == 200
     assert response.json()["description"] == "updated_description"
 
@@ -203,4 +205,15 @@ def test_study_related_documents():
         doc_ids.append(doc["id"])
 
     assert document_id in doc_ids
-        
+
+
+    resp_candidate_docs = client.get(f"/study_project/{project_id}/candidate_documents")
+    assert resp_candidate_docs.status_code == 200
+    assert len(resp_candidate_docs.json()) > 0
+    candidate_doics_ids = []
+    for cd in resp_candidate_docs.json():
+        assert cd["title"] is not None
+        assert cd["id"] is not None
+        candidate_doics_ids.append(cd["id"])
+    
+    assert document_id not in candidate_doics_ids
