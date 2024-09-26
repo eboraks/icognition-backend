@@ -366,3 +366,18 @@ def unlink_project_document(project_id: str, document_id: str) -> bool:
         session.commit()
 
     return True
+
+
+def get_project_status(project_id: str) -> str:
+    
+    with Session(engine) as session:
+        project = session.scalar(select(Study_Project).options(joinedload(Study_Project.tasks)).where(Study_Project.id == project_id))
+
+    number_of_tasks = len(project.tasks)
+    number_of_tasks_with_response = len([task for task in project.tasks if task.status == "SUCCESS"])
+    number_of_tasks_with_ai_response = len([task for task in project.tasks if task.ai_explanation is not None])
+
+    return {"total_tasks": number_of_tasks, 
+            "tasks_with_response": number_of_tasks_with_response, 
+            "tasks_with_ai_response": number_of_tasks_with_ai_response, 
+            "percentage_tasks_with_response": (number_of_tasks_with_response/number_of_tasks)*100,}

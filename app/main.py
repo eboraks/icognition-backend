@@ -535,7 +535,7 @@ async def search_documents(search_payload: SearchPayload, response: Response):
     logging.info(f"Search documents with query: {search_payload.query}")
     
     try:
-        results = await search(search_payload.user_id, search_payload.query, search_payload.project_id)
+        results = await search(search_payload.user_id, search_payload.query)
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=404, detail="Search failed")

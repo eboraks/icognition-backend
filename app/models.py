@@ -528,7 +528,7 @@ class StudyProjectPublic(SQLModel, table=False):
     objective: str = Field(default=None)
     ai_explanation: Optional[str] = Field(default=None)
     user_id: str = Field(nullable=False)
-    nunmber_of_docs: Optional[int] = Field(default=None)
+    num_related_docs: Optional[int] = Field(default=None)
     tasks: Optional[list[StudyTaskPublic]] = Field(default=[])
     created_at: Optional[datetime] = Field(default=None)
     
