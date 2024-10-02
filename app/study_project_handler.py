@@ -1,9 +1,12 @@
-import logging, sys
+from scipy.spatial import distance
+from app.log import get_logger
 from datetime import datetime
-from app.models import DocumentPublic, Entity, EntityPublic, Study_Project, Study_Project_Document_Link, Study_Task, Document, Study_Task_Citation, StudyProjectPublic, StudyTaskPublic, StudyTaskCitationPublic, TreeNode
+from app.models import DocumentPublic, Entity, SearchResults, Study_Project, Study_Project_Document_Link, Study_Task, Document, Study_Task_Citation, StudyProjectPublic, StudyTaskPublic, StudyTaskCitationPublic, TreeNode
 from app.db_connector import get_engine
 from app.gemini_client import GeminiClient
 from app.gemini_prompts_models import AskQuestionPrompt
+from app.search_handler import SearchHandler
+import app.getters as  getter
 
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import (
@@ -12,12 +15,7 @@ from sqlalchemy import (
     text,
 )
 
-logging.basicConfig(
-    stream=sys.stdout,
-    format="%(asctime)s - %(message)s",
-    level=logging.INFO,
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+logging = get_logger()
 
 
 engine = get_engine()
@@ -42,7 +40,17 @@ async def create_study_project(name: str, objective: str, user_id: str, tasks: l
 def get_study_project_by_id(project_id: str) -> StudyProjectPublic:
     with Session(engine) as session:
         project = session.scalar(select(Study_Project).options(joinedload(Study_Project.tasks)).where(Study_Project.id == project_id))
-        return project.to_public()
+        related_docs = find_related_docs_public(project_id)
+        public = project.to_public()
+        public.related_docs = related_docs
+
+        for task in public.tasks:
+            for citation in task.citations:
+                doc = getter.get_document_by_id(citation.document_id)
+                citation.document_title = doc.title
+                
+
+        return public
 
 
 def get_study_project_by_name(project_name: str) -> StudyProjectPublic:
@@ -51,16 +59,20 @@ def get_study_project_by_name(project_name: str) -> StudyProjectPublic:
         project = session.scalar(select(Study_Project).options(joinedload(Study_Project.tasks)).where(Study_Project.name == project_name))
         return project.to_public()
 
-async def update_study_project(project_id: int, name: str, objective: str) -> StudyProjectPublic:
+async def update_study_project(project: StudyProjectPublic) -> StudyProjectPublic:
     with Session(engine) as session:
-        project = session.scalar(Study_Project).where(Study_Project.id == project_id)
-        if project:
-            project.name = name
-            project.objective = objective
-            project.generate_vector(genimi_client)
+        proj_exist = session.scalar(select(Study_Project).where(Study_Project.id == project.id))
+        if proj_exist:
+            if proj_exist.name != project.name:
+                proj_exist.name = project.name
+            if proj_exist.objective != project.objective:
+                proj_exist.objective = project.objective
+            
+            await proj_exist.generate_vector(genimi_client)
         session.commit()
-        session.refresh(project)
-    return project.to_public()
+        session.refresh(proj_exist)
+        return proj_exist.to_public()
+
 
 
     
@@ -108,6 +120,36 @@ def get_study_tasks(project_id: str) -> list[StudyTaskPublic]:
         tasks = session.scalars(select(Study_Task).options(joinedload(Study_Task.citations)).where(Study_Task.project_id == project_id)).unique().all()
         return [task.to_public() for task in tasks]
 
+async def update_study_task(task: StudyTaskPublic) -> StudyTaskPublic:
+    
+    try:
+        with Session(engine) as session:
+            _task = session.scalar(select(Study_Task).where(Study_Task.id == task.id))
+            if _task:
+                _task.description = task.description
+                session.commit()
+                session.refresh(_task)
+            else:
+                logging.warning(f"Task with id: {task.id} not found")
+                return None
+    except Exception as e:
+        logging.error(f"Error while updating task. Error: {e}")
+        return None
+    
+    try:
+        docs = find_related_docs(_task.project_id)
+        if len(docs) == 0:
+            logging.warning(f"No related documents found for project_id: {_task.project_id}")
+            with Session(engine) as session:
+                session.add(_task)
+                return _task.to_public()
+        
+        return await generate_task_response(task=_task, documents=docs)
+    except Exception as e:
+        logging.error(f"Error while updating task. Error: {e}")
+        return None
+
+
 
 def find_related_docs(project_id: str, cosine_distance_freshhold: float = 0.30) -> list[Document]:
     with Session(engine) as session:
@@ -121,14 +163,80 @@ def find_related_docs(project_id: str, cosine_distance_freshhold: float = 0.30) 
             if linked.id not in docs_ids:
                 docs.append(linked)
 
-
         return docs
+
+def find_related_docs_public(project_id: str, cosine_distance_freshhold: float = 0.30) -> list[DocumentPublic]:
+    """This is a wrapper function that returns the list of related documents for a project in a public format
+
+    Args:
+        project_id (str): _description_
+        cosine_distance_freshhold (float, optional): _description_. Defaults to 0.30.
+
+    Returns:
+        list[DocumentPublic]: _description_
+    """
+    docs = find_related_docs(project_id, cosine_distance_freshhold)
+    docs_public = calculate_cosine_dist_project_docs(project_id, docs)
+    return docs_public
+
+
+def get_list_of_candidates_docs(project_id: str, max_docs = 10) -> list[DocumentPublic]:
+
+    related_docs = find_related_docs(project_id)
+    related_docs_ids = [doc.id for doc in related_docs]
+
+    ## Get the list of all documents that are not linked to the project
+    with Session(engine) as session:
+        
+        stmt = select(Document).filter(Document.id.notin_(related_docs_ids)).limit(max_docs)
+        docs = session.scalars(stmt).all()
+        docs_public = [doc.to_public() for doc in docs]
+
+    return docs_public
+
+
+def calculate_cosine_dist_project_docs(project_id: str, documents: list[Document]) -> list[DocumentPublic]:
+    
+
+    with Session(engine) as session:
+        project_vector = session.scalar(select(Study_Project.objective_tasks_vector).where(Study_Project.id == project_id))
+
+        docs_public = []
+        for doc in documents:
+            session.add(doc)
+            doc_vector = doc.ai_summary_vector
+            try:
+                dis = 1 - distance.cosine(project_vector, doc_vector)
+            except Exception as e:
+                logging.error(f"Error while calculating cosine distance. Error: {e}")
+                dis = 0.0
+            pub = doc.to_public(cosine_similarity=dis) 
+            docs_public.append(pub)
+
+    return docs_public
+
+
+
+async def ask_question(project_id: str, question: str) -> SearchResults:
+
+    searcher = SearchHandler()
+    docs = find_related_docs(project_id)
+
+    answer = await searcher.rag_workflow(docs=docs, search_term=question)
+ 
+    docspub = calculate_cosine_dist_project_docs(project_id, docs)
+    return SearchResults(documents_display=docspub, rag_answer=answer)
+
+
+def get_project(project_id: str) -> Study_Project:
+    with Session(engine) as session:
+        project = session.scalar(select(Study_Project).options(joinedload(Study_Project.tasks)).where(Study_Project.id == project_id))
+        return project
 
 
 async def generate_project_response(project_id: str, listener: any = None) -> None:
     
-    with Session(engine) as session:
-        project = session.scalar(select(Study_Project).options(joinedload(Study_Project.tasks)).where(Study_Project.id == project_id))
+    project = get_project(project_id)
     
     documents = find_related_docs(project_id)
     if len(documents) > 0:
@@ -137,6 +245,7 @@ async def generate_project_response(project_id: str, listener: any = None) -> No
         for task in project.tasks:
             await generate_task_response(task, documents)
             logging.info(f"Generated response for project_id: {project_id} task_id: {task.id}")
+
 
         if listener:
             listener(f"Generated responses completed for project_id: {project_id}") 
@@ -237,7 +346,7 @@ def insert_task_citations(task_public: StudyTaskPublic, response: AskQuestionPro
             for doc_citation in response.documents_citations:
                 study_task_citation = Study_Task_Citation(task_id=task.id, 
                                                         document_id=doc_citation.document_id, 
-                                                        text_referance = doc_citation.get_verbatims())
+                                                        text_reference = doc_citation.get_verbatims())
                 session.add(study_task_citation)
                 task.citations.append(study_task_citation)
         
@@ -270,3 +379,18 @@ def unlink_project_document(project_id: str, document_id: str) -> bool:
         session.commit()
 
     return True
+
+
+def get_project_status(project_id: str) -> str:
+    
+    with Session(engine) as session:
+        project = session.scalar(select(Study_Project).options(joinedload(Study_Project.tasks)).where(Study_Project.id == project_id))
+
+    number_of_tasks = len(project.tasks)
+    number_of_tasks_with_response = len([task for task in project.tasks if task.status == "SUCCESS"])
+    number_of_tasks_with_ai_response = len([task for task in project.tasks if task.ai_explanation is not None])
+
+    return {"total_tasks": number_of_tasks, 
+            "tasks_with_response": number_of_tasks_with_response, 
+            "tasks_with_ai_response": number_of_tasks_with_ai_response, 
+            "percentage_tasks_with_response": (number_of_tasks_with_response/number_of_tasks)*100,}

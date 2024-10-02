@@ -1,15 +1,14 @@
 import logging, re, sys, os
-from app.transformers_util import generate_embeddings
-from app.db_connector import get_engine
-from app.models import DocumentPublic, RagAnswerPublic, SearchResults
 import app.getters as getter
 import app.icog_util as util
+import uuid as uuid_pkg
+from app.db_connector import get_engine
+from app.models import Document, DocumentPublic, RagAnswerPublic, SearchResults
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from app.icog_util import DocSummarizer
-from app.prompt_models import RAGPrompt
 from app.db_connector import get_engine
 from app.gemini_prompts_models import AskQuestionPrompt
 from app.gemini_client import GeminiClient
@@ -30,8 +29,8 @@ engine = get_engine()
 gemini_client = GeminiClient()
 
 class MatchedDocument(BaseModel):
-    id: str
-    entity_id: str | None
+    id: uuid_pkg.UUID
+    entity_id: uuid_pkg.UUID | None
     embedding_id: int
     cosine_similarity: float
 
@@ -65,7 +64,9 @@ class SearchHandler:
             if query == "what a test?":
                 rag_results = await self.test_rag_workflow()
             else:
-                rag_results =  await self.rag_workflow(user_id = user_id, search_term = query)
+                matched_docs = await self.search_embeddings(user_id=user_id, search_term=query, threshold=0.5, max_results=3)
+                _docs = [getter.get_document_by_id(doc.id) for doc in matched_docs]
+                rag_results =  await self.rag_workflow(docs=_docs, search_term = query)
             
             if(type(rag_results) == str):
                 return SearchResults(documents_display=[], rag_answer=None, failure=rag_results)
@@ -77,7 +78,8 @@ class SearchHandler:
             return SearchResults(documents_display=docs, rag_answer=rag_results)
                 
         else:
-            matched_docs = self.search_embeddings(user_id=user_id, search_term=query, threshold=0.5, max_results=10)
+            matched_docs = await self.search_embeddings(user_id=user_id, search_term=query, threshold=0.5, max_results=10)
+            docs = [getter.get_document_by_id(doc.id) for doc in matched_docs]
             return SearchResults(documents_display=self.docs_convert_matches_to_doc_public(matched_docs), rag_answer=None)
         
 
@@ -89,14 +91,8 @@ class SearchHandler:
             llm_service_meta={'prompt_tokens': 2890, 'completion_tokens': 330, 'total_tokens': 3220, 'duration': 4043})
         
 
-    async def rag_workflow(self, user_id: str, search_term: str) -> RagAnswerPublic | str:
-        
-        matched_docs = self.search_embeddings(user_id=user_id, search_term=search_term, threshold=0.5, max_results=3)
-
-        docs = []
-        for doc in matched_docs:
-            docs.append(getter.get_document_by_id(doc.id))    
-
+    async def rag_workflow(self, docs: list[Document], search_term: str) -> RagAnswerPublic | str:
+    
 
         if len(docs) == 0:
             return f"No documents found for the search term '{search_term}'"
@@ -114,42 +110,43 @@ class SearchHandler:
             logging.error(f"Error calling AI API: {str(e)}")
             return None
            
-    def search_embeddings(self, user_id: str, search_term: str, threshold: float = 0.5, max_results: int = 20, attempts: int = 0) -> list[MatchedDocument]:
+    async def search_embeddings(self, user_id: str, search_term: str, threshold: float = 0.5, max_results: int = 20, attempts: int = 0) -> list[MatchedDocument]:
         """
         This function searches for document embeddings by search term
         """
         logging.info(f"Generate embeddings for term {search_term}")
-        embedded_term = generate_embeddings(search_term) ## Generate embeddings for search term
+        embedded_term = await gemini_client.generate_embedding(search_term) ## Generate embeddings for search term
         logging.info(f"Embeddings for term {search_term} are length is {len(embedded_term)}")
 
         # Get document with some embeddings that are closest to the search term
         logging.info(f"Searching for documents with embeddings closest to term {search_term}. Attempt {attempts} with threshold {threshold}")
 
         with Session(self._db_engine) as session:
-            stmt = text("""SELECT a.emb_id, a.source_type, a.source_id, a.cosine_similarity
-                    FROM (SELECT e.id AS emb_id, e.source_type, e.source_id, MAX(1 - (e.vector <=> :vector)) AS cosine_similarity 
+            stmt = text("""SELECT a.emb_id, a.text, a.source_type, a.source_id, a.cosine_similarity
+                    FROM (SELECT e.id AS emb_id, e.text, e.source_type, e.source_id, MAX(1 - (e.vector <=> :vector)) AS cosine_similarity 
                             FROM embedding AS e
                             WHERE e.user_id = :user_id
-                            GROUP BY 1,2,3) a
+                            AND e.source_type IN ('document')
+                            GROUP BY 1,2,3,4) a
                     WHERE a.cosine_similarity >= :threshold
-                    GROUP BY 1, 2, 3, 4
+                    GROUP BY 1, 2, 3, 4, 5
                     ORDER BY a.cosine_similarity DESC
                     LIMIT :limit""")
             
-            matches = session.execute(stmt, {"vector": str(embedded_term.tolist()), "user_id": user_id, "threshold": threshold, "limit": max_results}).all()
+            matches = session.execute(stmt, {"vector": str(embedded_term), "user_id": user_id, "threshold": threshold, "limit": max_results}).all()
             
             logging.info(f"Found {len(matches)} matched embeddings for term {search_term}")
 
         ### If we don't have enough matches, we can try to lower the threshold, but only 2 times going from 0.5 to 0.3. 
-        if(len(matches) < 10 and attempts <= 2):
-            return self.search_embeddings(user_id=user_id, search_term=search_term, threshold=threshold-0.1, max_results=max_results, attempts=attempts+1)
+        if(len(matches) < 5 and attempts <= 2):
+            return await self.search_embeddings(user_id=user_id, search_term=search_term, threshold=threshold-0.1, max_results=max_results, attempts=attempts+1)
         
         results = []
         for mat in matches:
             emb_id = mat[0]
-            emb_source = mat[1]
-            emb_source_id = mat[2]
-            emb_cosine_similarity = mat[3]
+            emb_source = mat[2]
+            emb_source_id = mat[3]
+            emb_cosine_similarity = mat[4]
 
             if emb_source == "entity":
                 docs = getter.get_documents_by_entity_id(emb_source_id)

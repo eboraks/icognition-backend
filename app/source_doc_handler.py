@@ -31,18 +31,7 @@ class SourceDocHandler:
         self.source = None
         self.document = None
 
-    def add_source(self, source_id: int) -> None:
-        """
-        This function adds a source to the handler
-        """
-        self.source = Source.get(Source.id == source_id)
-
-    def add_document(self, document_id: int) -> None:
-        """
-        This function adds a document to the handler
-        """
-        self.document = Document.get(Document.id == document_id)
-
+    
     def generate_filepath(self, source_id: str, user_id: str, filename: str) -> Path:
         """
         This function generates the filepaths for the pdf files
@@ -146,6 +135,27 @@ class SourceDocHandler:
 
         return doc
     
+    def write_file(self, filename: str, content: str) -> None:
+        """
+        This function writes the content to the file
+        This is used to test FUSE functionality in the local bucket
+        """
+        filepath = os.path.join(self.local_bucket, filename)
+
+        with open(filepath, "w") as file:
+            file.write(content)
+    
+    def read_file(self, filename: str) -> str:
+        """
+        This function reads the content of the file
+        This is used to test FUSE functionality in the local bucket
+        """
+        filepath = os.path.join(self.local_bucket, filename)
+
+        with open(filepath, "r") as file:
+            content = file.read()
+        
+        return content
 
         
 

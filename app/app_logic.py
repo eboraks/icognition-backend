@@ -3,7 +3,7 @@ import json
 import sys
 import logging
 import os, pickle
-import app.transformers_util as transformers_util
+#import app.transformers_util as transformers_util
 import app.getters as getter
 from app import html_parser
 from app.db_connector import get_engine
@@ -127,28 +127,30 @@ def reassociate_bookmark_with_document(old_document_id, new_document_id):
         )
         return bookmark
 
-def generate_entities_vectors():
+async def generate_entities_vectors():
     with Session(engine) as session:
         entities = session.scalars(select(Entity).where(Entity.name_vector == None)).all()
 
         for entity in entities:
             
-            entity.name_vector = transformers_util.generate_embeddings(entity.name)
+            entity.name_vector = await genimi_client.generate_embedding(entity.name)
             session.add(entity)
         
         session.commit()
         logging.info(f"Vector names for {len(entities)} entities were generated")
 
 
-def insert_entities(user_id, entities: list[Entity], doc: Document) -> bool:
+async def insert_entities(user_id, entities: list[Entity], doc: Document) -> list[Entity]:
 
-    generate_entities_vectors()
+    ## Make sure all previous created entities have vectors
+    ## This allow search for similar entities before creating a new one
+    await generate_entities_vectors()
     
     try:
         session_entities = []
         for entity in entities:
             ## Safe insert, return existing entity if it already exists or the new one
-            session_entities.append(insert_entity_safe(user_id, entity))
+            session_entities.append(await insert_entity_safe(user_id, entity))
         
         with Session(engine) as session:
             for entity in session_entities:
@@ -157,19 +159,19 @@ def insert_entities(user_id, entities: list[Entity], doc: Document) -> bool:
         
         logging.info(f"{len(entities)} Entities for Document {doc.id} were associated")
 
-        return True
+        return session_entities
     except Exception as e:
         logging.error(f"Error inserting entities {e}")
-        return False   
+        return None   
         
     
 
        
 
-def insert_entity_safe(user_id: str, new_entity: Entity) -> Entity: 
+async def insert_entity_safe(user_id: str, new_entity: Entity) -> Entity: 
     
 
-    needle_vector = transformers_util.generate_embeddings(new_entity.name)
+    needle_vector = await genimi_client.generate_embedding(new_entity.name)
     matched = getter.get_similar_entity_by_name_vector(user_id=user_id, vector=needle_vector)
     
     with Session(engine) as session:
@@ -251,7 +253,7 @@ async def generate_summary(doc: Document, testing: bool = False) -> Document:
 
 
 
-async def generate_entities(user_id: str, doc: Document, testing: bool = False) -> bool:
+async def generate_entities(user_id: str, doc: Document, testing: bool = False) -> list[Entity]:
     """
     Generate entities for a document
 
@@ -273,7 +275,7 @@ async def generate_entities(user_id: str, doc: Document, testing: bool = False) 
             response = await genimi_client.generate_response(
                 EntitiesPrompt.build_prompt(doc.original_text), 
                 EntitiesPrompt)
-            logging.info(f"Response from LLM {response}")
+            #logging.info(f"Response from LLM {response}")
             
             if testing:
                 with open(filename, "wb") as f:
@@ -282,15 +284,14 @@ async def generate_entities(user_id: str, doc: Document, testing: bool = False) 
         # Using the entities builder to get the entities from the response    
         entities = response.entities_builder()
 
-        results = insert_entities(user_id, entities, doc)  
-        return results
-
+        return await insert_entities(user_id, entities, doc)  
+        
     except Exception as e:
         logging.error(f"Error generating entities from LLM API {e}")
-        return False
+        return None
 
 
-async def generate_topics(user_id: str, doc: Document, testing: bool = False) -> bool:
+async def generate_topics(user_id: str, doc: Document, testing: bool = False) -> list[Entity]:
     """
     # Generate topics for a document
     """
@@ -307,7 +308,7 @@ async def generate_topics(user_id: str, doc: Document, testing: bool = False) ->
             response = await genimi_client.generate_response(
                 TopicPrompt.build_prompt(doc.original_text), 
                 TopicPrompt)
-            logging.info(f"Response from LLM {response}")
+            #logging.info(f"Response from LLM {response}")
             
             if testing:
                 with open(filename, "wb") as f:
@@ -316,12 +317,11 @@ async def generate_topics(user_id: str, doc: Document, testing: bool = False) ->
         # Using the entities builder to get the topics (also entities) from the response
         entities = response.entities_builder()
 
-        results = insert_entities(user_id, entities, doc)  
-        return results
-
+        return await insert_entities(user_id, entities, doc)  
+        
     except Exception as e:
         logging.error(f"Error generating entities from LLM API {e}")
-        return False
+        return None
 
 
 async def generate_doc_quesions_answers(user_id: str, doc: Document, testing: bool = False) -> bool:
@@ -333,7 +333,7 @@ async def generate_doc_quesions_answers(user_id: str, doc: Document, testing: bo
         prompt = IdentifyQuestionsAnswerPrompt.build_prompt(doc.original_text)
         response = await genimi_client.generate_response(prompt, IdentifyQuestionsAnswerPrompt)
         ## Using the entities builder to get the entities from the response    
-        qans = response.questions_answers_builder(document_id = doc.id)
+        qans = await response.questions_answers_builder(document_id = doc.id)
  
 
     except Exception as e:
@@ -402,6 +402,7 @@ async def generate_embeddings(user_id: str):
     ## Generate embeddings for documents that don't have embeddings
     with Session(engine) as session:
         
+        ## Find Documents taht don't have embeddings
         docs_embedding = select(Embedding.source_id)\
         .filter(and_(Embedding.source_type == 'document', Embedding.user_id == user_id))\
             .group_by(Embedding.source_id)
@@ -413,59 +414,77 @@ async def generate_embeddings(user_id: str):
                 Document.id.not_in(docs_embedding),
                 Document.ai_is_about != None,
                 Document.status == 'Done', Source.user_id == user_id))).unique().all()
+        
+        ## Find entities that don't have embeddings
+        entity_embedding = select(Embedding.source_id)\
+        .filter(and_(Embedding.source_type == 'entity', Embedding.user_id == user_id))\
+            .group_by(Embedding.source_id)
 
-    generate_embeddings_for_docs(docs, user_id)   
+        entities = session.scalars(
+            select(Entity)\
+            .join(Document_Entity_Link, Document_Entity_Link.entity_id == Entity.id)\
+            .join(Source, Source.document_id == Document_Entity_Link.document_id)\
+            .where(and_(
+                Entity.id.not_in(entity_embedding), Source.user_id == user_id)
+                )).unique().all()
 
+    try:
+        await generate_embeddings_for_docs(documents=docs, user_id=user_id)   
+    except Exception as e:
+        logging.error(f"Error generating embeddings for documents {e}")
+    
+    try:
+        await generate_embeddings_for_entities(entities=entities, user_id=user_id)
+    except Exception as e:
+        logging.error(f"Error generating embeddings for entities {e}")
+    
     ## Generate embeddings for entities that don't have embeddings
     ## May, 22. Remove Embedding.version < Entity.version) from where clause, becuase embedding have old versions (versions add additive)
     ## results in always generating embeddings for entities with version above 1. That mean that updated entities will not generate new embeddings
     ## for now. In the future this can be improved, but for now it's ok.
     
 
-    generate_embeddings_for_entities(user_id)
         
 
 
-async def generate_embeddings_for_entities(user_id: str):
+async def generate_embeddings_for_entities(entities: list[Entity], user_id: str):
 
-    ## Find entities that don't have embeddings
-    with Session(engine) as session:
-        entities = session.scalars(
-            select(Entity)\
-            .join(Document_Entity_Link, Document_Entity_Link.entity_id == Entity.id)\
-            .join(Source, Source.document_id == Document_Entity_Link.document_id)\
-            .outerjoin(Embedding, Embedding.source_id == Entity.id)\
-            .where(Embedding.source_id == None, Embedding.user_id == user_id, Source.user_id == user_id)).unique().all()
+    logging.info(f"Generating embeddings for {len(entities)} entities")
     
-        embeddings = []
-        for entity in entities:
-            emb = entity.to_embeddings()
-            emb.vector = transformers_util.generate_embeddings(emb.text)
-            emb.user_id = user_id
-            embeddings.append(emb)
+    embeddings = []
+    for entity in entities:
+        for emb in entity.to_embeddings():
+            if emb.text:
+                emb.vector = await genimi_client.generate_embedding(emb.text)
+                emb.user_id = user_id
+                embeddings.append(emb)
         
+    with Session(engine) as session:        
+    
         session.add_all(embeddings)
         session.commit()
 
 
-async def generate_embeddings_for_docs(docs: list[Document], user_id: str):
+async def generate_embeddings_for_docs(documents: list[Document], user_id: str):
 
+    logging.info(f"Generating embeddings for {len(documents)} documents")
     embeddings = []
-    for doc in docs:
+    for doc in documents:
         for emb in doc.to_embeddings():
-            emb.vector = transformers_util.generate_embeddings(emb.text)
-            emb.user_id = user_id
-            embeddings.append(emb)
+            if emb.text:
+                emb.vector = await genimi_client.generate_embedding(emb.text)
+                emb.user_id = user_id
+                embeddings.append(emb)
     
     with Session(engine) as session:
         session.add_all(embeddings)
         session.commit() 
 
 
-def update_entity_embedding(entity: Entity):
+async def update_entity_embedding(entity: Entity):
     with Session(engine) as session:
         embedding = session.scalar(select(Embedding).where(Embedding.source_id == entity.id))
-        embedding.vector = transformers_util.generate_embeddings(entity.name)
+        embedding.vector = await genimi_client.generate_embedding(entity.name)
         session.add(embedding)
         session.commit()
         logging.info(f"Embedding for entity {entity.id} was updated")
@@ -478,7 +497,7 @@ async def custom_question(document_id: int, question: str) -> RagAnswerPublic:
     """
     This function generates a summary with verbatim sentences
     """
-    doc = getter.get_document_public_by_id(document_id) 
+    doc = getter.get_document_by_id(document_id) 
     
     prompt = AskQuestionPrompt.build_prompt([doc], question)
     generated_response = await genimi_client.generate_response(prompt, AskQuestionPrompt) 

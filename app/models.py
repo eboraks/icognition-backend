@@ -1,6 +1,5 @@
 import json, logging, sys
 import uuid as uuid_pkg
-from types import SimpleNamespace
 from sqlmodel import SQLModel, Field, Float, JSON, Integer, Relationship, String
 from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import TEXT, JSONB, ARRAY
@@ -8,6 +7,7 @@ from pgvector.sqlalchemy import Vector
 from typing import Optional, List, Dict
 from datetime import datetime
 from pydantic import BaseModel, model_serializer
+from app.icog_util import remove_none_header_elements
 
 from app.gemini_client import GeminiClient
 
@@ -37,7 +37,7 @@ class Topic(SQLModel, table=True):
     user_id: str | None = Field(default=None)
     name: str = Field(nullable=False)
     description: str | None = Field(default=None)
-    embedding: list[float] | None = Field(sa_column=Column(Vector(384)))
+    embedding: list[float] | None = Field(sa_column=Column(Vector(768)))
     subtopics: list["SubTopic"] = Relationship(back_populates="topic")
 
 
@@ -81,7 +81,7 @@ class SubTopic(SQLModel, table=True):
     user_id: str | None = Field(nullable=False)
     name: str = Field(nullable=False)
     name_update_at: datetime = Field(default = datetime.now(), nullable=True)
-    vector: List[float] | None = Field(sa_column=Column(Vector(384)))
+    vector: List[float] | None = Field(sa_column=Column(Vector(768)))
     description: str | None = Field(default=None, nullable=True)
     key_words: str | None = Field(default=None)
     topic_id: int | None= Field(default=None, foreign_key="topic.id")
@@ -157,7 +157,7 @@ class Entity(SQLModel, table=True):
     id: uuid_pkg.UUID = Field(default_factory=uuid_pkg.uuid4, primary_key=True)
     version: int = Field(default=1, nullable=True)
     name: str = Field(default=None, nullable=True)
-    name_vector: List[float] | None = Field(sa_column=Column(Vector(384)))
+    name_vector: List[float] | None = Field(sa_column=Column(Vector(768)))
     description: str = Field(default=None, nullable=True)
     descriptions_bank: Optional[str] = Field(default=None)
     source: str = Field(default=None, nullable=True)
@@ -274,7 +274,7 @@ class Document(SQLModel, table=True):
             cosine_similarity=cosine_similarity,
             image_url=self.image_url,
             site_name=self.site_name,
-            html_elements= html_elements
+            html_elements = remove_none_header_elements(html_elements)
         )
 
 
@@ -287,16 +287,6 @@ class Document(SQLModel, table=True):
             A list of Embeddings objects representing the model instance.
         """
         results = []
-
-        if self.title:
-            results.append(
-                Embedding(
-                    source_type="document",
-                    source_id=self.id,
-                    field="title",
-                    text=self.title,
-                )
-            )
 
         if self.ai_is_about:
             results.append(
@@ -313,21 +303,12 @@ class Document(SQLModel, table=True):
                 Embedding(
                     source_type="document",
                     source_id=self.id,
-                    field="metadata_keywords",
-                    text=self.metadata_keywords,
+                    field="ai_short_summary",
+                    text=self.ai_short_summary,
                 )
             )
         
-        if self.metadata_description:
-            results.append(
-                Embedding(
-                    source_type="document",
-                    source_id=self.id,
-                    field="metadata_description",
-                    text=self.metadata_description,
-                )
-            )
-
+        
         if self.ai_bullet_points:
             for bullet_point in self.ai_bullet_points:
                 results.append(
@@ -381,7 +362,7 @@ class Question_Answer(SQLModel, table=True):
     question: str = Field(default=None, nullable=True)
     answer: str = Field(default=None, nullable=True)
     citations: List[dict] = Field(default=[], sa_column=Column(JSON))
-    question_vector: List[float] = Field(sa_column=Column(Vector(384)))
+    question_vector: List[float] = Field(sa_column=Column(Vector(768)))
     created_at: datetime = Field(default_factory=datetime.now, nullable=True)
     created_by: str = Field(default="AI", nullable=True)
 
@@ -430,6 +411,7 @@ class Study_Project(SQLModel, table=True):
             ai_explanation=self.ai_explanation,
             user_id=self.user_id,
             created_at=self.created_at,
+            status=self.status,
             tasks=[task.to_public() for task in self.tasks]
         )
         
@@ -473,7 +455,7 @@ class Study_Task_Citation(SQLModel, table=True):
     """
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    text_referance: Optional[List[Dict]] = Field(default=[], sa_column=Column(JSON))
+    text_reference: Optional[List[Dict]] = Field(default=[], sa_column=Column(JSON))
     ## Intentially I didn't created relationship with Document because that will require a many to many relationship table
     ## and code to manage creation, update and deletion of the relationship.
     document_id: Optional[uuid_pkg.UUID] = Field(default=None, nullable=True)
@@ -484,7 +466,7 @@ class Study_Task_Citation(SQLModel, table=True):
     def to_public(self) -> "StudyTaskCitationPublic":
         return StudyTaskCitationPublic(
             id=self.id,
-            text_referance=self.text_referance,
+            text_reference=self.text_reference,
             document_id=self.document_id,
             task_id=self.task_id,
             created_at=self.created_at
@@ -516,8 +498,9 @@ class StudyTaskCitationPublic(SQLModel, table=False):
     """
 
     id: Optional[int] = Field(default=None)
-    text_referance: Optional[List[Dict]] = Field(default=[])
+    text_reference: Optional[List[Dict]] = Field(default=[])
     document_id: Optional[uuid_pkg.UUID] = Field(default=None)
+    document_title: Optional[str] = Field(default=None)
     task_id: Optional[int] = Field(default=None)
     created_at: Optional[datetime] = Field(default=None)
 
@@ -536,20 +519,6 @@ class StudyTaskPublic(SQLModel, table=False):
 
     
 
-    
-class StudyProjectPublic(SQLModel, table=False):
-    """
-    Represents a study project with its ID, name, description, and user ID.
-    """
-
-    id: Optional[uuid_pkg.UUID] = Field(default=None)
-    name: str = Field(nullable=False)
-    objective: str = Field(default=None)
-    ai_explanation: Optional[str] = Field(default=None)
-    user_id: str = Field(nullable=False)
-    tasks: Optional[list[StudyTaskPublic]] = Field(default=[])
-    created_at: Optional[datetime] = Field(default=None)
-    
 
 
 
@@ -567,9 +536,9 @@ class QuestionPlayload(SQLModel, table=False):
     """
     Represents the payload for a question, including the question and user ID.
     """
-
     question: Optional[str] = Field(default=None)
     document_id: Optional[uuid_pkg.UUID] = Field(default=None)
+    project_id: Optional[uuid_pkg.UUID] = Field(default=None)
 
 
 class HTTPError(SQLModel, table=False):
@@ -587,6 +556,7 @@ class SearchPayload(SQLModel, table=False):
 
     query: Optional[str] = Field(default=None)
     user_id: Optional[str] = Field(default=None)
+    project_id: Optional[uuid_pkg.UUID] = Field(default=None)
 
 
 class Page(SQLModel, table=False):
@@ -642,7 +612,7 @@ class Embedding(SQLModel, table=True):
     text: str = Field(default=None, nullable=True)
     source_type: str = Field(default=None, nullable=False)
     source_id: uuid_pkg.UUID = Field(default=None, nullable=False)
-    vector: List[float] = Field(sa_column=Column(Vector(384)))
+    vector: List[float] = Field(sa_column=Column(Vector(768)))
     update_at: datetime = Field(default_factory=datetime.now, nullable=True)
     subtopics: list["SubTopic"] = Relationship(back_populates="embeddings", link_model=SubTopic_Embedding_Link, sa_relationship_kwargs={"cascade": "delete"})
 
@@ -681,13 +651,27 @@ class DocumentPublic(BaseModel):
     is_about: Optional[str] = None
     tldr: Optional[List[str]] = None
     entities_and_concepts: Optional[List[EntityPublic]] = None
-    tags: Optional[List[str]] = None
     usage: Optional[str] = None
     cosine_similarity: Optional[float] = None
     image_url: Optional[str] = None
     site_name: Optional[str] = None
     html_elements: Optional[List[dict]] = None
 
+
+class StudyProjectPublic(SQLModel, table=False):
+    """
+    Represents a study project with its ID, name, description, and user ID.
+    """
+
+    id: Optional[uuid_pkg.UUID] = Field(default=None)
+    name: str = Field(nullable=False)
+    objective: str = Field(default=None)
+    ai_explanation: Optional[str] = Field(default=None)
+    user_id: str = Field(nullable=False)
+    status: Optional[str] = Field(default=None)
+    related_docs: Optional[List[DocumentPublic]] = Field(default=[])
+    tasks: Optional[list[StudyTaskPublic]] = Field(default=[])
+    created_at: Optional[datetime] = Field(default=None)
 
 
 class Answer(BaseModel):

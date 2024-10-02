@@ -173,3 +173,22 @@ def deduplicate_objects_list(l: list) -> list:
         return deduplicate_objects_list(l)
     else:
         return l
+    
+def remove_none_header_elements(html_elements: list[dict]) -> list[dict]:
+
+    """ This remove all none header elements that appear before the first header element in the list of html elements
+    Args:
+        html_elements (list[dict]): List of html elements 
+        """
+
+    header_index = 0
+    for index, element in enumerate(html_elements):
+
+        if element['element'] == 'h1' or element['element'] == 'h2':
+            header_index = index
+            break
+
+    if header_index == 0:
+        return html_elements
+    else:
+        return html_elements[header_index:]

@@ -1,17 +1,12 @@
-import os, logging, sys
+import os
 import google.generativeai as genai
 from pydantic import BaseModel
 from pydantic_core import ValidationError
+from app.log import get_logger
 
 
 
-logging.basicConfig(
-    stream=sys.stdout,
-    format="%(asctime)s - %(message)s",
-    level=logging.INFO,
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-
+logging = get_logger()
 
 """ GEMINI_FLASH_MODEL": "models/gemini-1.5-flash-001",
 "GEMINI_PRO_MODEL": "models/gemini-1.5-pro-001",
@@ -61,7 +56,8 @@ class GeminiClient:
             
         except Exception as e:
             logging.error(f"Error validating the response: {e}")
-            raise e
+            return await self.generate_response(prompt=prompt, prompt_model=prompt_model, gemini_model=os.getenv("GEMINI_FLASH_MODEL"), attempts = attempts - 1)
+    
 
         return answer
     
