@@ -411,6 +411,7 @@ class Study_Project(SQLModel, table=True):
             ai_explanation=self.ai_explanation,
             user_id=self.user_id,
             created_at=self.created_at,
+            status=self.status,
             tasks=[task.to_public() for task in self.tasks]
         )
         
@@ -454,7 +455,7 @@ class Study_Task_Citation(SQLModel, table=True):
     """
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    text_referance: Optional[List[Dict]] = Field(default=[], sa_column=Column(JSON))
+    text_reference: Optional[List[Dict]] = Field(default=[], sa_column=Column(JSON))
     ## Intentially I didn't created relationship with Document because that will require a many to many relationship table
     ## and code to manage creation, update and deletion of the relationship.
     document_id: Optional[uuid_pkg.UUID] = Field(default=None, nullable=True)
@@ -465,7 +466,7 @@ class Study_Task_Citation(SQLModel, table=True):
     def to_public(self) -> "StudyTaskCitationPublic":
         return StudyTaskCitationPublic(
             id=self.id,
-            text_referance=self.text_referance,
+            text_reference=self.text_reference,
             document_id=self.document_id,
             task_id=self.task_id,
             created_at=self.created_at
@@ -497,8 +498,9 @@ class StudyTaskCitationPublic(SQLModel, table=False):
     """
 
     id: Optional[int] = Field(default=None)
-    text_referance: Optional[List[Dict]] = Field(default=[])
+    text_reference: Optional[List[Dict]] = Field(default=[])
     document_id: Optional[uuid_pkg.UUID] = Field(default=None)
+    document_title: Optional[str] = Field(default=None)
     task_id: Optional[int] = Field(default=None)
     created_at: Optional[datetime] = Field(default=None)
 
@@ -517,21 +519,6 @@ class StudyTaskPublic(SQLModel, table=False):
 
     
 
-    
-class StudyProjectPublic(SQLModel, table=False):
-    """
-    Represents a study project with its ID, name, description, and user ID.
-    """
-
-    id: Optional[uuid_pkg.UUID] = Field(default=None)
-    name: str = Field(nullable=False)
-    objective: str = Field(default=None)
-    ai_explanation: Optional[str] = Field(default=None)
-    user_id: str = Field(nullable=False)
-    num_related_docs: Optional[int] = Field(default=None)
-    tasks: Optional[list[StudyTaskPublic]] = Field(default=[])
-    created_at: Optional[datetime] = Field(default=None)
-    
 
 
 
@@ -670,6 +657,21 @@ class DocumentPublic(BaseModel):
     site_name: Optional[str] = None
     html_elements: Optional[List[dict]] = None
 
+
+class StudyProjectPublic(SQLModel, table=False):
+    """
+    Represents a study project with its ID, name, description, and user ID.
+    """
+
+    id: Optional[uuid_pkg.UUID] = Field(default=None)
+    name: str = Field(nullable=False)
+    objective: str = Field(default=None)
+    ai_explanation: Optional[str] = Field(default=None)
+    user_id: str = Field(nullable=False)
+    status: Optional[str] = Field(default=None)
+    related_docs: Optional[List[DocumentPublic]] = Field(default=[])
+    tasks: Optional[list[StudyTaskPublic]] = Field(default=[])
+    created_at: Optional[datetime] = Field(default=None)
 
 
 class Answer(BaseModel):

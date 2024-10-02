@@ -6,6 +6,7 @@ from app.db_connector import get_engine
 from app.gemini_client import GeminiClient
 from app.gemini_prompts_models import AskQuestionPrompt
 from app.search_handler import SearchHandler
+import app.getters as  getter
 
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import (
@@ -39,9 +40,16 @@ async def create_study_project(name: str, objective: str, user_id: str, tasks: l
 def get_study_project_by_id(project_id: str) -> StudyProjectPublic:
     with Session(engine) as session:
         project = session.scalar(select(Study_Project).options(joinedload(Study_Project.tasks)).where(Study_Project.id == project_id))
-        related_docs = find_related_docs(project_id)
+        related_docs = find_related_docs_public(project_id)
         public = project.to_public()
-        public.num_related_docs = len(related_docs)
+        public.related_docs = related_docs
+
+        for task in public.tasks:
+            for citation in task.citations:
+                doc = getter.get_document_by_id(citation.document_id)
+                citation.document_title = doc.title
+                
+
         return public
 
 
@@ -220,11 +228,15 @@ async def ask_question(project_id: str, question: str) -> SearchResults:
     return SearchResults(documents_display=docspub, rag_answer=answer)
 
 
+def get_project(project_id: str) -> Study_Project:
+    with Session(engine) as session:
+        project = session.scalar(select(Study_Project).options(joinedload(Study_Project.tasks)).where(Study_Project.id == project_id))
+        return project
+
 
 async def generate_project_response(project_id: str, listener: any = None) -> None:
     
-    with Session(engine) as session:
-        project = session.scalar(select(Study_Project).options(joinedload(Study_Project.tasks)).where(Study_Project.id == project_id))
+    project = get_project(project_id)
     
     documents = find_related_docs(project_id)
     if len(documents) > 0:
@@ -233,6 +245,7 @@ async def generate_project_response(project_id: str, listener: any = None) -> No
         for task in project.tasks:
             await generate_task_response(task, documents)
             logging.info(f"Generated response for project_id: {project_id} task_id: {task.id}")
+
 
         if listener:
             listener(f"Generated responses completed for project_id: {project_id}") 
@@ -333,7 +346,7 @@ def insert_task_citations(task_public: StudyTaskPublic, response: AskQuestionPro
             for doc_citation in response.documents_citations:
                 study_task_citation = Study_Task_Citation(task_id=task.id, 
                                                         document_id=doc_citation.document_id, 
-                                                        text_referance = doc_citation.get_verbatims())
+                                                        text_reference = doc_citation.get_verbatims())
                 session.add(study_task_citation)
                 task.citations.append(study_task_citation)
         
