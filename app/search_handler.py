@@ -12,14 +12,10 @@ from app.icog_util import DocSummarizer
 from app.db_connector import get_engine
 from app.gemini_prompts_models import AskQuestionPrompt
 from app.gemini_client import GeminiClient
+from app.log import get_logger
 
 
-logging.basicConfig(
-    stream=sys.stdout,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s",
-    level=logging.INFO,
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+logging = get_logger()
 
 
 env_vers = os.environ
@@ -38,7 +34,7 @@ class MatchedDocument(BaseModel):
 class SearchHandler:
     def __init__(self):
         self._db_engine = get_engine()
-        self._question_regex = r"(?:What|How|Tell me|Find|Who|Explain|Give).*\?"
+        self._question_regex = r"(?:What|How|Tell me|Find|Who|Explain|Give|Where).*\?"
         self._summarizer = DocSummarizer()
 
 

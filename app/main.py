@@ -47,6 +47,7 @@ class Groups(Enum):
     STUDY_PROJECT = "Study Project"
     ICONS = "Icons"
     FOR_TESTING = "For Testing"
+    ASK_QUESTION = "Ask Question"
 
 
 
@@ -228,19 +229,6 @@ async def create_bookmark(
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Bookmark creation failed")
-
-
-
-@app.post("/document/question", tags=[Groups.DOCUMENT.value], response_model=RagAnswerPublic, status_code=200)
-async def post_document_question(payload: QuestionPlayload):
-    try:
-        logging.info(f"Question endpoint called on {payload.document_id} with question {payload.question}")
-        answer = await app_logic.custom_question(question=payload.question, document_id=payload.document_id)
-        logging.info(f"Question endpoint called on {payload.document_id} with answer {answer.answer}")
-        return answer
-    except Exception as e:
-        logging.error(e)
-        raise HTTPException(status_code=500, detail="Answer generation failed")
 
 
 
@@ -543,13 +531,13 @@ async def search_documents(search_payload: SearchPayload, response: Response):
     if results.failure:
         return results
 
-    if len(results.documents_display) == 0:
-        raise HTTPException(status_code=404, detail="No results found")
-
     if results.rag_answer:
         response.headers["icognitoin-answer-type"] = "RAGAnswer"
         return results
     else:
+        if len(results.documents_display) == 0:
+            raise HTTPException(status_code=404, detail="No results found")
+        
         response.headers["icognitoin-answer-type"] = "DocumentDisplay"
         return results
         
@@ -659,20 +647,6 @@ async def get_project_related_documents(id: str):
         logging.error(e)
         raise HTTPException(status_code=404, detail="Documents not found")
     
-
-@app.post("/study_project/ask_question", tags=[Groups.STUDY_PROJECT], response_model=SearchResults, status_code=200)
-async def ask_question(payload: QuestionPlayload):
-    try:
-        if payload.project_id is None:
-            raise HTTPException(status_code=400, detail="Project ID is required")
-        if payload.question is None:
-            raise HTTPException(status_code=400, detail="Question is required")
-
-        answer = await project_handler.ask_question(project_id=payload.project_id, question=payload.question)
-        return answer
-    except Exception as e:
-        logging.error(e)
-        raise HTTPException(status_code=500, detail="Question answering failed")
 
 
 @app.get("/study_project/{id}", tags=[Groups.STUDY_PROJECT], response_model=StudyProjectPublic, status_code=200)
@@ -816,3 +790,33 @@ async def create_source_upload_file(background_tasks: BackgroundTasks, file: Upl
     
 
 
+@app.post("/ask_question", tags=[Groups.ASK_QUESTION], response_model=RagAnswerPublic, status_code=200)
+async def ask_question(payload: QuestionPlayload):
+    try:
+        if payload.project_id is None and payload.document_id is None:
+            raise HTTPException(status_code=400, detail="Project ID or Document ID are required")
+        if payload.question is None:
+            raise HTTPException(status_code=400, detail="Question is required")
+        
+        if payload.document_id is not None:
+            answer = await app_logic.custom_question(question=payload.question, document_id=payload.document_id)
+            return answer
+        elif payload.project_id is not None:
+            answer = await project_handler.ask_question(project_id=payload.project_id, question=payload.question)
+            return answer
+
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Question answering failed")
+    
+
+@app.post("/document/question", tags=[Groups.DOCUMENT.value], response_model=RagAnswerPublic, status_code=200)
+async def post_document_question(payload: QuestionPlayload):
+    try:
+        logging.info(f"Question endpoint called on {payload.document_id} with question {payload.question}")
+        answer = await app_logic.custom_question(question=payload.question, document_id=payload.document_id)
+        logging.info(f"Question endpoint called on {payload.document_id} with answer {answer.answer}")
+        return answer
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Answer generation failed")

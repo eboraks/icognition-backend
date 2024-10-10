@@ -1,7 +1,7 @@
 from scipy.spatial import distance
 from app.log import get_logger
 from datetime import datetime
-from app.models import DocumentPublic, Entity, SearchResults, Study_Project, Study_Project_Document_Link, Study_Task, Document, Study_Task_Citation, StudyProjectPublic, StudyTaskPublic, StudyTaskCitationPublic, TreeNode
+from app.models import DocumentPublic, Entity, RagAnswerPublic, SearchResults, Study_Project, Study_Project_Document_Link, Study_Task, Document, Study_Task_Citation, StudyProjectPublic, StudyTaskPublic, StudyTaskCitationPublic, TreeNode
 from app.db_connector import get_engine
 from app.gemini_client import GeminiClient
 from app.gemini_prompts_models import AskQuestionPrompt
@@ -217,15 +217,13 @@ def calculate_cosine_dist_project_docs(project_id: str, documents: list[Document
 
 
 
-async def ask_question(project_id: str, question: str) -> SearchResults:
+async def ask_question(project_id: str, question: str) -> RagAnswerPublic:
 
     searcher = SearchHandler()
     docs = find_related_docs(project_id)
 
     answer = await searcher.rag_workflow(docs=docs, search_term=question)
- 
-    docspub = calculate_cosine_dist_project_docs(project_id, docs)
-    return SearchResults(documents_display=docspub, rag_answer=answer)
+    return answer
 
 
 def get_project(project_id: str) -> Study_Project:
