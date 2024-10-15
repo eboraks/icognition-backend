@@ -7,6 +7,8 @@ from sqlalchemy import (
     select,
     text,
 )
+from app.log import get_logger
+logger = get_logger()
 
 import app.html_parser as html_parser
 engine = get_engine()
@@ -111,6 +113,11 @@ def get_document_by_url(url) -> Document:
     session.close()
     return doc
 
+def get_all_documents() -> list[Document]:
+    with Session(engine) as session:
+        docs = session.scalars(select(Document)).all()
+    return docs
+
 
 def get_documents_ids() -> list[int]:
     session = Session(engine)
@@ -146,31 +153,55 @@ def get_entities_by_ids(entity_ids: set[int]) -> list[Entity]:
 
     return entities   
 
-def get_similar_entity_by_name_vector(user_id: str, vector, threshold: float = 0.78) -> Entity:
+def find_entity_by_name(entity_name: str) -> Entity:
+    with Session(engine) as session:
+        entity = session.scalar(select(Entity).where(Entity.name.ilike(f"{entity_name}")))
+    return entity
+
+
+async def get_similar_entity_by_name_vector(user_id: str, new_entity, name_vector, description_vector, name_threshold: float = 0.90, desc_threshold = 0.70 ) -> Entity:
+
+
+    exist = find_entity_by_name(new_entity.name)
+    if exist:
+        return exist
     
+    ## Get similar entity by name and description vector
     with Session(engine) as session:
         query = text(
-            """SELECT a.entity_id, a.cosine_similarity
-                FROM (SELECT e.id AS entity_id, MAX(1 - (e.name_vector <=> :vector)) AS cosine_similarity 
+            """SELECT DISTINCT a.entity_id, a.name, a.name_cosine_similarity, a.desc_cosine_similarity   
+                FROM (SELECT e.id AS entity_id, e.name, 
+                    MAX(1 - (e.name_vector <=> :name_vector)) AS name_cosine_similarity,
+                    MAX(1 - (e.description_vector <=> :description_vector)) AS desc_cosine_similarity 
                         FROM entity AS e
                         JOIN document_entity_link del ON del.entity_id = e.id
                         JOIN source b ON b.document_id = del.document_id
                         WHERE b.user_id = :user_id
-                        GROUP BY 1) a
-            WHERE a.cosine_similarity >= :threshold
-            ORDER BY a.cosine_similarity DESC
+                        GROUP BY 1, 2) a
+            WHERE a.name_cosine_similarity >= :name_threshold 
+            AND a.desc_cosine_similarity >= :desc_threshold
+            ORDER BY a.name_cosine_similarity, a.desc_cosine_similarity DESC
             LIMIT 1"""
         )
         result = session.execute(query, {
-            'vector':  str(vector),
+            'name_vector':  str(name_vector),
+            'description_vector': str(description_vector),
             'user_id': user_id,
-            'threshold': threshold
-        }).all()
+            'name_threshold': name_threshold,
+            'desc_threshold': desc_threshold 
+        }).first()
 
-        if len(result) > 0:
-            entity_id = result[0][0]
-            cosine_similarity = result[0][1]
-            return {"entity_id": entity_id, "cosine_similarity": cosine_similarity}
+        if result:
+            entity_id = result[0]
+            entity_name = result[1]
+            name_cosine_similarity = result[2]
+            desc_cosine_similarity = result[3]
+
+            logger.info(f"Found similar entity '{entity_name}' with name similarity {name_cosine_similarity} and description similarity {desc_cosine_similarity}. New entity name is '{new_entity.name}'")   
+            if (entity_name.lower().find(new_entity.name.lower()) != -1 or new_entity.name.lower().find(entity_name.lower()) != -1):
+                ## Get the entity
+                entity = session.scalar(select(Entity).where(Entity.id == entity_id))
+                return entity
             
         return None
 
@@ -389,41 +420,49 @@ def calculate_number_of_docs_thredhold(user_id: str) -> int:
             """)
         docs_count = session.scalar(stmt, {"user_id": user_id})
         
-        return int(docs_count / 10)
+        return round(docs_count / 50)
 
 def get_entities_tree_nodes_by_user_id(user_id: str) -> list[TreeNode]:
     
     min_num_docs = calculate_number_of_docs_thredhold(user_id)
     results = []
     stmt = text("""
-        SELECT a.type, a.ents_count, a.docs_count, a.ents_names, a.docs_ids 
-        FROM (SELECT e.type, 
-            count(distinct e.name) as ents_count, 
-            json_agg(distinct e.name) as ents_names,
-            count(distinct l.document_id) as docs_count,
-            json_agg(distinct l.document_id) as docs_ids
-        FROM public.entity e
-        JOIN public.document_entity_link l ON l.entity_id = e.id
-        JOIN public.source b ON b.document_id = l.document_id
-            WHERE b.user_id = :user_id 
-        GROUP BY 1) a
-        WHERE a.docs_count > :min_num_docs
+        SELECT tb.type, tb.ents_names, tb.ents_ids, tb.docs_ids, tb.docs_count
+            FROM (SELECT ta.type, 
+                    json_agg(distinct ta.name) as ents_names, 
+                    json_agg(distinct ta.entity_id) as ents_ids, 
+                    count(distinct ta.document_id) as docs_count,
+                    json_agg(distinct ta.document_id) as docs_ids
+                FROM (SELECT LOWER(e.type) as type, e.name, d.title, e.id as entity_id, d.id as document_id,
+                    MAX(e.description_vector <-> d.ai_summary_vector) AS similarity
+                    FROM public.entity e
+                    JOIN public.document_entity_link l ON l.entity_id = e.id
+                    JOIN public.document d ON d.id = l.document_id
+                    JOIN public.entity_user_link ul ON ul.entity_id = e.id
+                        WHERE ul.user_id = :user_id
+                        AND (e.description_vector <-> d.ai_summary_vector) < 1.0
+                    GROUP BY 1, 2, 3, 4, 5) ta
+                GROUP BY 1 ) as tb
+            WHERE tb.docs_count > :min_num_docs
         """)
 
-    with Session(engine) as session:
-        types = session.execute(stmt, {"user_id": user_id, "min_num_docs": min_num_docs}).fetchall()
+    try:
+        with Session(engine) as session:
+            types = session.execute(stmt, {"user_id": user_id, "min_num_docs": min_num_docs}).fetchall()
 
-        for k, t in enumerate(types):
-            top_node = TreeNode(label=t.type.title(), key=(t.type.title().replace(" ", "").lower()), doc_count=t.docs_count, doc_ids=[str(id) for id in t.docs_ids], children=[])
-            for e_name in t.ents_names:
-                ent_node = session.scalar(select(Entity).where(Entity.name == e_name)).to_node()
-                if ent_node.doc_count > min_num_docs:
-                    top_node.children.append(ent_node)
-            # Only add the top node if it has children
-            
-            if len(top_node.children) > 0:
-                results.append(top_node)
-            
+            for k, t in enumerate(types):
+                top_node = TreeNode(label=t.type.title(), key=(t.type.title().replace(" ", "").lower()), doc_count=t.docs_count, doc_ids=t.docs_ids, children=[])
+                for e_name in t.ents_names:
+                    ent_node = session.scalar(select(Entity).where(Entity.name == e_name)).to_node()
+                    if ent_node.doc_count > min_num_docs:
+                        top_node.children.append(ent_node)
+                # Only add the top node if it has children
+                
+                if len(top_node.children) > 1:
+                    results.append(top_node)
+    except Exception as e:
+        logger.error(f"Error getting entities tree nodes by user id: {e}")
+                
             
     return results
 
@@ -437,3 +476,4 @@ def get_filter_nodes_by_user_id(user_id: str) -> list[TreeNode]:
     filter_nodes.sort(key=lambda x: x.doc_count, reverse=True)
 
     return filter_nodes
+

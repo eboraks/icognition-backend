@@ -251,10 +251,19 @@ async def post_regenerate_document(old_doc: Document, background_tasks: Backgrou
     bookmark = app_logic.reassociate_bookmark_with_document(old_doc.id, new_doc.id)
 
     if bookmark is None:
-        raise HTTPException(status_code=404, detail="Bookmark not found")
-
+        raise HTTPException(status_code=404, detail="Bookmark not found") 
     return bookmark
 
+@app.get("/regenerate/entities", tags=["Document"], status_code=200)
+async def get_regenerate_entities(background_tasks: BackgroundTasks):
+    background_tasks.add_task(regenerate_entities)
+    return {"Message": "Regenerating entities"}
+
+
+@app.get("/build_entity_vectors", tags=["Document"], status_code=200)
+async def get_build_entity_vectors(background_tasks: BackgroundTasks):
+    background_tasks.add_task(app_logic.generate_entities_vectors)
+    return {"Message": "Building entity vectors"}
 
 ## Background task to generate summaries from LLM
 async def generate_document(source: Source):
@@ -290,17 +299,66 @@ async def generate_document(source: Source):
 
 
 ## Background task to regenerate summaries from LLM if not already exists
-async def regenerate_document(doc: Document):
+async def regenerate_document(document: Document):
  
-    if doc.status in ["Pending", "Done", "Failure"]:
+    if document.status in ["Pending", "Done", "Failure"]:
+        logging.info(f"Background task for deleting document ID: {document.id} and associated records")
+        deleters.delete_document_associate_records(document_id= document.id)
 
-        new_doc = await app_logic.generate_summary(doc)
-        if new_doc:
-            logging.info(f"Background task for document ID: {new_doc.id} completed")
-        else:
-            logging.error(
-                f"Background document regenaring for document ID: {doc.id} failed"
-            )
+    source = getter.get_source_by_document_id(document.id)
+    try: 
+        if document.status in ["Pending", "Done", "Failure"]:
+            logging.info(f"Background task for document ID: {document.id}")
+            document = await app_logic.generate_summary(doc= document)
+            await app_logic.generate_embeddings_for_docs(documents = [document], user_id = source.user_id)
+            logging.info(f"Background task for document ID: {source.document_id} completed")
+    except Exception as e:
+        logging.error(e)
+
+    try:
+        if len(getter.get_entities_ids_by_document_id(document.id)) == 0:
+            ent_success = await app_logic.generate_entities(user_id= source.user_id, doc = document)
+            topic_success = await app_logic.generate_topics(user_id= source.user_id, doc = document)
+            logging.info(f"Background task for generating entities and topics for: {document.id} completed. Result, number of entities: {len(ent_success)} number of topics: {len(topic_success)}")
+            await app_logic.generate_embeddings_for_entities(entities=ent_success, user_id =  source.user_id)
+            await app_logic.generate_embeddings_for_entities(entities=topic_success, user_id =  source.user_id)
+    except Exception as e:
+        logging.error(e)
+
+
+    try:
+        if len(getter.get_question_answer_by_document_id(document.id)) == 0:
+            success = await app_logic.generate_doc_quesions_answers(user_id= source.user_id, doc = document)
+            logging.info(f"Background task for generating questions and answers for: {document.id} completed. Result, {success}")
+            ## For now, we are not generating embeddings for questions and answers
+    except Exception as e:
+        logging.error(e)
+
+
+async def regenerate_entities():
+
+    ## Get all documents
+    documents = getter.get_all_documents()
+
+    for doc in documents:
+        try:
+            deleters.delete_entities_associated_with_document(doc.id)
+            deleters.delete_orphaned_entities()
+        except Exception as e:
+            logging.error(f"Error deleting entities for document {doc.id}. Error {str(e)}")
+            raise Exception(f"Error deleting entities for document {doc.id}. Error {str(e)}")
+    
+    for document in documents:
+        try:
+            user_id = getter.get_source_by_document_id(doc.id).user_id
+            ent_success = await app_logic.generate_entities(user_id= user_id, doc = document)
+            topic_success = await app_logic.generate_topics(user_id= user_id, doc = document)
+            logging.info(f"Background task for generating entities and topics for: {document.id} completed. Result, number of entities: {len(ent_success)} number of topics: {len(topic_success)}")
+            await app_logic.generate_embeddings_for_entities(entities=ent_success, user_id =  user_id)
+            await app_logic.generate_embeddings_for_entities(entities=topic_success, user_id =  user_id)
+        except Exception as e:
+            logging.error(f"Error generating entities for document {doc.id}. Error {str(e)}")
+
 
 
 @app.get("/bookmarks/user/{user_id}", tags=["Bookmark"], response_model=List[Source], status_code=200)

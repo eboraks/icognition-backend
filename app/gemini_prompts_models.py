@@ -25,6 +25,7 @@ class DocumentCitation(BaseModel):
 class FoundEntity(BaseModel):
     name: str
     type: str
+    verbatim_text: str
     description: str
 
 class FoundQuestionAnswer(BaseModel):
@@ -105,8 +106,9 @@ class EntitiesPrompt(BaseModel):
             str: The prompt for the summarize task.
         """
         # Prompt for summarizing an article
-        return """You are a researcher tasked with identifying the twenty most relevent entities (such as people, products, companies, locations, events, etc.) 
-        to the article subjects. Include the name, type, and description of each entity in the response. 
+        return """You are a researcher tasked with identifying the ten most relevent entities in an article context. Don't include irrelevant entities to the article main subject. 
+        Extract only entities of type 'People', 'Products', 'Companies/Organizations', 'Countries/Cities/locations', 'Events', 'Other'.
+        In your response include the name, type, verbatim_text, and description of each entity. The verbatim_text is the text from the article that the entity was extracted from.
         Those fields are required for the response to be valid JSON. 
         Merge entities with name variation for example Voter and Voters. Deduplicates entities on name and do not include irrelevant entities.
         Ensure that your responses are socially unbiased and positive in nature.
@@ -152,12 +154,11 @@ class TopicPrompt(BaseModel):
             str: The prompt for the summarize task.
         """
         # Prompt for summarizing an article
-        return """You are a researcher tasked with identifying the most relevent topic (such as Politics, Finance, Economy, Religion, etc.) 
-        to the article subjects. Try to focus on the most important topics. Include the name, type='topic' and description of each topic. 
+        return """You are a researcher tasked with identifying articles top 3 topics (such as Politics, Finance, Economy, Religion, etc.) 
+        Focus on topics that describe what the article is about. 
+        In your response include the name, type='topic', verbatim_text, and description of each entity. The verbatim_text is the text used to identify the topic.
         Merge topic by name, for example Voter and Voters, or Anti-Woke and anti-wokeness. Deduplicates topics on name and do not include irrelevant topics.
         Response most be valid JSON. Ensure that your responses are socially unbiased and positive in nature.
-        If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
-        If you don't know the answer, please don't share false information. 
         Article: {BODY}""".format(BODY=text)
     
     def entities_builder(self) -> list[Entity]:

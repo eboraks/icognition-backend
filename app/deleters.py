@@ -90,9 +90,25 @@ def delete_question_and_answer_associated_with_document(document_id) -> None:
         session.execute(delete(Question_Answer).where(Question_Answer.document_id == document_id))
         session.commit()
         
+def delete_entities_associated_with_document(document_id: str) -> None:
+    
+    with Session(engine) as session:
+        entities_ids = session.scalars(select(Document_Entity_Link.entity_id).where(Document_Entity_Link.document_id == document_id)).unique().all()
+        for id in entities_ids:
+            session.execute(delete(Document_Entity_Link).where(Document_Entity_Link.entity_id == id, 
+                                                               Document_Entity_Link.document_id == document_id))
+            session.execute(delete(Embedding).where(Embedding.source_id == id))
+            session.commit()
+    
+def delete_orphaned_entities() -> None:
+    with Session(engine) as session:
+        delete_entities = session.scalars(select(Entity).where(~Entity.id.in_(select(Document_Entity_Link.entity_id).distinct()))).all()
+        for entity in delete_entities:
+            session.delete(entity)
+        session.commit()
+        logging.info(f"Orphaned entities deleted")
 
-
-def delete_document_and_associate_records(document_id) -> None:
+def delete_document_associate_records(document_id: str) -> None:
     """
     This function deletes a document and all associated records from the database.
     This function was create for testing purposes.
@@ -117,9 +133,21 @@ def delete_document_and_associate_records(document_id) -> None:
             session.delete(emb)
 
         session.flush()
-        delete_subt_emb_links = session.scalars(select(SubTopic_Embedding_Link).where(SubTopic_Embedding_Link.embedding_id.in_(emb_ids))).all()
-        for emblink in delete_subt_emb_links:
-            session.delete(emblink)
+        
+        
+        session.commit()
+        logging.info(f"Associated record of document {document_id} deleted")
+
+
+
+def delete_document_and_associate_records(document_id: str) -> None:
+    """
+    This function deletes a document and all associated records from the database.
+    This function was create for testing purposes.
+    """
+    logging.info(f"Deleting document {document_id} and associated records")
+    delete_document_associate_records(document_id)
+    with Session(engine) as session:
         
         session.execute(delete(Document).where(Document.id == document_id))
 

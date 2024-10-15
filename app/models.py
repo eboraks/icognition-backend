@@ -136,18 +136,26 @@ class Document_Entity_Link(SQLModel, table=True):
     """
     Represents a link between a document and an entity.
     """
-
     document_id: Optional[uuid_pkg.UUID] = Field(default=None, foreign_key="document.id", primary_key=True)
     entity_id: Optional[uuid_pkg.UUID] = Field(default=None, foreign_key="entity.id", primary_key=True)
+    verbatim_text: Optional[str] = Field(default=None)
+    description: Optional[str] = Field(default=None)
 
+class Entity_User_Link(SQLModel, table=True):
+    """
+    Represents a link between a document and an entity.
+    """
+    entity_id: Optional[uuid_pkg.UUID] = Field(default=None, foreign_key="entity.id", primary_key=True)
+    user_id: Optional[str] = Field(default=None, foreign_key="user.id", primary_key=True)
 
 
 class EntityPublic(BaseModel):
     id: Optional[uuid_pkg.UUID]
     name: Optional[str]
-    description: Optional[str] | None
-    source: Optional[str] | None
-    type: Optional[str] | None
+    verbatim_text: Optional[str] = None
+    description: Optional[str] = None
+    source: Optional[str] = None
+    type: Optional[str] = None
 
 
 class Entity(SQLModel, table=True):
@@ -158,7 +166,9 @@ class Entity(SQLModel, table=True):
     version: int = Field(default=1, nullable=True)
     name: str = Field(default=None, nullable=True)
     name_vector: List[float] | None = Field(sa_column=Column(Vector(768)))
+    verbatim_text: str = Field(default=None, nullable=True)
     description: str = Field(default=None, nullable=True)
+    description_vector: List[float] | None = Field(sa_column=Column(Vector(768)))
     descriptions_bank: Optional[str] = Field(default=None)
     source: str = Field(default=None, nullable=True)
     type: str = Field(default=None, nullable=True)
@@ -170,6 +180,7 @@ class Entity(SQLModel, table=True):
     ## Many to Many relationships between entities documents
     documents: list["Document"] = Relationship(back_populates="entities", link_model=Document_Entity_Link)
     subtopics: list["SubTopic"] = Relationship(back_populates="entities", link_model=SubTopic_Entity_Link)
+    users: list["User"] = Relationship(back_populates="entities", link_model=Entity_User_Link)
 
     def to_node(self):
         return TreeNode(
@@ -184,7 +195,7 @@ class Entity(SQLModel, table=True):
     def to_public(self) -> "EntityPublic":
         return EntityPublic(
             id=self.id,
-            name=self.name,
+            name=self.name, 
             description=self.description,
             source=self.source,
             type=self.type,
@@ -585,6 +596,8 @@ class User(SQLModel, table=True):
     id: str = Field(primary_key=True)
     first_name: str = Field(nullable=True)
     last_name: str = Field(nullable=True)
+
+    entities: list["Entity"] = Relationship(back_populates="users", link_model=Entity_User_Link)
     
 
 

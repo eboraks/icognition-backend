@@ -34,25 +34,29 @@ async def test_summarization():
 
 @pytest.mark.asyncio
 async def test_entities():
-    document = getter.get_document_public_by_id(109)
+    document = getter.get_document_by_id('3d9a8a8e-fb54-421c-a066-b05cd24d40eb')
 
     prompt = EntitiesPrompt.build_prompt(document.original_text)
     generated_response = await genimi_client.generate_response(prompt, EntitiesPrompt)
 
     assert generated_response is not None
     assert len(generated_response.entities) > 0
+    for entity in generated_response.entities:
+        assert document.original_text.find(entity.verbatim_text) != -1
 
 
 
 @pytest.mark.asyncio
 async def test_topics():
-    document = getter.get_document_public_by_id(109)
+    document = getter.get_document_by_id('3d9a8a8e-fb54-421c-a066-b05cd24d40eb')
 
     prompt = TopicPrompt.build_prompt(document.original_text)
     generated_response = await genimi_client.generate_response(prompt, TopicPrompt)
 
     assert generated_response is not None
     assert len(generated_response.topics) > 0
+    for topic in generated_response.topics:
+        assert topic.verbatim_text is not None
 
 
 @pytest.mark.asyncio

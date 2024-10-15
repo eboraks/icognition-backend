@@ -1,14 +1,12 @@
 import datetime
-import json
 import sys
-import logging
 import os, pickle
-#import app.transformers_util as transformers_util
 import app.getters as getter
 from app import html_parser
 from app.db_connector import get_engine
 from app.source_doc_handler import SourceDocHandler
 from app.models import (
+    Entity_User_Link,
     Source,
     Entity,
     Page,
@@ -31,12 +29,9 @@ from sqlalchemy.orm import Session
 
 from app.gemini_prompts_models import AskQuestionPrompt, EntitiesPrompt, FoundQuestionAnswer, IdentifyQuestionsAnswerPrompt, SummarizePrompt, TopicPrompt
 
-logging.basicConfig(
-    stream=sys.stdout,
-    format="%(asctime)s - %(message)s",
-    level=logging.INFO,
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+from app.log import get_logger
+logging = get_logger()
+
 
 env_vers = os.environ
 
@@ -139,6 +134,16 @@ async def generate_entities_vectors():
         session.commit()
         logging.info(f"Vector names for {len(entities)} entities were generated")
 
+    with Session(engine) as session:
+        entities = session.scalars(select(Entity).where(Entity.description_vector == None)).all()
+        logging.info(f"Entities without description vector {len(entities)}")
+
+        for entity in entities:
+            entity.description_vector = await genimi_client.generate_embedding(entity.name + ': ' + entity.description)
+            session.add(entity)
+            session.commit()
+        logging.info(f"Vector descriptions for {len(entities)} entities were generated")
+
 
 async def insert_entities(user_id, entities: list[Entity], doc: Document) -> list[Entity]:
 
@@ -150,14 +155,9 @@ async def insert_entities(user_id, entities: list[Entity], doc: Document) -> lis
         session_entities = []
         for entity in entities:
             ## Safe insert, return existing entity if it already exists or the new one
-            session_entities.append(await insert_entity_safe(user_id, entity))
+            session_entities.append(await insert_entity_safe(user_id=user_id, new_entity= entity, _document_id=doc.id))
         
-        with Session(engine) as session:
-            for entity in session_entities:
-                session.merge(Document_Entity_Link(document_id=doc.id, entity_id=entity.id))
-            session.commit()
-        
-        logging.info(f"{len(entities)} Entities for Document {doc.id} were associated")
+        logging.info(f"{len(session_entities)} Entities for Document {doc.id} were associated")
 
         return session_entities
     except Exception as e:
@@ -168,33 +168,36 @@ async def insert_entities(user_id, entities: list[Entity], doc: Document) -> lis
 
        
 
-async def insert_entity_safe(user_id: str, new_entity: Entity) -> Entity: 
+async def insert_entity_safe(user_id: str, new_entity: Entity, _document_id: str) -> Entity: 
     
 
-    needle_vector = await genimi_client.generate_embedding(new_entity.name)
-    matched = getter.get_similar_entity_by_name_vector(user_id=user_id, vector=needle_vector)
+    name_needle_vector = await genimi_client.generate_embedding(new_entity.name)
+    description_needle_vector = await genimi_client.generate_embedding(new_entity.name + ': ' + new_entity.description)
+    matched_entity = await getter.get_similar_entity_by_name_vector(user_id=user_id, new_entity = new_entity, name_vector=name_needle_vector, description_vector=description_needle_vector)
     
     with Session(engine) as session:
         
-        if matched:
-            logging.info(f"Entity {new_entity.name} already exists, adding synonyms to it.")
-            ent = session.scalar(select(Entity).where(Entity.id == matched["entity_id"]))
+        if matched_entity:
+        
+            logging.info(f"Matched Entity. New: {new_entity.name} Existing: {matched_entity.name}")
             
-            if ent.descriptions_bank == None:   
-                ent.descriptions_bank = f"{new_entity.description}"
-            else:
-                ent.descriptions_bank += f"; {new_entity.description}" 
             
-            ent.version += 1
-            ent.update_at = datetime.datetime.now()
+            session.merge(Document_Entity_Link(document_id=_document_id, entity_id=matched_entity.id, 
+                                               verbatim_text=new_entity.verbatim_text, description=new_entity.description))
             session.commit()
-            session.refresh(ent)
-            return ent
+            return new_entity
         else:
-            new_entity.name_vector = needle_vector
+            new_entity.name_vector = name_needle_vector
+            new_entity.description_vector = description_needle_vector
             session.add(new_entity)
             session.commit()
             session.refresh(new_entity)
+            
+            session.merge(Entity_User_Link(user_id=user_id, entity_id=new_entity.id))
+            session.merge(Document_Entity_Link(document_id=_document_id, entity_id=new_entity.id, 
+                                               verbatim_text=new_entity.verbatim_text, description=new_entity.description))
+           
+            session.commit()
             return new_entity
 
 
@@ -284,6 +287,9 @@ async def generate_entities(user_id: str, doc: Document, testing: bool = False) 
         # Using the entities builder to get the entities from the response    
         entities = response.entities_builder()
 
+        ## Iterate over entities check if verbatim_text is in the original_text, if not, remove it
+        entities = [entity for entity in entities if doc.original_text.find(entity.verbatim_text) != -1] 
+
         return await insert_entities(user_id, entities, doc)  
         
     except Exception as e:
@@ -316,6 +322,9 @@ async def generate_topics(user_id: str, doc: Document, testing: bool = False) ->
 
         # Using the entities builder to get the topics (also entities) from the response
         entities = response.entities_builder()
+
+        ## Iterate over entities check if verbatim_text is in the original_text, if not, remove it
+        entities = [entity for entity in entities if doc.original_text.find(entity.verbatim_text) != -1]
 
         return await insert_entities(user_id, entities, doc)  
         
@@ -451,15 +460,18 @@ async def generate_embeddings_for_entities(entities: list[Entity], user_id: str)
 
     logging.info(f"Generating embeddings for {len(entities)} entities")
     
-    embeddings = []
-    for entity in entities:
-        for emb in entity.to_embeddings():
-            if emb.text:
-                emb.vector = await genimi_client.generate_embedding(emb.text)
-                emb.user_id = user_id
-                embeddings.append(emb)
-        
-    with Session(engine) as session:        
+    
+     
+    with Session(engine) as session:
+
+        embeddings = []
+        for entity in entities:
+            session.add(entity)
+            for emb in entity.to_embeddings():
+                if emb.text:
+                    emb.vector = await genimi_client.generate_embedding(emb.text)
+                    emb.user_id = user_id
+                    embeddings.append(emb)        
     
         session.add_all(embeddings)
         session.commit()
