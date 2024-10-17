@@ -1,10 +1,10 @@
 from enum import Enum
-from fastapi import FastAPI, HTTPException, BackgroundTasks, status, Response, Form, UploadFile
+from fastapi import FastAPI, HTTPException, BackgroundTasks, status, Response, Form, File, UploadFile, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from typing import List
+from typing import List, Annotated
 from app.models import (
     User,
     Source,
@@ -817,9 +817,17 @@ async def listen_doc_generation(event: dict):
         return True
 
 
-@app.post("/create_source_upload_file/", tags=["Bookmark / Source"])
-async def create_source_upload_file(background_tasks: BackgroundTasks, file: UploadFile, user_id: str = Form(...)): 
+@app.post("/upload_file/", tags=["Bookmark / Source"])
+async def upload_file(file: UploadFile = File(...), request: Request = None, user_agent: Annotated[str | None, Header()] = None): 
     
+    logging.info(f"File {file.filename} with contect type of {file.content_type}")
+    logging.info(f"Request {request.headers}")
+
+
+@app.post("/create_source_upload_file/", tags=["Bookmark / Source"])
+async def create_source_upload_file(background_tasks: BackgroundTasks, file: UploadFile, request: Request): 
+    
+    user_id = request.headers.get('user_id')
     user_handler = UserHandler()
     source_handler = SourceDocHandler()
     

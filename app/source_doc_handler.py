@@ -95,7 +95,7 @@ class SourceDocHandler:
 
         ## URL and Filename are not the same, but in this case we use them for the same thing - unique identifying the source
         page.clean_url = source.filename
-        doc = self.create_document_from_page(page)
+        doc = self.create_document_from_page(page, source_type='pdf')
         doc.image_url = "https://placeholder.ai/icon/icons8-pdf-80"
 
         with Session(engine) as session:
@@ -106,7 +106,7 @@ class SourceDocHandler:
 
         await callback({"message": "generate_doc_from_pdf_done", "source": source})
 
-    def create_document_from_page(self, page: Page) -> Document:
+    def create_document_from_page(self, page: Page, source_type = 'web') -> Document:
         session = Session(engine)
         doc = session.scalar(select(Document).where(Document.url == page.clean_url))
 
@@ -118,6 +118,7 @@ class SourceDocHandler:
         doc = Document()
         doc.title = page.title
         doc.url = page.clean_url
+        doc.source_type = source_type
         doc.original_text = page.full_text
         doc.authors = ", ".join(page.authors) if page.authors else None
         doc.metadata_keywords = ", ".join(page.keywords) if page.keywords else None

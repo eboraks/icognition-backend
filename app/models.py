@@ -237,6 +237,7 @@ class Document(SQLModel, table=True):
     id: uuid_pkg.UUID = Field(default_factory=uuid_pkg.uuid4, primary_key=True)
     title: str = Field(default=None, nullable=True)
     url: str = Field(default=None, nullable=True)
+    source_type: str = Field(default=None, nullable=True)
     original_text: str = Field(default=None, nullable=True)
     html_elements: List[Dict] = Field(default=[], sa_column=Column(JSON))
     authors: str = Field(default=None, nullable=True)
@@ -272,6 +273,7 @@ class Document(SQLModel, table=True):
             id = self.id,
             title = self.title,
             url = self.url,
+            source_type = 'web' if self.source_type is None else self.source_type,
             authors = self.authors.split(",") if self.authors else None,
             tldr = self.ai_bullet_points,
             publicationDate = self.publication_date,
@@ -653,6 +655,7 @@ Why I used Pydantic instead of SQLModel? Good question, in my testing I was not 
 class DocumentPublic(BaseModel):
     id: Optional[uuid_pkg.UUID]
     title: Optional[str]
+    source_type: Optional[str] = None
     url: Optional[str] = None
     authors: Optional[List[str]] = None
     publicationDate: Optional[datetime] = None
