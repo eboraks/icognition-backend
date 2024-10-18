@@ -185,7 +185,7 @@ class Entity(SQLModel, table=True):
     def to_node(self):
         return TreeNode(
             key = str(self.id),
-            label = f"{self.name.title()} ({len(self.documents)})",
+            label = f"{self.name} ({len(self.documents)})",
             data =  self.description,
             doc_count=len(self.documents),
             doc_ids = [str(doc.id) for doc in self.documents],

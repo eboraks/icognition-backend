@@ -1,5 +1,6 @@
 from enum import Enum
-from fastapi import FastAPI, HTTPException, BackgroundTasks, status, Response, Form, File, UploadFile, Header, Request
+import time
+from fastapi import FastAPI, HTTPException, BackgroundTasks, status, Response, UploadFile, Request, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -569,7 +570,10 @@ async def get_user_subtopics_node(user_id: str):
 @app.get("/filter_nodes/{user_id}", tags=["Library Search"], response_model=List[TreeNode], status_code=200)
 async def get_user_filter_nodes(user_id: str):
     try:
-        return getter.get_filter_nodes_by_user_id(user_id)
+        start_time = time.time()
+        nodes = getter.get_filter_nodes_by_user_id(user_id)
+        logging.info(f"Time to get filter nodes: {(time.time() - start_time):.2f}")
+        return nodes
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=404, detail="Error getting filter nodes")
@@ -618,7 +622,9 @@ async def generate_embedding(user_id: str):
 @app.get("/entities_names/{user_id}", tags=["User Data (Entities, Document)"], status_code=200)
 async def get_user_entities_names(user_id: str):
     try:
+        start_time = time.time()
         names = getter.get_entities_names_by_user_id(user_id)
+        logging.info(f"Time to get entities names: {(time.time() - start_time):.2f}")
         return names
     except Exception as e:
         logging.error(e)
@@ -817,13 +823,6 @@ async def listen_doc_generation(event: dict):
         return True
 
 
-@app.post("/upload_file/", tags=["Bookmark / Source"])
-async def upload_file(file: UploadFile = File(...), request: Request = None, user_agent: Annotated[str | None, Header()] = None): 
-    
-    logging.info(f"File {file.filename} with contect type of {file.content_type}")
-    logging.info(f"Request {request.headers}")
-
-
 @app.post("/create_source_upload_file/", tags=["Bookmark / Source"])
 async def create_source_upload_file(background_tasks: BackgroundTasks, file: UploadFile, request: Request): 
     
@@ -886,3 +885,11 @@ async def post_document_question(payload: QuestionPlayload):
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Answer generation failed")
+    
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    while True:
+        data = await websocket.receive_text()
+        await websocket.send_text(f"Message text was: {data}")

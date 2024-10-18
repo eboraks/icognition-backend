@@ -1,3 +1,4 @@
+import time
 from app.db_connector import get_engine
 from app.models import Source, Document, Document_Entity_Link, DocumentPublic, Entity, Question_Answer, SubTopic, SubTopic_Document_Link, SubTopic_Embedding_Link, Embedding, SubTopic_Entity_Link, SubTopicDisplay, TreeNode
 from sqlalchemy.orm import Session, joinedload
@@ -426,8 +427,7 @@ def get_entities_tree_nodes_by_user_id(user_id: str) -> list[TreeNode]:
     
     min_num_docs = calculate_number_of_docs_thredhold(user_id)
     results = []
-    stmt = text("""
-        SELECT tb.type, tb.ents_names, tb.ents_ids, tb.docs_ids, tb.docs_count
+    stmt = text("""SELECT tb.type, tb.docs_count, tb.ents_names, tb.ents_ids, tb.docs_ids
             FROM (SELECT ta.type, 
                     json_agg(distinct ta.name) as ents_names, 
                     json_agg(distinct ta.entity_id) as ents_ids, 
@@ -435,31 +435,48 @@ def get_entities_tree_nodes_by_user_id(user_id: str) -> list[TreeNode]:
                     json_agg(distinct ta.document_id) as docs_ids
                 FROM (SELECT LOWER(e.type) as type, e.name, d.title, e.id as entity_id, d.id as document_id,
                     MAX(e.description_vector <-> d.ai_summary_vector) AS similarity
-                    FROM public.entity e
+                    FROM (SELECT e.*
+                        FROM public.entity e
+                        JOIN public.document_entity_link l ON l.entity_id = e.id
+                        JOIN public.entity_user_link ul ON ul.entity_id = e.id
+                        WHERE ul.user_id = :user_id
+                        GROUP BY 1
+                        HAVING count(distinct l.document_id) > :min_num_docs) as e
                     JOIN public.document_entity_link l ON l.entity_id = e.id
                     JOIN public.document d ON d.id = l.document_id
-                    JOIN public.entity_user_link ul ON ul.entity_id = e.id
-                        WHERE ul.user_id = :user_id
                         AND (e.description_vector <-> d.ai_summary_vector) < 1.0
                     GROUP BY 1, 2, 3, 4, 5) ta
-                GROUP BY 1 ) as tb
-            WHERE tb.docs_count > :min_num_docs
-        """)
+                GROUP BY 1 ) as tb""")
 
     try:
         with Session(engine) as session:
+            start_time = time.time()
             types = session.execute(stmt, {"user_id": user_id, "min_num_docs": min_num_docs}).fetchall()
+            logger.info(f"Time to get entities tree nodes by user id: {(time.time() - start_time):.2f} seconds")
 
+            start_time = time.time()
             for k, t in enumerate(types):
                 top_node = TreeNode(label=t.type.title(), key=(t.type.title().replace(" ", "").lower()), doc_count=t.docs_count, doc_ids=t.docs_ids, children=[])
-                for e_name in t.ents_names:
-                    ent_node = session.scalar(select(Entity).where(Entity.name == e_name)).to_node()
+        
+                entities = session.scalars(
+                    select(Entity).options(joinedload(Entity.documents))
+                    .where(Entity.id.in_(t.ents_ids)).order_by(Entity.name)).unique().all()
+                
+                for ent in entities:
+                    ent_node = ent.to_node()
+                    
                     if ent_node.doc_count > min_num_docs:
                         top_node.children.append(ent_node)
-                # Only add the top node if it has children
                 
+                """ for e_name in t.ents_names:
+                    ent_node = session.scalar(select(Entity).where(Entity.name == e_name)).to_node()
+                    if ent_node.doc_count > min_num_docs:
+                        top_node.children.append(ent_node) """
+                
+                # Only add the top node if it has children
                 if len(top_node.children) > 1:
                     results.append(top_node)
+            logger.info(f"Time to create entities tree nodes by user id: {(time.time() - start_time):.2f} seconds")
     except Exception as e:
         logger.error(f"Error getting entities tree nodes by user id: {e}")
                 
