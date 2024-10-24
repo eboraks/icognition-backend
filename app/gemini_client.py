@@ -47,7 +47,7 @@ class GeminiClient:
                 generation_config={"response_mime_type": "application/json",  "response_schema": prompt_model})
         
         try:
-            answer = prompt_model.model_validate_json(response.text)
+            validated_response = prompt_model.model_validate_json(response.text, strict=False)
         except ValidationError as e:
             logging.error(f"Error validating the response: {e}")
             if (attempts > 0):
@@ -59,7 +59,7 @@ class GeminiClient:
             return await self.generate_response(prompt=prompt, prompt_model=prompt_model, gemini_model=os.getenv("GEMINI_FLASH_MODEL"), attempts = attempts - 1)
     
 
-        return answer
+        return validated_response
     
     async def generate_embedding(self, content: str, title: str = None, task_type: str = "retrieval_document", model_name: str = os.getenv("GEMINI_EMBEDDING_MODEL")):
         """

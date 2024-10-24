@@ -97,6 +97,14 @@ class SearchHandler:
             generated_response = await gemini_client.generate_response(
                 AskQuestionPrompt.build_prompt(docs, search_term), 
                 AskQuestionPrompt)
+            
+            if generated_response.meta_answer != "SUCCESS":
+                logging.error(f"Error generating RAG answer for search term {search_term}")
+                logging.error(f"Error: {generated_response.meta_answer}")
+
+            if generated_response.answer is None:
+                logging.error(f"Error generating RAG answer for search term {search_term}")
+                logging.error(f"Error: {generated_response}")
 
             rag_answer = generated_response.question_answer_builder(question=search_term)
 
@@ -104,6 +112,7 @@ class SearchHandler:
             return rag_answer
         except Exception as e:
             logging.error(f"Error calling AI API: {str(e)}")
+            logging.error(generated_response)
             return None
            
     async def search_embeddings(self, user_id: str, search_term: str, threshold: float = 0.5, max_results: int = 20, attempts: int = 0) -> list[MatchedDocument]:

@@ -1,5 +1,6 @@
 import json
-from pydantic import BaseModel
+from typing import Optional
+from pydantic import BaseModel, validator
 
 from app.models import Answer, Document, Entity, Question_Answer, RagAnswerPublic
 # import app.transformers_util as transformers_util
@@ -232,6 +233,13 @@ class AskQuestionPrompt(BaseModel):
     answer: str
     meta_answer: str
     documents_citations: list[DocumentCitation]
+
+
+    @validator("documents_citations")
+    def validate_documents_citations(cls, value):
+        if value is None:
+            return []
+        return value
     
     @classmethod
     def build_prompt(cls, docs: list[Document], question: str):
@@ -253,16 +261,16 @@ class AskQuestionPrompt(BaseModel):
                     "document_id": "fe32b94b-de9c-4aa4-87a3-c5cbbfaaab0b",
                     "verbatims": [
                         {
-                            "verbatim_text": "Paris is the capital of France."
+                            "verbatim_text": "<p>Paris is the capital of France.</p>"
                         }
                     ]
                 }
             ]
         }
 
-        _articles = "Articles:\n"
+        _documents = "Documents:\n"
         for d in docs:
-            _articles += """Article_ID: {ID}, Article_Name: {TITLE}, Article: {CONTEXT}\n""".format(
+            _documents += """Document_ID: {ID}, Document_Name: {TITLE}, Text: {CONTEXT}\n""".format(
                 ID=d.id, TITLE=d.title, CONTEXT=d.original_text, URL=d.url)
 
         return """You are a researcher task with answering questions using articles. 
@@ -272,8 +280,9 @@ class AskQuestionPrompt(BaseModel):
             Use the meta_answer field to indicate if you were able to complete the task by writing "SUCCESS", or explanation why not.
             If you don't know the answer, please don't share false information.
             Ensure you include the citations with the verbatim text of up to ten sentences/text you used to answer the question.
-            Output should be valid JSON
-            Question: {QUESTION}\n {ARTICLES}""".format(QUESTION=question, ARTICLES=_articles) 
+            If there are no documents citations, include an empty field list for example, documents_citations: [].
+            Output should be valid JSON with the following structure: {EXAMPLE}. The answer need to be HTML formatted.
+            Question: {QUESTION}\n {ARTICLES}""".format(QUESTION=question, ARTICLES=_documents, EXAMPLE=json.dumps(example_json_output, indent=4)) 
     
     def question_answer_builder(self, question: str) -> RagAnswerPublic: 
         return RagAnswerPublic(

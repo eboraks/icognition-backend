@@ -360,8 +360,9 @@ class Document(SQLModel, table=True):
 class RagAnswerPublic(BaseModel):
     question: Optional[str] = None
     answer: Optional[str] = None
+    answer_in_html: Optional[bool] = False
     documents_used: Optional[List[str]] = None
-    citations: list[dict] = None
+    citations: Optional[list[dict]] = None
     llm_service_meta: Optional[dict] = None
     created_at: Optional[datetime] = None
 
