@@ -1,8 +1,7 @@
-import json
-from typing import Optional
-from pydantic import BaseModel, validator
 
-from app.models import Answer, Document, Entity, Question_Answer, RagAnswerPublic
+from pydantic import BaseModel
+
+from app.models import Answer, Document, Entity, Question_Answer, RagAnswerPublic, Verbatim, DocumentCitation
 # import app.transformers_util as transformers_util
 from app.gemini_client import GeminiClient
 
@@ -10,17 +9,6 @@ gemini_client = GeminiClient()
 
 
 
-## Models to be used in the Gemini API responses
-class Verbatim(BaseModel):
-    verbatim_text: str
-
-class DocumentCitation(BaseModel):
-    document_id: str
-    verbatims: list[Verbatim]
-
-    def get_verbatims(self) -> list[dict]:
-        """"Return the citations as a list of dictionaries for stroing as JSON in DB"""
-        return [c.__dict__ for c in self.verbatims]
 
 
 class FoundEntity(BaseModel):
@@ -235,11 +223,6 @@ class AskQuestionPrompt(BaseModel):
     documents_citations: list[DocumentCitation]
 
 
-    @validator("documents_citations")
-    def validate_documents_citations(cls, value):
-        if value is None:
-            return []
-        return value
     
     @classmethod
     def build_prompt(cls, docs: list[Document], question: str):
@@ -273,16 +256,16 @@ class AskQuestionPrompt(BaseModel):
             _documents += """Document_ID: {ID}, Document_Name: {TITLE}, Text: {CONTEXT}\n""".format(
                 ID=d.id, TITLE=d.title, CONTEXT=d.original_text, URL=d.url)
 
-        return """You are a researcher task with answering questions using articles. 
-            Compose your answer from as many articles as you need. Keep your answer short, concise and informative.  
+        return """You are a researcher task with answering questions using documents given. 
+            Compose your answer from as many documents that make sense. Keep your answer short, concise and informative.  
             Please ensure that your responses are socially unbiased and positive in nature.
             If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
             Use the meta_answer field to indicate if you were able to complete the task by writing "SUCCESS", or explanation why not.
             If you don't know the answer, please don't share false information.
-            Ensure you include the citations with the verbatim text of up to ten sentences/text you used to answer the question.
+            Make sure to include the documents_citations with the verbatim text of up to ten sentences/text you used to answer the question.
             If there are no documents citations, include an empty field list for example, documents_citations: [].
-            Output should be valid JSON with the following structure: {EXAMPLE}. The answer need to be HTML formatted.
-            Question: {QUESTION}\n {ARTICLES}""".format(QUESTION=question, ARTICLES=_documents, EXAMPLE=json.dumps(example_json_output, indent=4)) 
+            Output should be valid JSON. The answer need to be HTML formatted for better reading.
+            Question: {QUESTION}\n {DOCS}""".format(QUESTION=question, DOCS=_documents) 
     
     def question_answer_builder(self, question: str) -> RagAnswerPublic: 
         return RagAnswerPublic(

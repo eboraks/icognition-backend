@@ -512,7 +512,7 @@ async def get_document_questions_answers(id: str, response: Response):
 
     try:
         qas = getter.get_question_answer_by_document_id(id)
-        qas = [qa.to_display() for qa in qas]
+        qas = [qa.to_display(document_id=id) for qa in qas]
         response.status_code = status.HTTP_200_OK
         return qas
 

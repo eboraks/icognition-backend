@@ -281,7 +281,7 @@ class Document(SQLModel, table=True):
             status = self.status,
             updateAt = self.update_at,
             oneSentenceSummary = self.ai_short_summary,
-            summary_citations = self.ai_citations,
+            summary_citations = [DocumentCitation(document_id = str(self.id), verbatims = self.ai_citations)],
             is_about = self.ai_is_about,
             entities_and_concepts= [ent.to_public() for ent in self.entities] ,
             cosine_similarity=cosine_similarity,
@@ -353,6 +353,17 @@ class Document(SQLModel, table=True):
             return None
 
     
+## Models to be used in the Gemini API responses
+class Verbatim(BaseModel):
+    verbatim_text: str
+
+class DocumentCitation(BaseModel):
+    document_id: str
+    verbatims: list[Verbatim]
+
+    def get_verbatims(self) -> list[dict]:
+        """"Return the citations as a list of dictionaries for stroing as JSON in DB"""
+        return [c.__dict__ for c in self.verbatims]
 
 
 
@@ -362,7 +373,7 @@ class RagAnswerPublic(BaseModel):
     answer: Optional[str] = None
     answer_in_html: Optional[bool] = False
     documents_used: Optional[List[str]] = None
-    citations: Optional[list[dict]] = None
+    citations: Optional[list[DocumentCitation]] = None
     llm_service_meta: Optional[dict] = None
     created_at: Optional[datetime] = None
 
@@ -384,11 +395,11 @@ class Question_Answer(SQLModel, table=True):
     document: Document = Relationship(back_populates="qans")
 
 
-    def to_display(self) -> RagAnswerPublic:
+    def to_display(self, document_id = None) -> RagAnswerPublic:
         return RagAnswerPublic(
             question=self.question,
             answer=self.answer,
-            citations=self.citations,
+            citations= [DocumentCitation(document_id = document_id, verbatims=self.citations)],
             relevance_score=None,
             created_at=self.created_at
         )
@@ -664,7 +675,7 @@ class DocumentPublic(BaseModel):
     status: Optional[str] = None
     updateAt: Optional[datetime] = None
     oneSentenceSummary: Optional[str] = None
-    summary_citations: Optional[List[Dict]] = None
+    summary_citations: Optional[List[DocumentCitation]] = None
     is_about: Optional[str] = None
     tldr: Optional[List[str]] = None
     entities_and_concepts: Optional[List[EntityPublic]] = None
@@ -702,4 +713,5 @@ class SearchResults(BaseModel):
     documents_display: Optional[List[DocumentPublic]]
     rag_answer: Optional[RagAnswerPublic]
     failure: Optional[str] = None
+
 
