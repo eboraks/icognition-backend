@@ -5,7 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from typing import List, Annotated
+from typing import List
 from app.models import (
     User,
     Source,
@@ -26,6 +26,7 @@ from app.models import (
 )
 import app.study_project_handler as project_handler
 from app.source_doc_handler import SourceDocHandler
+import app.question_answer_handler as question_answer_handler
 import logging, sys, json, aiofiles
 import app.app_logic as app_logic
 import app.html_parser as html_parser
@@ -52,7 +53,7 @@ class Groups(Enum):
 
 
 
-logging = get_logger()
+logging = get_logger(__name__)
 
 app = FastAPI()
 origins = [
@@ -291,8 +292,8 @@ async def generate_document(source: Source):
 
 
     try:
-        if len(getter.get_question_answer_by_document_id(document.id)) == 0:
-            success = await app_logic.generate_doc_quesions_answers(user_id= source.user_id, doc = document)
+        if len(question_answer_handler.get_question_answer_by_document_id(document.id)) == 0:
+            success = await question_answer_handler.generate_doc_quesions_answers(user_id= source.user_id, doc = document)
             logging.info(f"Background task for generating questions and answers for: {document.id} completed. Result, {success}")
             ## For now, we are not generating embeddings for questions and answers
     except Exception as e:
@@ -328,8 +329,8 @@ async def regenerate_document(document: Document):
 
 
     try:
-        if len(getter.get_question_answer_by_document_id(document.id)) == 0:
-            success = await app_logic.generate_doc_quesions_answers(user_id= source.user_id, doc = document)
+        if len(question_answer_handler.get_question_answer_by_document_id(document.id)) == 0:
+            success = await question_answer_handler.generate_doc_quesions_answers(user_id= source.user_id, doc = document)
             logging.info(f"Background task for generating questions and answers for: {document.id} completed. Result, {success}")
             ## For now, we are not generating embeddings for questions and answers
     except Exception as e:
@@ -394,6 +395,7 @@ async def get_documents_plus_by_user_id(user_id: str):
     
     if documents is None:
         raise HTTPException(status_code=404, detail="Documents not found")
+        
 
     logging.info(f"Icognition return {len(documents)} documents_plus")
     return documents
@@ -511,8 +513,8 @@ async def get_document_summary(id: str, response: Response, force: str | None = 
 async def get_document_questions_answers(id: str, response: Response):
 
     try:
-        qas = getter.get_question_answer_by_document_id(id)
-        qas = [qa.to_display(document_id=id) for qa in qas]
+        qas = question_answer_handler.get_question_answer_by_document_id(id)
+        qas = [qa.to_display() for qa in qas]
         response.status_code = status.HTTP_200_OK
         return qas
 
@@ -864,7 +866,7 @@ async def ask_question(payload: QuestionPlayload):
             raise HTTPException(status_code=400, detail="Question is required")
         
         if payload.document_id is not None:
-            answer = await app_logic.custom_question(question=payload.question, document_id=payload.document_id)
+            answer = await question_answer_handler.custom_question(question=payload.question, document_id=payload.document_id, save=True)
             return answer
         elif payload.project_id is not None:
             answer = await project_handler.ask_question(project_id=payload.project_id, question=payload.question)
@@ -873,19 +875,38 @@ async def ask_question(payload: QuestionPlayload):
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Question answering failed")
-    
+
+@app.delete("/question_answer/{id}", tags=[Groups.ASK_QUESTION], status_code=204)
+async def delete_question_answer(id: str):
+    try:
+        await question_answer_handler.delete_question_answer(id)
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Question answer deletion failed")
+
+
 
 @app.post("/document/question", tags=[Groups.DOCUMENT.value], response_model=RagAnswerPublic, status_code=200)
 async def post_document_question(payload: QuestionPlayload):
     try:
         logging.info(f"Question endpoint called on {payload.document_id} with question {payload.question}")
-        answer = await app_logic.custom_question(question=payload.question, document_id=payload.document_id)
+        answer = await question_answer_handler.custom_question(question=payload.question, document_id=payload.document_id)
         logging.info(f"Question endpoint called on {payload.document_id} with answer {answer.answer}")
         return answer
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Answer generation failed")
     
+
+@app.get("/reformat_citiation", tags=[Groups.FOR_TESTING.value], status_code=200)
+async def reformat_citiation():
+    try:
+        await app_logic.update_question_answer_citation_format()
+        return {"Message": "Citation reformatted"}
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Citation reformatting failed")
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

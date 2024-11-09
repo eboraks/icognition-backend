@@ -1,7 +1,9 @@
 import time
 from app.db_connector import get_engine
 from app.models import Source, Document, Document_Entity_Link, DocumentPublic, Entity, Question_Answer, SubTopic, SubTopic_Document_Link, SubTopic_Embedding_Link, Embedding, SubTopic_Entity_Link, SubTopicDisplay, TreeNode
+from app.deleters import delete_document_and_associate_records
 from sqlalchemy.orm import Session, joinedload
+from Levenshtein import distance
 from sqlalchemy import (
     and_,
     func,
@@ -103,9 +105,12 @@ def get_documents_public_by_user_id(user_id: str, document_status = "Done") -> l
         ).unique().all()
 
     for doc in docs:
-        results.append(doc.to_public())
+        try:
+            results.append(doc.to_public())
+        except Exception as e:
+            logger.error(f"Error getting document {doc.id} public by user id: {e}")
+            
 
-    session.close()
     return results
 
 def get_document_by_url(url) -> Document:
@@ -160,6 +165,8 @@ def find_entity_by_name(entity_name: str) -> Entity:
     return entity
 
 
+
+
 async def get_similar_entity_by_name_vector(user_id: str, new_entity, name_vector, description_vector, name_threshold: float = 0.90, desc_threshold = 0.70 ) -> Entity:
 
 
@@ -198,20 +205,19 @@ async def get_similar_entity_by_name_vector(user_id: str, new_entity, name_vecto
             name_cosine_similarity = result[2]
             desc_cosine_similarity = result[3]
 
-            logger.info(f"Found similar entity '{entity_name}' with name similarity {name_cosine_similarity} and description similarity {desc_cosine_similarity}. New entity name is '{new_entity.name}'")   
+            leven_distance = distance(entity_name.lower(), new_entity.name.lower())
+
+            logger.info(f"Potential Found similar entity '{entity_name}' with name similarity {name_cosine_similarity} and description similarity {desc_cosine_similarity}. New entity name is '{new_entity.name}'. Levenstein distance is {leven_distance}")   
             if (entity_name.lower().find(new_entity.name.lower()) != -1 or new_entity.name.lower().find(entity_name.lower()) != -1):
                 ## Get the entity
+                logger.info(f"Found same entity '{entity_name}' with name similarity {name_cosine_similarity} and description similarity {desc_cosine_similarity}. New entity name is '{new_entity.name}'")
                 entity = session.scalar(select(Entity).where(Entity.id == entity_id))
                 return entity
             
         return None
 
     
-def get_question_answer_by_document_id(document_id: int) -> list[Question_Answer]:
-    session = Session(engine)
-    qas = session.scalars(select(Question_Answer).where(Question_Answer.document_id == document_id)).all()
-    session.close()
-    return qas
+
 
 
 

@@ -11,7 +11,7 @@ import urllib.parse
 
 from app.models import Document_Entity_Link, Entity, PagePayload
 from app.gemini_prompts_models import Verbatim
-
+from app.question_answer_handler import question_answer_handler
 
 user_id = 'yU13Hk9BwEQiREgh91YM6EFKR7M2'
 engine = get_engine()
@@ -139,9 +139,9 @@ async def test_summary_extration():
         assert ent.name != None
         assert ent.type != None
     
-    generate_qa = await app_logic.generate_doc_quesions_answers(user_id= user_id, doc = tdoc)
+    generate_qa = await question_answer_handler.generate_doc_quesions_answers(user_id= user_id, doc = tdoc)
 
-    qans = getter.get_question_answer_by_document_id(document_id=tdoc.id)
+    qans = question_answer_handler.get_question_answer_by_document_id(document_id=tdoc.id)
 
     assert generate_qa == True
     assert len(qans) > 0

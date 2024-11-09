@@ -1,12 +1,14 @@
 import datetime
-import sys
 import os, pickle
+import re
 import app.getters as getter
 from app import html_parser
 from app.db_connector import get_engine
 from app.source_doc_handler import SourceDocHandler
 from app.models import (
+    DocumentCitation,
     Entity_User_Link,
+    Question_Answer,
     Source,
     Entity,
     Page,
@@ -14,23 +16,20 @@ from app.models import (
     PagePayload,
     Embedding,
     Document_Entity_Link,
-    RagAnswerPublic,
 )
 from app.gemini_client import GeminiClient
 from sqlalchemy import (
     select,
-    delete,
     and_,
-    or_,
-    text,
     exc,
+    text,
 )
 from sqlalchemy.orm import Session
 
-from app.gemini_prompts_models import AskQuestionPrompt, EntitiesPrompt, FoundQuestionAnswer, IdentifyQuestionsAnswerPrompt, SummarizePrompt, TopicPrompt
+from app.gemini_prompts_models import EntitiesPrompt, SummarizePrompt, TopicPrompt
 
 from app.log import get_logger
-logging = get_logger()
+logging = get_logger(__name__)
 
 
 env_vers = os.environ
@@ -145,6 +144,24 @@ async def generate_entities_vectors():
         logging.info(f"Vector descriptions for {len(entities)} entities were generated")
 
 
+def search_entities_with_levenstein(user_id: str, entity_name: str, threshold: float = 0.8) -> list[Entity]:
+
+     ## If the entity name is <=5 characters, reduce the levenshtein distance to 1
+        if len(entity_name) <= 2:
+            distance = 0
+        elif len(entity_name) <= 5:
+            distance = 1
+        else:
+            distance = 2
+        
+        query = text("""
+            SELECT e.id
+                FROM entity e 
+                WHERE (levenshtein_less_equal(LOWER(e.name), LOWER(:search), :dist) <=:dist)
+                LIMIT 1
+            """).bindparams(search=entity_name, dist=distance)
+
+
 async def insert_entities(user_id, entities: list[Entity], doc: Document) -> list[Entity]:
 
     ## Make sure all previous created entities have vectors
@@ -154,6 +171,16 @@ async def insert_entities(user_id, entities: list[Entity], doc: Document) -> lis
     try:
         session_entities = []
         for entity in entities:
+            ## Use regex to make sure the entity is words only
+            if not re.match(r"^[A-Za-z\s]+$", entity.name):
+                logging.warning(f"Entity name '{entity.name}' contains non-word characters and will be skipped")
+                continue
+
+            if entity.type == "Other":
+                ## Skip entities that are of type 'Other' to save space and computation
+                logging.warning(f"Entity name '{entity.name}' is of type 'Other' and will be skipped")
+                continue
+
             ## Safe insert, return existing entity if it already exists or the new one
             session_entities.append(await insert_entity_safe(user_id=user_id, new_entity= entity, _document_id=doc.id))
         
@@ -293,7 +320,7 @@ async def generate_entities(user_id: str, doc: Document, testing: bool = False) 
         return await insert_entities(user_id, entities, doc)  
         
     except Exception as e:
-        logging.error(f"Error generating entities from LLM API {e}")
+        logging.error(f"generate_entities: Error generating entities from LLM API {e}")
         return None
 
 
@@ -329,35 +356,10 @@ async def generate_topics(user_id: str, doc: Document, testing: bool = False) ->
         return await insert_entities(user_id, entities, doc)  
         
     except Exception as e:
-        logging.error(f"Error generating entities from LLM API {e}")
+        logging.error(f"generate_topics: Error generating entities from LLM API {e}")
         return None
 
 
-async def generate_doc_quesions_answers(user_id: str, doc: Document, testing: bool = False) -> bool:
-
-    try:
-        logging.info(f"Generating questions and answers for document {doc.id}")
-        
-        ## If file exists, load it and return payload
-        prompt = IdentifyQuestionsAnswerPrompt.build_prompt(doc.original_text)
-        response = await genimi_client.generate_response(prompt, IdentifyQuestionsAnswerPrompt)
-        ## Using the entities builder to get the entities from the response    
-        qans = await response.questions_answers_builder(document_id = doc.id)
- 
-
-    except Exception as e:
-        logging.error(f"Error generating entities from LLM API {e}")
-
-
-    try:
-        with Session(engine) as session:
-            session.add_all(qans)
-            session.commit()
-        return True
-    except Exception as e:
-        logging.error(f"Error saving questions and answers {e}")
-
-        return False
 
 
 
@@ -503,15 +505,14 @@ async def update_entity_embedding(entity: Entity):
 
 
 
-
-
-async def custom_question(document_id: int, question: str) -> RagAnswerPublic:
-    """
-    This function generates a summary with verbatim sentences
-    """
-    doc = getter.get_document_by_id(document_id) 
-    
-    prompt = AskQuestionPrompt.build_prompt([doc], question)
-    generated_response = await genimi_client.generate_response(prompt, AskQuestionPrompt) 
-    
-    return generated_response.question_answer_builder(question=question)
+async def update_question_answer_citation_format():
+    with Session(engine) as session:
+        qas = session.scalars(select(Question_Answer).where(Question_Answer.citations != None)).all()
+        
+        for qa in qas:
+            dc = DocumentCitation(document_id = str(qa.document_id),  verbatims = qa.citations)
+            qa.citations = dc.to_dict()
+        
+        session.add_all(qas)
+        session.commit()
+        logging.info(f"Question and Answer citations format was updated")

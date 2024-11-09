@@ -1,3 +1,4 @@
+from enum import Enum
 import json, logging, sys
 import uuid as uuid_pkg
 from sqlmodel import SQLModel, Field, Float, JSON, Integer, Relationship, String
@@ -18,6 +19,14 @@ logging.basicConfig(
     level=logging.INFO,
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+
+class QuestionAnswerStatus(Enum):
+    PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED_SAVE = "COMPLETED_SAVE"
+    COMPLETED_NO_SAVE = "COMPLETED_NO_SAVE"
+    FAILED = "FAILED"
+
 
 class TreeNode(BaseModel):
     "Tree Node Model based on primevue Tree data filter"
@@ -357,18 +366,26 @@ class Document(SQLModel, table=True):
 class Verbatim(BaseModel):
     verbatim_text: str
 
-class DocumentCitation(BaseModel):
+class  DocumentCitation(BaseModel):
     document_id: str
     verbatims: list[Verbatim]
 
     def get_verbatims(self) -> list[dict]:
         """"Return the citations as a list of dictionaries for stroing as JSON in DB"""
         return [c.__dict__ for c in self.verbatims]
+    
+    def to_dict(self) -> dict:
+        return {
+            "document_id": self.document_id,
+            "verbatims": self.get_verbatims()
+        }
 
 
 
 
 class RagAnswerPublic(BaseModel):
+    uuid: Optional[uuid_pkg.UUID] = None
+    status: Optional[str] = None
     question: Optional[str] = None
     answer: Optional[str] = None
     answer_in_html: Optional[bool] = False
@@ -383,23 +400,27 @@ class Question_Answer(SQLModel, table=True):
     Represents a question answer with its ID, question, answer, and document ID.
     """
 
-    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: uuid_pkg.UUID = Field(default_factory=uuid_pkg.uuid4, primary_key=True)
     question: str = Field(default=None, nullable=True)
     answer: str = Field(default=None, nullable=True)
     citations: List[dict] = Field(default=[], sa_column=Column(JSON))
     question_vector: List[float] = Field(sa_column=Column(Vector(768)))
     created_at: datetime = Field(default_factory=datetime.now, nullable=True)
     created_by: str = Field(default="AI", nullable=True)
+    deleted: bool = Field(default=False, nullable=True)
 
     document_id: Optional[uuid_pkg.UUID] = Field(default=None, foreign_key="document.id")
     document: Document = Relationship(back_populates="qans")
 
 
-    def to_display(self, document_id = None) -> RagAnswerPublic:
+    def to_display(self) -> RagAnswerPublic:
+    
         return RagAnswerPublic(
+            uuid=self.uuid,
+            status=QuestionAnswerStatus.COMPLETED_SAVE.value,
             question=self.question,
             answer=self.answer,
-            citations= [DocumentCitation(document_id = document_id, verbatims=self.citations)],
+            citations= [DocumentCitation(**c) for c in self.citations],
             relevance_score=None,
             created_at=self.created_at
         )

@@ -111,3 +111,4 @@ python-multipart==0.0.9
 aiofiles==24.1.0
 markdown==3.7
 websockets==13.1
+levenshtein==0.26.1

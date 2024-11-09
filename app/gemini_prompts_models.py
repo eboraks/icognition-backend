@@ -1,7 +1,7 @@
 
 from pydantic import BaseModel
 
-from app.models import Answer, Document, Entity, Question_Answer, RagAnswerPublic, Verbatim, DocumentCitation
+from app.models import Document, Entity, Question_Answer, RagAnswerPublic, Verbatim, DocumentCitation, QuestionAnswerStatus
 # import app.transformers_util as transformers_util
 from app.gemini_client import GeminiClient
 
@@ -20,7 +20,7 @@ class FoundEntity(BaseModel):
 class FoundQuestionAnswer(BaseModel):
     question: str
     answer: str
-    citiation: list[Verbatim]
+    citiations: list[Verbatim]
 
 ## Prompts class
 class SummarizePrompt(BaseModel):
@@ -96,7 +96,7 @@ class EntitiesPrompt(BaseModel):
         """
         # Prompt for summarizing an article
         return """You are a researcher tasked with identifying the ten most relevent entities in an article context. Don't include irrelevant entities to the article main subject. 
-        Extract only entities of type 'People', 'Products', 'Companies/Organizations', 'Countries/Cities/locations', 'Events', 'Other'.
+        Extract only entities of type 'People', 'Products', 'Companies/Organizations', 'Countries/Cities/Places', 'Events', 'Technology' and 'Other'.
         In your response include the name, type, verbatim_text, and description of each entity. The verbatim_text is the text from the article that the entity was extracted from.
         Those fields are required for the response to be valid JSON. 
         Merge entities with name variation for example Voter and Voters. Deduplicates entities on name and do not include irrelevant entities.
@@ -195,19 +195,22 @@ class IdentifyQuestionsAnswerPrompt(BaseModel):
         Article: {BODY}""".format(BODY=body)
 
 
-    async def questions_answers_builder(self, document_id: int) -> list[Question_Answer]:
+    async def questions_answers_builder(self, document_id: str) -> list[Question_Answer]:
         """
         Build the SQLModel Answers from the LLM results
 
         Returns:
             list[Answer]: The populated answers.
         """
+        if type(document_id) != str:
+            document_id = str(document_id)
+
         qans = []
         for qa in self.questions_answers:
             answer = Question_Answer(document_id=document_id, 
                                      question=qa.question, 
                                      answer=qa.answer, 
-                                     citations=[c.__dict__ for c in qa.citiation], 
+                                     citations= [DocumentCitation(document_id=str(document_id), verbatims= [c.__dict__ for c in qa.citiations]).to_dict()], 
                                      question_vector= await gemini_client.generate_embedding(qa.question))  # transformers_util.generate_embeddings(qa.question)
             qans.append(answer)
 
@@ -236,20 +239,6 @@ class AskQuestionPrompt(BaseModel):
             list[dict]: The list of messages for the subtopic prompt.
         """
         
-        example_json_output = {
-            "answer": "Paris is the capital of France.",
-            "meta_answer": "SUCCESS",
-            "documents_citations": [
-                {
-                    "document_id": "fe32b94b-de9c-4aa4-87a3-c5cbbfaaab0b",
-                    "verbatims": [
-                        {
-                            "verbatim_text": "<p>Paris is the capital of France.</p>"
-                        }
-                    ]
-                }
-            ]
-        }
 
         _documents = "Documents:\n"
         for d in docs:
@@ -264,14 +253,22 @@ class AskQuestionPrompt(BaseModel):
             If you don't know the answer, please don't share false information.
             Make sure to include the documents_citations with the verbatim text of up to ten sentences/text you used to answer the question.
             If there are no documents citations, include an empty field list for example, documents_citations: [].
-            Output should be valid JSON. The answer need to be HTML formatted for better reading.
+            Format the field answer with HTML to make it more readable, for example, <p> for paragraphs, <h1> for headers, <ul> for lists, etc.
+            The response must be valid JSON.
             Question: {QUESTION}\n {DOCS}""".format(QUESTION=question, DOCS=_documents) 
     
-    def question_answer_builder(self, question: str) -> RagAnswerPublic: 
+    def question_answer_builder(self, question: str) -> RagAnswerPublic:
+        
+        if self.meta_answer == "SUCCESS":
+            temp_status = QuestionAnswerStatus.COMPLETED_NO_SAVE
+        else:
+            temp_status = QuestionAnswerStatus.FAILED
+        # DocumentCitation
         return RagAnswerPublic(
+            status=temp_status, 
             question=question, 
             answer=self.answer, 
-            citations=[dc.__dict__ for dc in self.documents_citations],
+            citations=self.documents_citations,
             documents_used=[dc.document_id for dc in self.documents_citations])
     
 
