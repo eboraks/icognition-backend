@@ -1,6 +1,6 @@
 from enum import Enum
 import aiofiles, os
-from fastapi import FastAPI, HTTPException, BackgroundTasks, status, Response, Form, UploadFile
+from fastapi import FastAPI, HTTPException, BackgroundTasks, status, Response, Form, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -64,7 +64,7 @@ app = FastAPI()
 origins = [
     "chrome-extension://oeilkphkfimekfadiflbljknbhfmppej",
     "http://localhost:8080",
-    "https://icognition.ai",
+    "https://icognition.ai"
 ]
 
 app.add_middleware(
@@ -75,6 +75,48 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["icognitoin-answer-type"],
 )
+
+
+# websocket setup
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: dict[str] = {}
+
+    async def connect(self, websocket: WebSocket, user_id: str):
+        await websocket.accept()
+        response = await websocket.receive_text()
+        print(response)
+        self.active_connections[user_id] = websocket
+
+
+    def disconnect(self, user_id: str):
+        self.active_connections[user_id] = {}
+
+    async def broadcast(self, message, user_id):
+        print(user_id)
+        print(message)
+        if user_id in self.active_connections:
+            target_websocket = self.active_connections[user_id]
+            await target_websocket.send_text(message)
+        else:
+            print("Could not find websocket for {user_id} in broadcast")
+
+
+manager = ConnectionManager()
+
+
+@app.websocket("/ws/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: str):
+    print({user_id})
+    await manager.connect(websocket, user_id)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            await manager.broadcast(data, user_id)
+    except WebSocketDisconnect:
+        print("disconnect called {user_id}")
+        manager.disconnect(websocket, user_id)
+        await manager.broadcast("Client disconnected.", user_id)
 
 
 @app.get("/")
@@ -164,15 +206,19 @@ async def create_bookmark(
             detail="Hmm, I wasn't able to find information on this page. I sent a message to our engineers",
         )
 
+    print(payload.user_id)
+    print(page.clean_url)
     ## Check in bookmark already exists
     try:
         _source = getter.get_source_by_url(payload.user_id, page.clean_url)
+        print(_source)
         if _source is not None:
             _doc = getter.get_document_by_source_id(_source.id)
-            
+            print(_doc)
             if _doc.status == "Done":
                 logging.info(f"Bookmark already exists for {page.clean_url}")
                 response.status_code = status.HTTP_201_CREATED
+                manager.broadcast("PULLDOCUMENTS", payload.user_id)
                 return _source
             elif _doc.status == "Processing":
                 logging.info(f"Document is still processing for {page.clean_url}")
