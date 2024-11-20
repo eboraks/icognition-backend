@@ -26,3 +26,18 @@ This Alembic migration was created following the example in https://testdriven.i
 1. Make changes to models.py file
 2. Run `alembic -c migrations-local/alembic.ini revision --autogenerate -m "{MESSAGE}"`
 3. Apply changes `alembic -c migrations-local/alembic.ini upgrade head`
+
+
+## Export local database and restore
+Export data from local
+`pg_dump -U app -h localhost -d icog_dev_db -a -F c -v -f main_dump_2024_11_18.dump`
+
+Import data into local
+`pg_restore -U app -h localhost -p 5432 -d icog_dev_db main_dump_2024_11_18.dump`
+
+Import data into GCP using proxy      
+`pg_restore -U psql-icog-dev -h localhost -p 3306 -d icog_dev_db main_dump_2024_11_18.dump`
+
+
+
+

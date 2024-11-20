@@ -50,3 +50,15 @@ Case22145
 1. gcloud auth application-default login
 2. gcsfuse icog-dev-bucket-01 icog-dev-bucket-01
 3. fusermount -u icog-dev-bucket-01
+
+
+
+## Step to start with fresh database and import data
+1. Stop and delete the dockers containers
+2. Create new DB container using `docker-compose up -d` 
+3. Delete all the files in teh migration-local/versions (`rm -rf migrations-local/versions/*`). Don't delete the versions directory
+3. Run alembic migration: 
+3.1 Run `alembic -c migrations-local/alembic.ini revision --autogenerate -m "{MESSAGE}"`
+3.2 Apply changes `alembic -c migrations-local/alembic.ini upgrade head`
+4. Download the dump from https://drive.google.com/file/d/1a7J0oUFOy9Sdg4D3OJ4fzBGTAq7s2IzP/view?usp=drive_link
+5. Import the dump: `pg_restore -U app -h localhost -p 5432 -d icog_dev_db main_dump_2024_11_18.dump`
