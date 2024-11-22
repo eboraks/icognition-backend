@@ -1,6 +1,6 @@
 from enum import Enum
 import time
-from fastapi import FastAPI, HTTPException, BackgroundTasks, status, Response, UploadFile, Request, WebSocket
+from fastapi import FastAPI, HTTPException, BackgroundTasks, status, Response, UploadFile, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -59,7 +59,7 @@ app = FastAPI()
 origins = [
     "chrome-extension://oeilkphkfimekfadiflbljknbhfmppej",
     "http://localhost:8080",
-    "https://icognition.ai",
+    "https://icognition.ai"
 ]
 
 app.add_middleware(
@@ -70,6 +70,42 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["icognitoin-answer-type"],
 )
+
+
+# websocket setup
+active_connections: dict[str] = {}
+class ConnectionManager:
+    async def connect(self, websocket: WebSocket, user_id: str):
+        await websocket.accept()
+        response = await websocket.receive_text()
+        print('Received Websocket Message from Frontend: ' + response + ' From: ' + user_id)
+        active_connections[user_id] = websocket
+
+
+    def disconnect(self, user_id: str):
+        active_connections[user_id] = {}
+
+    async def broadcast(self, message, user_id):
+        if user_id in active_connections:
+            target_websocket = active_connections[user_id]
+            await target_websocket.send_text(message)
+        else:
+            print("Could not find websocket for {user_id} in broadcast")
+
+
+manager = ConnectionManager()
+
+
+@app.websocket("/ws/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: str):
+    await manager.connect(websocket, user_id)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            await manager.broadcast(data, user_id)
+    except WebSocketDisconnect:
+        manager.disconnect(websocket, user_id)
+        await manager.broadcast("Client disconnected.", user_id)
 
 
 @app.get("/")
@@ -207,10 +243,10 @@ async def create_bookmark(
         _source = getter.get_source_by_url(payload.user_id, page.clean_url)
         if _source is not None:
             _doc = getter.get_document_by_source_id(_source.id)
-            
             if _doc.status == "Done":
                 logging.info(f"Bookmark already exists for {page.clean_url}")
                 response.status_code = status.HTTP_201_CREATED
+                await manager.broadcast("PULLDOCUMENTS", payload.user_id)
                 return _source
             elif _doc.status == "Processing":
                 logging.info(f"Document is still processing for {page.clean_url}")
@@ -227,6 +263,7 @@ async def create_bookmark(
             logging.info(f"Source created for {_source.url}")
             background_tasks.add_task(generate_document, source = _source)
             response.status_code = status.HTTP_201_CREATED
+            await manager.broadcast("PULLDOCUMENTS", payload.user_id)
             return _source
     except Exception as e:
         logging.error(e)
