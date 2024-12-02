@@ -11,7 +11,7 @@ from sqlalchemy import (
     text,
 )
 from app.log import get_logger
-logger = get_logger()
+logger = get_logger(__name__)
 
 import app.html_parser as html_parser
 engine = get_engine()

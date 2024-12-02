@@ -159,7 +159,7 @@ class Entity_User_Link(SQLModel, table=True):
 
 
 class EntityPublic(BaseModel):
-    id: Optional[uuid_pkg.UUID]
+    id: Optional[str]
     name: Optional[str]
     verbatim_text: Optional[str] = None
     description: Optional[str] = None
@@ -203,7 +203,7 @@ class Entity(SQLModel, table=True):
 
     def to_public(self) -> "EntityPublic":
         return EntityPublic(
-            id=self.id,
+            id=str(self.id),
             name=self.name, 
             description=self.description,
             source=self.source,
@@ -279,7 +279,7 @@ class Document(SQLModel, table=True):
             html_elements=self.html_elements
 
         return DocumentPublic(
-            id = self.id,
+            id = str(self.id),
             title = self.title,
             url = self.url,
             source_type = 'web' if self.source_type is None else self.source_type,
@@ -384,7 +384,7 @@ class  DocumentCitation(BaseModel):
 
 
 class RagAnswerPublic(BaseModel):
-    uuid: Optional[uuid_pkg.UUID] = None
+    uuid: Optional[str] = None
     status: Optional[str] = None
     question: Optional[str] = None
     answer: Optional[str] = None
@@ -413,10 +413,10 @@ class Question_Answer(SQLModel, table=True):
     document: Document = Relationship(back_populates="qans")
 
 
-    def to_display(self) -> RagAnswerPublic:
+    def to_public(self) -> RagAnswerPublic:
     
         return RagAnswerPublic(
-            uuid=self.uuid,
+            uuid=str(self.uuid),
             status=QuestionAnswerStatus.COMPLETED_SAVE.value,
             question=self.question,
             answer=self.answer,
@@ -686,7 +686,7 @@ Why I used Pydantic instead of SQLModel? Good question, in my testing I was not 
  
 
 class DocumentPublic(BaseModel):
-    id: Optional[uuid_pkg.UUID]
+    id: Optional[str]
     title: Optional[str]
     source_type: Optional[str] = None
     url: Optional[str] = None

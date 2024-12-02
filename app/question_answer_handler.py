@@ -19,7 +19,7 @@ engine = get_engine()
 genimi_client = GeminiClient()
 
 
-async def generate_doc_quesions_answers(user_id: str, doc: Document, testing: bool = False) -> bool:
+async def generate_doc_quesions_answers(user_id: str, doc: Document, testing: bool = False) -> list[Question_Answer]:
 
     try:
         logging.info(f"Generating questions and answers for document {doc.id}")
@@ -39,11 +39,9 @@ async def generate_doc_quesions_answers(user_id: str, doc: Document, testing: bo
         with Session(engine) as session:
             session.add_all(qans)
             session.commit()
-        return True
+        return qans
     except Exception as e:
         logging.error(f"Error saving questions and answers {e}")
-
-        return False
 
 
 
@@ -65,7 +63,7 @@ async def insert_question_answer_for_doc(document_id: str, RagAnswerPublic: RagA
         session.add(qa)
         session.commit()
         session.refresh(qa)
-        return qa.to_display()
+        return qa.to_public()
 
 async def custom_question(document_id: str, question: str, save: bool) -> RagAnswerPublic:
     """
@@ -97,4 +95,12 @@ def get_question_answer_by_document_id(document_id: int) -> list[Question_Answer
     session = Session(engine)
     qas = session.scalars(select(Question_Answer).where(and_(Question_Answer.document_id == document_id, Question_Answer.deleted == False))).all()
     session.close()
+    return qas
+
+def get_question_answer_public_by_document_id(document_id: int) -> list[RagAnswerPublic]:
+    
+    with Session(engine) as session:
+        qas = session.scalars(select(Question_Answer).where(and_(Question_Answer.document_id == document_id, Question_Answer.deleted == False))).all()
+        qas = [qa.to_public() for qa in qas]
+
     return qas
