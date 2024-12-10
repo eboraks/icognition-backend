@@ -144,22 +144,7 @@ async def generate_entities_vectors():
         logging.info(f"Vector descriptions for {len(entities)} entities were generated")
 
 
-def search_entities_with_levenstein(user_id: str, entity_name: str, threshold: float = 0.8) -> list[Entity]:
 
-     ## If the entity name is <=5 characters, reduce the levenshtein distance to 1
-        if len(entity_name) <= 2:
-            distance = 0
-        elif len(entity_name) <= 5:
-            distance = 1
-        else:
-            distance = 2
-        
-        query = text("""
-            SELECT e.id
-                FROM entity e 
-                WHERE (levenshtein_less_equal(LOWER(e.name), LOWER(:search), :dist) <=:dist)
-                LIMIT 1
-            """).bindparams(search=entity_name, dist=distance)
 
 
 async def insert_entities(user_id, entities: list[Entity], doc: Document) -> list[Entity]:
@@ -197,10 +182,7 @@ async def insert_entities(user_id, entities: list[Entity], doc: Document) -> lis
 
 async def insert_entity_safe(user_id: str, new_entity: Entity, _document_id: str) -> Entity: 
     
-
-    name_needle_vector = await genimi_client.generate_embedding(new_entity.name)
-    description_needle_vector = await genimi_client.generate_embedding(new_entity.name + ': ' + new_entity.description)
-    matched_entity = await getter.get_similar_entity_by_name_vector(user_id=user_id, new_entity = new_entity, name_vector=name_needle_vector, description_vector=description_needle_vector)
+    matched_entity = await getter.get_similar_entity_by_name_vector(user_id=user_id, new_entity = new_entity)
     
     with Session(engine) as session:
         
@@ -214,8 +196,8 @@ async def insert_entity_safe(user_id: str, new_entity: Entity, _document_id: str
             session.commit()
             return new_entity
         else:
-            new_entity.name_vector = name_needle_vector
-            new_entity.description_vector = description_needle_vector
+            new_entity.name_vector = await genimi_client.generate_embedding(new_entity.name)
+            new_entity.description_vector = await genimi_client.generate_embedding(new_entity.name + ': ' + new_entity.description)
             session.add(new_entity)
             session.commit()
             session.refresh(new_entity)
@@ -314,6 +296,10 @@ async def generate_entities(user_id: str, doc: Document, testing: bool = False) 
         # Using the entities builder to get the entities from the response    
         entities = response.entities_builder()
 
+        if len(entities) == 0:
+            logging.info(f"No entities were found for document {doc.id}")
+            return []
+
         ## Iterate over entities check if verbatim_text is in the original_text, if not, remove it
         entities = [entity for entity in entities if doc.original_text.find(entity.verbatim_text) != -1] 
 
@@ -349,6 +335,10 @@ async def generate_topics(user_id: str, doc: Document, testing: bool = False) ->
 
         # Using the entities builder to get the topics (also entities) from the response
         entities = response.entities_builder()
+
+        if len(entities) == 0:
+            logging.info(f"No topic were found for document {doc.id}")
+            return []
 
         ## Iterate over entities check if verbatim_text is in the original_text, if not, remove it
         entities = [entity for entity in entities if doc.original_text.find(entity.verbatim_text) != -1]

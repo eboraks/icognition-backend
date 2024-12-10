@@ -2,16 +2,14 @@ import os
 import google.generativeai as genai
 from pydantic import BaseModel
 from pydantic_core import ValidationError
-from app.log import get_logger
+import logging
 
-
-
-logging = get_logger()
-
-""" GEMINI_FLASH_MODEL": "models/gemini-1.5-flash-001",
-"GEMINI_PRO_MODEL": "models/gemini-1.5-pro-001",
-        "GEMINI_EMBEDDING_MODEL": "models/text-embedding-004"""
-
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s [%(filename)s:%(lineno)d]',
+    datefmt='%H:%M:%S'
+)
+logger = logging.getLogger("gemini_client")
 
 class GeminiClient:
 
@@ -42,7 +40,7 @@ class GeminiClient:
         
 
         client = genai.GenerativeModel(gemini_model)
-        logging.debug(f"Generating response for prompt_model: {prompt_model}")
+        logging.info(f"Generating response for prompt_model: {prompt_model}")
         response = await client.generate_content_async(prompt, 
                 generation_config={"response_mime_type": "application/json",  "response_schema": prompt_model})
         
@@ -89,7 +87,11 @@ class GeminiClient:
             logging.error(f"Error generating embeddings: {e}")
             result = None
 
-        return result['embedding']
+        try: 
+            return result['embedding']
+        except Exception as e:
+            logging.error(f"Error extracting embeddings: {e}")
+            return None
     
     @classmethod
     def pro_model_name(cls):

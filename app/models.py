@@ -392,7 +392,7 @@ class RagAnswerPublic(BaseModel):
     documents_used: Optional[List[str]] = None
     citations: Optional[list[DocumentCitation]] = None
     llm_service_meta: Optional[dict] = None
-    created_at: Optional[datetime] = None
+    created_at: Optional[str] = None
 
 
 class Question_Answer(SQLModel, table=True):
@@ -422,7 +422,7 @@ class Question_Answer(SQLModel, table=True):
             answer=self.answer,
             citations= [DocumentCitation(**c) for c in self.citations],
             relevance_score=None,
-            created_at=self.created_at
+            created_at=str(self.created_at)
         )
 
 

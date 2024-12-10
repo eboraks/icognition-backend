@@ -4,6 +4,7 @@ from app.models import Source, Document, Document_Entity_Link, DocumentPublic, E
 from app.deleters import delete_document_and_associate_records
 from sqlalchemy.orm import Session, joinedload
 from Levenshtein import distance
+from app.gemini_client import GeminiClient
 from sqlalchemy import (
     and_,
     func,
@@ -16,6 +17,8 @@ logger = get_logger(__name__)
 import app.html_parser as html_parser
 engine = get_engine()
 
+
+genimi_client = GeminiClient()
 
 def get_documents_count() -> int:
     with Session(engine) as session:
@@ -164,15 +167,55 @@ def find_entity_by_name(entity_name: str) -> Entity:
         entity = session.scalar(select(Entity).where(Entity.name.ilike(f"{entity_name}")))
     return entity
 
+def find_similar_entities(entity_name: str) -> Entity:
+
+
+     ## If the entity name is <=5 characters, reduce the levenshtein distance to 1
+    if len(entity_name) <= 5:
+        distance = 0
+    elif len(entity_name) <= 8:
+        distance = 1
+    elif len(entity_name) <= 15:
+        distance = 2
+    else:
+        distance = 3
+        
+    query = text("""
+        SELECT e.id, e.name, levenshtein(LOWER(e.name), LOWER(:needle)) AS distance
+        FROM entity e 
+        WHERE (levenshtein_less_equal(LOWER(e.name), LOWER(:needle), :dist) <= :dist)
+        ORDER BY levenshtein_less_equal(LOWER(e.name), LOWER(:needle), :dist) ASC
+        LIMIT 1
+        """).bindparams(needle=entity_name, dist=distance)
+
+
+    with Session(engine) as session:
+        result = session.execute(query).first()
+
+        if result:
+            logger.info(f"Found similar entity to '{entity_name}' with name {result[1]} and distance {result[2]}")
+            entity_id = result[0] if result else None
+            entity = session.scalar(select(Entity).where(Entity.id == entity_id))
+            return entity
+        return None
 
 
 
-async def get_similar_entity_by_name_vector(user_id: str, new_entity, name_vector, description_vector, name_threshold: float = 0.90, desc_threshold = 0.70 ) -> Entity:
+
+async def get_similar_entity_by_name_vector(user_id: str, new_entity,  name_threshold: float = 0.90, desc_threshold = 0.70 ) -> Entity:
 
 
     exist = find_entity_by_name(new_entity.name)
     if exist:
         return exist
+    
+
+    exit = find_similar_entities(new_entity.name)
+    if exit:
+        return exit
+    
+    name_vector = await genimi_client.generate_embedding(new_entity.name)
+    description_vector = await genimi_client.generate_embedding(new_entity.name + ': ' + new_entity.description)
     
     ## Get similar entity by name and description vector
     with Session(engine) as session:

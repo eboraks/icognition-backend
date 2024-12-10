@@ -1,3 +1,4 @@
+import asyncio
 from enum import Enum
 import time
 from fastapi import FastAPI, HTTPException, BackgroundTasks, status, Response, UploadFile, Request, WebSocket, WebSocketDisconnect
@@ -35,8 +36,6 @@ import app.deleters as deleters
 from app.search_handler import SearchHandler
 from app.prompt_models import RAGPrompt
 from app.user_handler import UserHandler
-#from app.log import get_logger
-import logging
 
 search = SearchHandler()
 
@@ -56,13 +55,15 @@ class Groups(Enum):
 
 app = FastAPI()
 
+# Configure logging
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s [%(filename)s:%(lineno)d]',
+    datefmt='%H:%M:%S'
+)
+logger = logging.getLogger("icognition")
 
-#logger = get_logger("mainapp")
-
-logger = logging.getLogger(__name__)
-
-# Configure the logger to output to stdout
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s [%(lineno)d] [%(filename)s]')
 
 origins = [
     "chrome-extension://oeilkphkfimekfadiflbljknbhfmppej",
@@ -90,9 +91,15 @@ class ConnectionManager:
         logger.info(f"Websocket connected for {session_id}")
 
 
-    def disconnect(self, session_id: str):
-        active_connections[session_id] = {}
-
+    async def disconnect(self, session_id: str, message: str):
+        try:
+            websocket = active_connections[session_id]
+            await websocket.close(code=1000, reason=message)
+            del active_connections[session_id]
+            logger.info(f"Websocket disconnected for {session_id}")
+        except Exception as e:
+            logger.error(f"Error in disconnecting websocket {session_id}. Error: {str(e)}")
+            pass
 
     async def broadcast(self, message, user_id):
 
@@ -109,18 +116,31 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+async def broadcastProgress(doc_id: str, user_id: str, increment: int):
+    try:
+        
+        await manager.broadcast(json.dumps({"user_id": user_id, "document_id": doc_id, "type": "progress_percentage", "data": increment}), user_id)
+
+    except Exception as e:
+        logger.error(f"Error in broadcastProgress: {str(e)}")
+        pass
+
+
 
 @app.websocket("/ws/{user_id}/{source}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str, source: str):
     session_id = f"{source}:{user_id}"
     await manager.connect(websocket, session_id)
+    logger.info(f"Websocket endpoint message for {session_id}")
     try:
         while True:
             data = await websocket.receive_text()
+            logger.info(f"Websocket received message {data}")
             await manager.broadcast(message=data, user_id=user_id)
-    except WebSocketDisconnect:
-        manager.disconnect(websocket, session_id)
-        await manager.broadcast("Client disconnected.", user_id)
+    except WebSocketDisconnect as e:
+        logger.error(f"Websocket Exception for {session_id}. Error: {str(e)}")
+        await manager.disconnect(session_id, "Error in websocket connection")
+        #await manager.broadcast("Client disconnected.", user_id)
 
 
 @app.get("/")
@@ -279,18 +299,22 @@ async def create_bookmark(
                 return _source
             elif _doc.status in ["Failure", "Pending"]:
                 logger.info(f"Document status is {_doc.status} attempting to regenerated document for {page.clean_url}")
-                background_tasks.add_task(generate_document_summary, source = _source)
-                background_tasks.add_task(generate_document_entities, source = _source)
-                background_tasks.add_task(generate_document_qanda, source = _source)
+                
+                
+                background_tasks.add_task(run_async_task_sync(generate_document_summary, _source))
+                background_tasks.add_task(run_async_task_sync(generate_document_qanda, _source))
+                background_tasks.add_task(run_async_task_sync(generate_document_entities, _source))
                 response.status_code = status.HTTP_201_CREATED
                 return _source
         else:
             logger.info(f"Page object created for {page.clean_url}")
             _source = app_logic.create_source_bookmark(page, payload.user_id)
             logger.info(f"Source created for {_source.url}")
-            background_tasks.add_task(generate_document_summary, source = _source)
-            background_tasks.add_task(generate_document_entities, source = _source)
-            background_tasks.add_task(generate_document_qanda, source = _source)
+
+            background_tasks.add_task(run_async_task_sync(generate_document_summary, _source))
+            background_tasks.add_task(run_async_task_sync(generate_document_qanda, _source))
+            background_tasks.add_task(run_async_task_sync(generate_document_entities, _source))
+            
             response.status_code = status.HTTP_201_CREATED
             message = {"user_id": payload.user_id, "document_id": str(_source.document_id), "type": "document_in_progress", "data": None}
             await manager.broadcast(json.dumps(message), payload.user_id)
@@ -359,21 +383,38 @@ async def broadcast_document_update(message: str, user_id: str, document_id: str
 ## Background task to generate summaries from LLM
 async def generate_document_summary(source: Source):
     document = getter.get_document_by_id(source.document_id)
+    doc_id = str(document.id)
 
     try: 
         if document.status in ["Pending", "Done", "Failure"]:
             logger.info(f"Background task for document ID: {source.document_id}")
+
+            await broadcastProgress(doc_id, source.user_id, 15)
             document = await app_logic.generate_summary(doc= document)
+            await broadcastProgress(doc_id, source.user_id, 30)
 
             ## Broadcast the document to the user
             doc = getter.get_document_public_by_id(document.id) 
             message = {"user_id": source.user_id, "document_id": doc.id, "type": "document", "data": doc.model_dump_json()}
-            await manager.broadcast(json.dumps(message), source.user_id)    
+            await manager.broadcast(json.dumps(message), source.user_id)
+            await broadcastProgress(doc_id, source.user_id, 10)
 
             await app_logic.generate_embeddings_for_docs(documents = [document], user_id = source.user_id)
             logger.info(f"Background task for document ID: {source.document_id} completed")
     except Exception as e:
         logger.error("generate_document summary", e)
+
+def run_async_task_sync(func, *args, **kwargs):
+
+    logger.info(f"Running async task for {func.__name__} with args: {args} and kwargs: {kwargs}")
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        loop.create_task(func(*args, **kwargs))
+    except Exception as e:
+        logger.error(f"Error running async task {func.__name__}: {str(e)}")
 
 
 
@@ -390,23 +431,33 @@ async def generate_document_entities(source: Source):
     except Exception as e:
         logger.error("Generate document entities ", e)
 
+def generate_document_entities_sync(source: Source):
+    asyncio.run(generate_document_entities(source))
 
 
 async def generate_document_qanda(source: Source):
     document = getter.get_document_by_id(source.document_id)
-
+    doc_id = str(document.id)
     try:
         if len(question_answer_handler.get_question_answer_by_document_id(document.id)) == 0:
+            await broadcastProgress(doc_id, source.user_id, 5)
+
             await question_answer_handler.generate_doc_quesions_answers(user_id= source.user_id, doc = document)
             qas = question_answer_handler.get_question_answer_public_by_document_id(document.id)
-            qas = [qa.model_dump_json() for qa in qas]
-            
+            qas = [qa.model_dump() for qa in qas]
+            await broadcastProgress(doc_id, source.user_id, 20)
+
             logger.info(f"Background task for generating questions and answers for: {document.id} completed. Number of questions and answers, {len(qas)}")
-            message = {"user_id": source.user_id, "document_id": str(document.id), "data": qas, "type": "doc_qanda"}
+            message = {"user_id": source.user_id, "document_id": str(document.id), "data": json.dumps(qas), "type": "doc_qanda"}
             await manager.broadcast(json.dumps(message), source.user_id)
+            await broadcastProgress(doc_id, source.user_id, 20)
+
             ## For now, we are not generating embeddings for questions and answers
     except Exception as e:
         logger.error("Generate document question and answers ", e)
+
+def generate_document_qanda_sync(source: Source):
+    asyncio.run(generate_document_qanda(source))
 
 
 ## Background task to regenerate summaries from LLM if not already exists
