@@ -426,9 +426,9 @@ class Question_Answer(SQLModel, table=True):
         )
 
 
-class Study_Project(SQLModel, table=True):
+class Study_Collection(SQLModel, table=True):
     """
-    Represents a study project with its ID, name, description, and user ID.
+    Represents a study collection with its ID, name, description, and user ID.
     """
 
     id: uuid_pkg.UUID = Field(default_factory=uuid_pkg.uuid4, primary_key=True)
@@ -438,8 +438,8 @@ class Study_Project(SQLModel, table=True):
     user_id: str = Field(nullable=False)
     status: str = Field(default="PENDING", nullable=True)
     objective_tasks_vector: List[float] = Field(sa_column=Column(Vector(768)))
-    # documents: list["Document"] = Relationship(back_populates="study_project", link_model="Study_Project_Document_Link", sa_relationship_kwargs={"cascade": "delete"})
-    tasks: list["Study_Task"] = Relationship(back_populates="study_project")
+    # documents: list["Document"] = Relationship(back_populates="study_collection", link_model="Study_Collection_Document_Link", sa_relationship_kwargs={"cascade": "delete"})
+    tasks: list["Study_Task"] = Relationship(back_populates="study_collection")
     created_at: datetime = Field(default_factory=datetime.now, nullable=True)
 
     async def generate_vector(self, geminiClient: GeminiClient):
@@ -449,8 +449,8 @@ class Study_Project(SQLModel, table=True):
         
         self.objective_tasks_vector = await geminiClient.generate_embedding(content= text, title= self.name)
 
-    def to_public(self) -> "StudyProjectPublic":
-        return StudyProjectPublic(
+    def to_public(self) -> "StudyCollectionPublic":
+        return StudyCollectionPublic(
             id=self.id,
             name=self.name,
             objective=self.objective,
@@ -471,8 +471,8 @@ class Study_Task(SQLModel, table=True):
     ai_explanation: str = Field(default=None, nullable=True)
     status: str = Field(default="PENDING", nullable=True)
     description_vector: List[float] = Field(sa_column=Column(Vector(768)))
-    project_id: Optional[uuid_pkg.UUID] = Field(default=None, foreign_key="study_project.id")
-    study_project: Study_Project = Relationship(back_populates="tasks")
+    collection_id: Optional[uuid_pkg.UUID] = Field(default=None, foreign_key="study_collection.id")
+    study_collection: Study_Collection = Relationship(back_populates="tasks")
     citations: list["Study_Task_Citation"] = Relationship(back_populates="task")
     created_at: datetime = Field(default_factory=datetime.now, nullable=True)
     updated_at: datetime = Field(default_factory=datetime.now, nullable=True)
@@ -486,7 +486,7 @@ class Study_Task(SQLModel, table=True):
             description=self.description,
             ai_explanation=self.ai_explanation,
             status=self.status,
-            project_id=self.project_id,
+            collection_id=self.collection_id,
             created_at=self.created_at,
             citations=[citation.to_public() for citation in self.citations]
         )
@@ -518,23 +518,23 @@ class Study_Task_Citation(SQLModel, table=True):
             created_at=self.created_at
         )  
 
-class Study_Project_Document_Link(SQLModel, table=True):
+class Study_Collection_Document_Link(SQLModel, table=True):
     """
-    Represents a link between a study project and a document.
+    Represents a link between a study collection and a document.
     """
-    project_id: uuid_pkg.UUID = Field(default=None, foreign_key="study_project.id", primary_key=True)
+    collection_id: uuid_pkg.UUID = Field(default=None, foreign_key="study_collection.id", primary_key=True)
     document_id: uuid_pkg.UUID = Field(default=None, foreign_key="document.id", primary_key=True)
 
 ### 
 ###  The following classes are used to define the FastAPI payload and response models
 ###
 
-class ProjectDocumentlinkPayload(SQLModel, table=False):
+class CollectionDocumentlinkPayload(SQLModel, table=False):
     """
-    Represents the payload for linking a project and a document.
+    Represents the payload for linking a collection and a document.
     """
 
-    project_id: Optional[uuid_pkg.UUID] = Field(default=None)
+    collection_id: Optional[uuid_pkg.UUID] = Field(default=None)
     document_id: Optional[uuid_pkg.UUID] = Field(default=None)
 
 
@@ -559,7 +559,7 @@ class StudyTaskPublic(SQLModel, table=False):
     description: Optional[str] = Field(default=None)
     ai_explanation: Optional[str] = Field(default=None)
     status: Optional[str] = Field(default=None)
-    project_id: Optional[uuid_pkg.UUID] = Field(default=None)
+    collection_id: Optional[uuid_pkg.UUID] = Field(default=None)
     citations: Optional[list[StudyTaskCitationPublic]] = Field(default=[])
     created_at: Optional[datetime] = Field(default=None)
 
@@ -584,7 +584,7 @@ class QuestionPlayload(SQLModel, table=False):
     """
     question: Optional[str] = Field(default=None)
     document_id: Optional[uuid_pkg.UUID] = Field(default=None)
-    project_id: Optional[uuid_pkg.UUID] = Field(default=None)
+    collection_id: Optional[uuid_pkg.UUID] = Field(default=None)
 
 
 class HTTPError(SQLModel, table=False):
@@ -602,7 +602,7 @@ class SearchPayload(SQLModel, table=False):
 
     query: Optional[str] = Field(default=None)
     user_id: Optional[str] = Field(default=None)
-    project_id: Optional[uuid_pkg.UUID] = Field(default=None)
+    collection_id: Optional[uuid_pkg.UUID] = Field(default=None)
 
 
 class Page(SQLModel, table=False):
@@ -707,9 +707,9 @@ class DocumentPublic(BaseModel):
     html_elements: Optional[List[dict]] = None
 
 
-class StudyProjectPublic(SQLModel, table=False):
+class StudyCollectionPublic(SQLModel, table=False):
     """
-    Represents a study project with its ID, name, description, and user ID.
+    Represents a study collection with its ID, name, description, and user ID.
     """
 
     id: Optional[uuid_pkg.UUID] = Field(default=None)

@@ -1,5 +1,5 @@
 import pytest
-import app.study_project_handler as handler
+import study_collection_handler as handler
 import app.getters as getter
 from app.gemini_client import GeminiClient
 from app.app_logic import update_document 
@@ -7,23 +7,23 @@ from app.app_logic import update_document
 genimi_client = GeminiClient()
 
 @pytest.mark.asyncio
-async def test_create_study_project():
+async def test_create_study_collection():
 
-    existing_projects = handler.get_study_projects_public("test_project")
+    existing_collections = handler.get_study_collections_public("test_collection")
 
-    for project in existing_projects:
-        handler.delete_study_project(project.id)
+    for collection in existing_collections:
+        handler.delete_study_collection(collection.id)
 
-    project = await handler.create_study_project(name="test_project", objective="test_objective", user_id = "test_user", tasks_descriptions=["task1", "task2"])
+    collection = await handler.create_study_collection(name="test_collection", objective="test_objective", user_id = "test_user", tasks_descriptions=["task1", "task2"])
 
-    project = handler.get_study_project_by_id(project.id)
-    assert project.name == "test_project"
-    assert project.objective == "test_objective"
-    assert project.user_id == "test_user"
-    assert len(project.tasks) > 0
+    collection = handler.get_study_collection_by_id(collection.id)
+    assert collection.name == "test_collection"
+    assert collection.objective == "test_objective"
+    assert collection.user_id == "test_user"
+    assert len(collection.tasks) > 0
 
 @pytest.mark.asyncio
-async def test_create_frech_revolution_project(): 
+async def test_create_frech_revolution_collection(): 
 
     name = "French Revolution Highschool paper"
     
@@ -46,14 +46,14 @@ async def test_create_frech_revolution_project():
         "How do historians interpret and debate the significance of the French Revolution today?"
     ]
 
-    project = await handler.create_study_project(name=name, objective=objective, user_id = "HqAXhad3jrUWmPibnMf1xZczNIq2", tasks_descriptions=tasks)
+    collection = await handler.create_study_collection(name=name, objective=objective, user_id = "HqAXhad3jrUWmPibnMf1xZczNIq2", tasks_descriptions=tasks)
 
-    project = handler.get_study_project_by_id(project.id)
+    collection = handler.get_study_collection_by_id(collection.id)
 
-    assert project.name == name
-    assert project.objective == objective
-    assert project.user_id == "HqAXhad3jrUWmPibnMf1xZczNIq2"
-    assert len(project.tasks) == len(tasks)
+    assert collection.name == name
+    assert collection.objective == objective
+    assert collection.user_id == "HqAXhad3jrUWmPibnMf1xZczNIq2"
+    assert len(collection.tasks) == len(tasks)
 
 
 @pytest.mark.asyncio
@@ -75,8 +75,8 @@ async def test_generate_docs_vector():
 async def test_find_related_docs():
     
     name = "French Revolution Highschool paper"
-    project = handler.get_study_project_by_name(name)
-    documents = handler.find_related_docs(project.id)
+    collection = handler.get_study_collection_by_name(name)
+    documents = handler.find_related_docs(collection.id)
     assert len(documents) > 3
 
     for doc in documents:
@@ -86,10 +86,10 @@ async def test_find_related_docs():
 async def test_generate_task_response():
     
     name = "French Revolution Highschool paper"
-    project = handler.get_study_project_by_name(name)
+    collection = handler.get_study_collection_by_name(name)
     
-    documents = handler.find_related_docs(project.id)
+    documents = handler.find_related_docs(collection.id)
     
-    for task in project.tasks:
+    for task in collection.tasks:
         response = await handler.generate_task_response(task, documents)
         assert response is not None

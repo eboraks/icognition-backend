@@ -1,7 +1,7 @@
 from scipy.spatial import distance
 from app.log import get_logger
 from datetime import datetime
-from app.models import DocumentPublic, Entity, RagAnswerPublic, SearchResults, Study_Project, Study_Project_Document_Link, Study_Task, Document, Study_Task_Citation, StudyProjectPublic, StudyTaskPublic, StudyTaskCitationPublic, TreeNode
+from app.models import DocumentPublic, Entity, RagAnswerPublic, SearchResults, Study_Collection, Study_Collection_Document_Link, Study_Task, Document, Study_Task_Citation, StudyCollectionPublic, StudyTaskPublic, StudyTaskCitationPublic, TreeNode
 from app.db_connector import get_engine
 from app.gemini_client import GeminiClient
 from app.gemini_prompts_models import AskQuestionPrompt
@@ -21,27 +21,27 @@ logging = get_logger()
 engine = get_engine()
 genimi_client = GeminiClient()
 
-async def create_study_project(name: str, objective: str, user_id: str, tasks: list[str] = []) -> StudyProjectPublic:
+async def create_study_collection(name: str, objective: str, user_id: str, tasks: list[str] = []) -> StudyCollectionPublic:
     with Session(engine) as session:
-        project = Study_Project(objective=objective, name=name, user_id=user_id)
+        collection = Study_Collection(objective=objective, name=name, user_id=user_id)
         
         for task in tasks:
             task = Study_Task(description=task.description)
             session.add(task)
-            project.tasks.append(task)
+            collection.tasks.append(task)
 
-        await project.generate_vector(genimi_client)
-        session.add(project)
+        await collection.generate_vector(genimi_client)
+        session.add(collection)
         session.commit()
-        session.refresh(project)
+        session.refresh(collection)
     
-        return project.to_public()
+        return collection.to_public()
 
-def get_study_project_by_id(project_id: str) -> StudyProjectPublic:
+def get_study_collection_by_id(collection_id: str) -> StudyCollectionPublic:
     with Session(engine) as session:
-        project = session.scalar(select(Study_Project).options(joinedload(Study_Project.tasks)).where(Study_Project.id == project_id))
-        related_docs = find_related_docs_public(project_id)
-        public = project.to_public()
+        collection = session.scalar(select(Study_Collection).options(joinedload(Study_Collection.tasks)).where(Study_Collection.id == collection_id))
+        related_docs = find_related_docs_public(collection_id)
+        public = collection.to_public()
         public.related_docs = related_docs
 
         for task in public.tasks:
@@ -53,20 +53,20 @@ def get_study_project_by_id(project_id: str) -> StudyProjectPublic:
         return public
 
 
-def get_study_project_by_name(project_name: str) -> StudyProjectPublic:
+def get_study_collection_by_name(collection_name: str) -> StudyCollectionPublic:
 
     with Session(engine) as session:
-        project = session.scalar(select(Study_Project).options(joinedload(Study_Project.tasks)).where(Study_Project.name == project_name))
-        return project.to_public()
+        collection = session.scalar(select(Study_Collection).options(joinedload(Study_Collection.tasks)).where(Study_Collection.name == collection_name))
+        return collection.to_public()
 
-async def update_study_project(project: StudyProjectPublic) -> StudyProjectPublic:
+async def update_study_collection(collection: StudyCollectionPublic) -> StudyCollectionPublic:
     with Session(engine) as session:
-        proj_exist = session.scalar(select(Study_Project).where(Study_Project.id == project.id))
+        proj_exist = session.scalar(select(Study_Collection).where(Study_Collection.id == collection.id))
         if proj_exist:
-            if proj_exist.name != project.name:
-                proj_exist.name = project.name
-            if proj_exist.objective != project.objective:
-                proj_exist.objective = project.objective
+            if proj_exist.name != collection.name:
+                proj_exist.name = collection.name
+            if proj_exist.objective != collection.objective:
+                proj_exist.objective = collection.objective
             
             await proj_exist.generate_vector(genimi_client)
         session.commit()
@@ -76,23 +76,23 @@ async def update_study_project(project: StudyProjectPublic) -> StudyProjectPubli
 
 
     
-def get_study_projects_public(user_id: str) -> list[StudyProjectPublic]:
+def get_study_collections_public(user_id: str) -> list[StudyCollectionPublic]:
 
     with Session(engine) as session:
-        projects = session.scalars(select(Study_Project).where(Study_Project.user_id == user_id)).all()
-        return [project.to_public() for project in projects]
+        collections = session.scalars(select(Study_Collection).where(Study_Collection.user_id == user_id)).all()
+        return [collection.to_public() for collection in collections]
 
-def delete_study_project(project_id: int) -> bool:
+def delete_study_collection(collection_id: int) -> bool:
     
     with Session(engine) as session:
-        project = session.scalar(select(Study_Project).where(Study_Project.id == project_id))
+        collection = session.scalar(select(Study_Collection).where(Study_Collection.id == collection_id))
 
-        if project is None:
+        if collection is None:
             return False
         
-        tasks = session.scalars(select(Study_Task).where(Study_Task.project_id == project_id)).all()
-        if project:
-            session.delete(project)
+        tasks = session.scalars(select(Study_Task).where(Study_Task.collection_id == collection_id)).all()
+        if collection:
+            session.delete(collection)
     
             for task in tasks:
                 session.execute(delete(Study_Task_Citation).where(Study_Task_Citation.task_id == task.id))
@@ -101,11 +101,11 @@ def delete_study_project(project_id: int) -> bool:
         session.commit()
         return True
 
-def create_study_task(project_id: int, description: str) -> StudyTaskPublic:
+def create_study_task(collection_id: int, description: str) -> StudyTaskPublic:
     with Session(engine) as session:
-        project = session.scalar(select(Study_Project).where(Study_Project.id == project_id))
-        if project:
-            task = Study_Task(description=description, project_id=project_id)
+        collection = session.scalar(select(Study_Collection).where(Study_Collection.id == collection_id))
+        if collection:
+            task = Study_Task(description=description, collection_id=collection_id)
             session.add(task)
             session.commit()
         return task.to_public()
@@ -115,9 +115,9 @@ def get_study_task(task_id: int) -> StudyTaskPublic:
         task = session.scalar(select(Study_Task).options(joinedload(Study_Task.citations)).where(Study_Task.id == task_id))
         return task.to_public()
 
-def get_study_tasks(project_id: str) -> list[StudyTaskPublic]:
+def get_study_tasks(collection_id: str) -> list[StudyTaskPublic]:
     with Session(engine) as session:
-        tasks = session.scalars(select(Study_Task).options(joinedload(Study_Task.citations)).where(Study_Task.project_id == project_id)).unique().all()
+        tasks = session.scalars(select(Study_Task).options(joinedload(Study_Task.citations)).where(Study_Task.collection_id == collection_id)).unique().all()
         return [task.to_public() for task in tasks]
 
 async def update_study_task(task: StudyTaskPublic) -> StudyTaskPublic:
@@ -137,9 +137,9 @@ async def update_study_task(task: StudyTaskPublic) -> StudyTaskPublic:
         return None
     
     try:
-        docs = find_related_docs(_task.project_id)
+        docs = find_related_docs(_task.collection_id)
         if len(docs) == 0:
-            logging.warning(f"No related documents found for project_id: {_task.project_id}")
+            logging.warning(f"No related documents found for collection_id: {_task.collection_id}")
             with Session(engine) as session:
                 session.add(_task)
                 return _task.to_public()
@@ -151,11 +151,11 @@ async def update_study_task(task: StudyTaskPublic) -> StudyTaskPublic:
 
 
 
-def find_related_docs(project_id: str, cosine_distance_freshhold: float = 0.30) -> list[Document]:
+def find_related_docs(collection_id: str, cosine_distance_freshhold: float = 0.30) -> list[Document]:
     with Session(engine) as session:
-        stmt = select(Study_Project.objective_tasks_vector).where(Study_Project.id == project_id).scalar_subquery()
+        stmt = select(Study_Collection.objective_tasks_vector).where(Study_Collection.id == collection_id).scalar_subquery()
         docs = session.scalars(select(Document).filter(Document.ai_summary_vector.cosine_distance(stmt) <= cosine_distance_freshhold)).all()
-        linked_docs = session.scalars(select(Document).join(Study_Project_Document_Link).where(Study_Project_Document_Link.project_id == project_id)).all()
+        linked_docs = session.scalars(select(Document).join(Study_Collection_Document_Link).where(Study_Collection_Document_Link.collection_id == collection_id)).all()
         
         ## Add the linked docs to the list of docs if they are not already in the list
         docs_ids = [doc.id for doc in docs]
@@ -165,27 +165,27 @@ def find_related_docs(project_id: str, cosine_distance_freshhold: float = 0.30) 
 
         return docs
 
-def find_related_docs_public(project_id: str, cosine_distance_freshhold: float = 0.30) -> list[DocumentPublic]:
-    """This is a wrapper function that returns the list of related documents for a project in a public format
+def find_related_docs_public(collection_id: str, cosine_distance_freshhold: float = 0.30) -> list[DocumentPublic]:
+    """This is a wrapper function that returns the list of related documents for a collection in a public format
 
     Args:
-        project_id (str): _description_
+        collection_id (str): _description_
         cosine_distance_freshhold (float, optional): _description_. Defaults to 0.30.
 
     Returns:
         list[DocumentPublic]: _description_
     """
-    docs = find_related_docs(project_id, cosine_distance_freshhold)
-    docs_public = calculate_cosine_dist_project_docs(project_id, docs)
+    docs = find_related_docs(collection_id, cosine_distance_freshhold)
+    docs_public = calculate_cosine_dist_collection_docs(collection_id, docs)
     return docs_public
 
 
-def get_list_of_candidates_docs(project_id: str, max_docs = 10) -> list[DocumentPublic]:
+def get_list_of_candidates_docs(collection_id: str, max_docs = 10) -> list[DocumentPublic]:
 
-    related_docs = find_related_docs(project_id)
+    related_docs = find_related_docs(collection_id)
     related_docs_ids = [doc.id for doc in related_docs]
 
-    ## Get the list of all documents that are not linked to the project
+    ## Get the list of all documents that are not linked to the collection
     with Session(engine) as session:
         
         stmt = select(Document).filter(Document.id.notin_(related_docs_ids)).limit(max_docs)
@@ -195,18 +195,18 @@ def get_list_of_candidates_docs(project_id: str, max_docs = 10) -> list[Document
     return docs_public
 
 
-def calculate_cosine_dist_project_docs(project_id: str, documents: list[Document]) -> list[DocumentPublic]:
+def calculate_cosine_dist_collection_docs(collection_id: str, documents: list[Document]) -> list[DocumentPublic]:
     
 
     with Session(engine) as session:
-        project_vector = session.scalar(select(Study_Project.objective_tasks_vector).where(Study_Project.id == project_id))
+        collection_vector = session.scalar(select(Study_Collection.objective_tasks_vector).where(Study_Collection.id == collection_id))
 
         docs_public = []
         for doc in documents:
             session.add(doc)
             doc_vector = doc.ai_summary_vector
             try:
-                dis = 1 - distance.cosine(project_vector, doc_vector)
+                dis = 1 - distance.cosine(collection_vector, doc_vector)
             except Exception as e:
                 logging.error(f"Error while calculating cosine distance. Error: {e}")
                 dis = 0.0
@@ -217,53 +217,53 @@ def calculate_cosine_dist_project_docs(project_id: str, documents: list[Document
 
 
 
-async def ask_question(project_id: str, question: str) -> RagAnswerPublic:
+async def ask_question(collection_id: str, question: str) -> RagAnswerPublic:
 
     searcher = SearchHandler()
-    docs = find_related_docs(project_id)
+    docs = find_related_docs(collection_id)
 
     answer = await searcher.rag_workflow(docs=docs, search_term=question)
     return answer
 
 
-def get_project(project_id: str) -> Study_Project:
+def get_collection(collection_id: str) -> Study_Collection:
     with Session(engine) as session:
-        project = session.scalar(select(Study_Project).options(joinedload(Study_Project.tasks)).where(Study_Project.id == project_id))
-        return project
+        collection = session.scalar(select(Study_Collection).options(joinedload(Study_Collection.tasks)).where(Study_Collection.id == collection_id))
+        return collection
 
 
-async def generate_project_response(project_id: str, listener: any = None) -> None:
+async def generate_collection_response(collection_id: str, listener: any = None) -> None:
     
-    project = get_project(project_id)
+    collection = get_collection(collection_id)
     
-    documents = find_related_docs(project_id)
+    documents = find_related_docs(collection_id)
     if len(documents) > 0:
 
-        logging.info(f"Generate project's tasks responses. Found {len(documents)} related documents for project_id: {project_id}")
-        for task in project.tasks:
+        logging.info(f"Generate collection's tasks responses. Found {len(documents)} related documents for collection_id: {collection_id}")
+        for task in collection.tasks:
             await generate_task_response(task, documents)
-            logging.info(f"Generated response for project_id: {project_id} task_id: {task.id}")
+            logging.info(f"Generated response for collection_id: {collection_id} task_id: {task.id}")
 
 
         if listener:
-            listener(f"Generated responses completed for project_id: {project_id}") 
-        logging.info(f"Generated responses completed for project_id: {project_id}")
+            listener(f"Generated responses completed for collection_id: {collection_id}") 
+        logging.info(f"Generated responses completed for collection_id: {collection_id}")
     else:
-        logging.info(f"No related documents found for project_id: {project_id}")
+        logging.info(f"No related documents found for collection_id: {collection_id}")
 
-        ## Update the project status to NO_DOCS_FOUND
+        ## Update the collection status to NO_DOCS_FOUND
         with Session(engine) as session:
-            project = session.scalar(select(Study_Project).where(Study_Project.id == project_id))
-            project.status = "NO_DOCS_FOUND"
+            collection = session.scalar(select(Study_Collection).where(Study_Collection.id == collection_id))
+            collection.status = "NO_DOCS_FOUND"
             session.commit()
 
         if listener:
-            listener(f"No related documents found for project_id: {project_id}")
+            listener(f"No related documents found for collection_id: {collection_id}")
 
 
-def get_project_entities(project_id: int) -> list[TreeNode]:
+def get_collection_entities(collection_id: int) -> list[TreeNode]:
     
-    document = find_related_docs(project_id)
+    document = find_related_docs(collection_id)
     
     if len(document) == 0:
         return []
@@ -301,7 +301,7 @@ def get_project_entities(project_id: int) -> list[TreeNode]:
                 if len(top_node.children) > 0:
                     results.append(top_node)
     except Exception as e:
-        logging.error(f"Error while getting project entities. Error: {e}")
+        logging.error(f"Error while getting collection entities. Error: {e}")
     finally:                
         return results
 
@@ -359,34 +359,34 @@ def delete_task_citations(task_id: int) -> int:
         session.commit()
         return results.rowcount
     
-def link_project_document(project_id: str, document_id: str) -> Study_Project_Document_Link:
+def link_collection_document(collection_id: str, document_id: str) -> Study_Collection_Document_Link:
 
     with Session(engine) as session:
-        session.merge(Study_Project_Document_Link(project_id=project_id, document_id=document_id))
+        session.merge(Study_Collection_Document_Link(collection_id=collection_id, document_id=document_id))
         session.commit()
-        link = session.scalar(select(Study_Project_Document_Link)\
-                              .where(Study_Project_Document_Link.project_id == project_id and Study_Project_Document_Link.document_id == document_id))
+        link = session.scalar(select(Study_Collection_Document_Link)\
+                              .where(Study_Collection_Document_Link.collection_id == collection_id and Study_Collection_Document_Link.document_id == document_id))
 
     return link
 
-def unlink_project_document(project_id: str, document_id: str) -> bool:
+def unlink_collection_document(collection_id: str, document_id: str) -> bool:
 
     with Session(engine) as session:
-        session.execute(delete(Study_Project_Document_Link)\
-                        .where(Study_Project_Document_Link.project_id == project_id and Study_Project_Document_Link.document_id == document_id))
+        session.execute(delete(Study_Collection_Document_Link)\
+                        .where(Study_Collection_Document_Link.collection_id == collection_id and Study_Collection_Document_Link.document_id == document_id))
         session.commit()
 
     return True
 
 
-def get_project_status(project_id: str) -> str:
+def get_collection_status(collection_id: str) -> str:
     
     with Session(engine) as session:
-        project = session.scalar(select(Study_Project).options(joinedload(Study_Project.tasks)).where(Study_Project.id == project_id))
+        collection = session.scalar(select(Study_Collection).options(joinedload(Study_Collection.tasks)).where(Study_Collection.id == collection_id))
 
-    number_of_tasks = len(project.tasks)
-    number_of_tasks_with_response = len([task for task in project.tasks if task.status == "SUCCESS"])
-    number_of_tasks_with_ai_response = len([task for task in project.tasks if task.ai_explanation is not None])
+    number_of_tasks = len(collection.tasks)
+    number_of_tasks_with_response = len([task for task in collection.tasks if task.status == "SUCCESS"])
+    number_of_tasks_with_ai_response = len([task for task in collection.tasks if task.ai_explanation is not None])
 
     return {"total_tasks": number_of_tasks, 
             "tasks_with_response": number_of_tasks_with_response, 
