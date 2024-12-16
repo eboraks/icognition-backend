@@ -18,14 +18,14 @@ from app.models import (
     QuestionPlayload,
     SearchPayload,
     SearchResults,
-    Study_Project_Document_Link,
+    Study_Collection_Document_Link,
     SubTopicDisplay,
     TreeNode,
-    StudyProjectPublic,
+    StudyCollectionPublic,
     StudyTaskPublic,
-    ProjectDocumentlinkPayload
+    CollectionDocumentlinkPayload
 )
-import app.study_project_handler as project_handler
+import app.study_collection_handler as collection_handler
 from app.source_doc_handler import SourceDocHandler
 import app.question_answer_handler as question_answer_handler
 import json, aiofiles
@@ -46,7 +46,7 @@ class Groups(Enum):
     DOCUMENT = "Document and Related Data (Entities, Questions...)"
     USER_DATA = "User Data (Documents, Entities, Topics)"
     ACTION = "Initiate Action"
-    STUDY_PROJECT = "Study Project"
+    STUDY_COLLECTION = "Study Collection"
     ICONS = "Icons"
     FOR_TESTING = "For Testing"
     ASK_QUESTION = "Ask Question"
@@ -803,70 +803,70 @@ async def get_icon(icon_name: str):
     return FileResponse(f"./app/assets/images/{icon_name}.png")
 
 
-## Study project endpoints
-@app.get("/study_projects/{user_id}", tags=[Groups.STUDY_PROJECT], response_model=List[StudyProjectPublic], status_code=200)
-async def get_study_projects(user_id: str):
+## Study collection endpoints
+@app.get("/study_collections/{user_id}", tags=[Groups.STUDY_COLLECTION], response_model=List[StudyCollectionPublic], status_code=200)
+async def get_study_collections(user_id: str):
     try:
-        projects = project_handler.get_study_projects_public(user_id)
-        return projects
+        collections = collection_handler.get_study_collections_public(user_id)
+        return collections
     except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=404, detail="Study projects not found")
+        logging.error(e)
+        raise HTTPException(status_code=404, detail="Study collections not found")
 
-@app.get("/user_study_projects/{user_id}", tags=[Groups.STUDY_PROJECT], response_model=List[StudyProjectPublic], status_code=200)
-async def get_user_study_projects(user_id: str):
+@app.get("/user_study_collections/{user_id}", tags=[Groups.STUDY_COLLECTION], response_model=List[StudyCollectionPublic], status_code=200)
+async def get_user_study_collections(user_id: str):
     try:
-        projects = project_handler.get_study_projects_public(user_id)
-        return projects
+        collections = collection_handler.get_study_collections_public(user_id)
+        return collections
     except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=404, detail="Study projects not found")
+        logging.error(e)
+        raise HTTPException(status_code=404, detail="Study collections not found")
     
 
-@app.post("/study_project", tags=[Groups.STUDY_PROJECT], response_model=StudyProjectPublic, status_code=200)
-async def create_study_project(project: StudyProjectPublic, background_tasks: BackgroundTasks):
+@app.post("/study_collection", tags=[Groups.STUDY_COLLECTION], response_model=StudyCollectionPublic, status_code=200)
+async def create_study_collection(collection: StudyCollectionPublic, background_tasks: BackgroundTasks):
     try:
-        project = await project_handler.create_study_project(name=project.name, 
-                objective=project.objective, 
-                user_id = project.user_id, 
-                tasks=project.tasks)
+        collection = await collection_handler.create_study_collection(name=collection.name, 
+                objective=collection.objective, 
+                user_id = collection.user_id, 
+                tasks=collection.tasks)
         
-        background_tasks.add_task(project_handler.generate_project_response, project_id = project.id, listener = event_listener)
-        return project
+        background_tasks.add_task(collection_handler.generate_collection_response, collection_id = collection.id, listener = event_listener)
+        return collection
     except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=500, detail="Study project creation failed")
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Study collection creation failed")
 
-@app.put("/study_project", tags=[Groups.STUDY_PROJECT], response_model=StudyProjectPublic, status_code=200)
-async def update_study_project(project: StudyProjectPublic):
+@app.put("/study_collection", tags=[Groups.STUDY_COLLECTION], response_model=StudyCollectionPublic, status_code=200)
+async def update_study_collection(collection: StudyCollectionPublic):
     try:
-        project = await project_handler.update_study_project(project)
-        return project
+        collection = await collection_handler.update_study_collection(collection)
+        return collection
     except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=500, detail="Study project update failed")
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Study collection update failed")
 
-@app.get("/generate_study_project/{project_id}", tags=[Groups.STUDY_PROJECT], response_model=StudyProjectPublic, status_code=200)
-async def create_study_project(project_id: str, background_tasks: BackgroundTasks):
+@app.get("/generate_study_collection/{collection_id}", tags=[Groups.STUDY_COLLECTION], response_model=StudyCollectionPublic, status_code=200)
+async def create_study_collection(collection_id: str, background_tasks: BackgroundTasks):
     try:
-        project = project_handler.get_study_project_by_id(project_id)
+        collection = collection_handler.get_study_collection_by_id(collection_id)
 
-        if project is None:
-            raise HTTPException(status_code=404, detail="Study project not found")
+        if collection is None:
+            raise HTTPException(status_code=404, detail="Study collection not found")
         
-        background_tasks.add_task(project_handler.generate_project_response, project_id = project.id, listener = event_listener)
-        return project
+        background_tasks.add_task(collection_handler.generate_collection_response, collection_id = collection.id, listener = event_listener)
+        return collection
     except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=500, detail="Study project creation failed")
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Study collection creation failed")
 
 def event_listener(event):
     logger.info(f"Event listner called with event: {event}")
 
-@app.get("/study_project/{id}/related_documents", tags=[Groups.STUDY_PROJECT], response_model=List[DocumentPublic], status_code=200)
-async def get_project_related_documents(id: str):
+@app.get("/study_collection/{id}/related_documents", tags=[Groups.STUDY_COLLECTION], response_model=List[DocumentPublic], status_code=200)
+async def get_collection_related_documents(id: str):
     try:
-        documents = project_handler.find_related_docs_public(id)
+        documents = collection_handler.find_related_docs_public(id)
         return documents
     except Exception as e:
         logger.error(e)
@@ -874,47 +874,47 @@ async def get_project_related_documents(id: str):
     
 
 
-@app.get("/study_project/{id}", tags=[Groups.STUDY_PROJECT], response_model=StudyProjectPublic, status_code=200)
-async def get_study_project(id: str):
+@app.get("/study_collection/{id}", tags=[Groups.STUDY_COLLECTION], response_model=StudyCollectionPublic, status_code=200)
+async def get_study_collection(id: str):
     try:
-        project = project_handler.get_study_project_by_id(id)
-        return project
+        collection = collection_handler.get_study_collection_by_id(id)
+        return collection
     except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=404, detail=f"Study project not found. Error {str(e)}")
+        logging.error(e)
+        raise HTTPException(status_code=404, detail=f"Study collection not found. Error {str(e)}")
     
 
-@app.get("/study_project/{id}/candidate_documents", tags=[Groups.STUDY_PROJECT], response_model=List[DocumentPublic], status_code=200)
-async def get_project_candidate_documents(id: str):
+@app.get("/study_collection/{id}/candidate_documents", tags=[Groups.STUDY_COLLECTION], response_model=List[DocumentPublic], status_code=200)
+async def get_collection_candidate_documents(id: str):
     try:
-        documents = project_handler.get_list_of_candidates_docs(id)
+        documents = collection_handler.get_list_of_candidates_docs(id)
         return documents
     except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=404, detail="Documents not found")
 
-@app.delete("/study_project/{id}", tags=[Groups.STUDY_PROJECT], status_code=204)
-async def delete_study_project(id: str):
+@app.delete("/study_collection/{id}", tags=[Groups.STUDY_COLLECTION], status_code=204)
+async def delete_study_collection(id: str):
     try:
-        project_handler.delete_study_project(id)
+        collection_handler.delete_study_collection(id)
     except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=500, detail="Study project deletion failed")
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Study collection deletion failed")
     
 
-@app.post("/study_task", tags=[Groups.STUDY_PROJECT], response_model=StudyTaskPublic, status_code=200)
+@app.post("/study_task", tags=[Groups.STUDY_COLLECTION], response_model=StudyTaskPublic, status_code=200)
 async def create_study_task(task: StudyTaskPublic):
     try:
-        task = project_handler.create_study_task(project_id=task.project_id, description=task.description)
+        task = collection_handler.create_study_task(collection_id=task.collection_id, description=task.description)
         return task
     except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=500, detail="Study task creation failed")
     
-@app.put("/study_task", tags=[Groups.STUDY_PROJECT], response_model=StudyTaskPublic, status_code=200)
+@app.put("/study_task", tags=[Groups.STUDY_COLLECTION], response_model=StudyTaskPublic, status_code=200)
 async def update_study_task(task: StudyTaskPublic):
     try:
-        task = await project_handler.update_study_task(task)
+        task = await collection_handler.update_study_task(task)
 
         if task is None:
             raise HTTPException(status_code=404, detail="Error updating study task")
@@ -924,52 +924,52 @@ async def update_study_task(task: StudyTaskPublic):
         logger.error(e)
         raise HTTPException(status_code=500, detail="Study task update failed")
     
-@app.post("/study_tasks", tags=[Groups.STUDY_PROJECT], response_model=List[StudyTaskPublic], status_code=200)
+@app.post("/study_tasks", tags=[Groups.STUDY_COLLECTION], response_model=List[StudyTaskPublic], status_code=200)
 async def create_study_tasks(tasks: List[StudyTaskPublic]):
     try:
         created_tasks = []
         for task in tasks:
-            created_tasks.append(project_handler.create_study_task(project_id=task.project_id, description=task.description))
+            created_tasks.append(collection_handler.create_study_task(collection_id=task.collection_id, description=task.description))
         return created_tasks
     except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=500, detail="Study task creation failed")
     
-@app.get("/study_project_tasks/{project_id}", tags=[Groups.STUDY_PROJECT], response_model=List[StudyTaskPublic], status_code=200)
-async def get_study_tasks(project_id: str):
+@app.get("/study_collection_tasks/{collection_id}", tags=[Groups.STUDY_COLLECTION], response_model=List[StudyTaskPublic], status_code=200)
+async def get_study_tasks(collection_id: str):
     try:
-        tasks = project_handler.get_study_tasks(project_id)
+        tasks = collection_handler.get_study_tasks(collection_id)
         return tasks
     except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=404, detail="Study tasks not found")
     
 
-@app.get("/study_project/{project_id}/related_entities", tags=[Groups.STUDY_PROJECT], response_model=List[TreeNode], status_code=200)
-async def get_project_entities(project_id: str):
+@app.get("/study_collection/{collection_id}/related_entities", tags=[Groups.STUDY_COLLECTION], response_model=List[TreeNode], status_code=200)
+async def get_collection_entities(collection_id: str):
     try:
-        entities = project_handler.get_project_entities(project_id)
+        entities = collection_handler.get_collection_entities(collection_id)
         return entities
     except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=404, detail="Entities not found")
     
 
-@app.post("/project_document_link", tags=[Groups.STUDY_PROJECT], status_code=200, response_model= Study_Project_Document_Link)
-async def link_project_document(payload: ProjectDocumentlinkPayload):
+@app.post("/collection_document_link", tags=[Groups.STUDY_COLLECTION], status_code=200, response_model= Study_Collection_Document_Link)
+async def link_collection_document(payload: CollectionDocumentlinkPayload):
     try:
-        return project_handler.link_project_document(project_id = payload.project_id, document_id = payload.document_id)
+        return collection_handler.link_collection_document(collection_id = payload.collection_id, document_id = payload.document_id)
     except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=500, detail="Project document link failed")
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Collection document link failed")
     
-@app.post("/project_document_unlink", tags=[Groups.STUDY_PROJECT], status_code=200)
-async def unlink_project_document(payload: ProjectDocumentlinkPayload):
+@app.post("/collection_document_unlink", tags=[Groups.STUDY_COLLECTION], status_code=200)
+async def unlink_collection_document(payload: CollectionDocumentlinkPayload):
     try:
-        return project_handler.unlink_project_document(project_id = payload.project_id, document_id = payload.document_id)
+        return collection_handler.unlink_collection_document(collection_id = payload.collection_id, document_id = payload.document_id)
     except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=500, detail="Project document unlink failed")
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Collection document unlink failed")
     
 
 async def listen_doc_generation(event: dict):
@@ -1019,16 +1019,16 @@ async def create_source_upload_file(background_tasks: BackgroundTasks, file: Upl
 @app.post("/ask_question", tags=[Groups.ASK_QUESTION], response_model=RagAnswerPublic, status_code=200)
 async def ask_question(payload: QuestionPlayload):
     try:
-        if payload.project_id is None and payload.document_id is None:
-            raise HTTPException(status_code=400, detail="Project ID or Document ID are required")
+        if payload.collection_id is None and payload.document_id is None:
+            raise HTTPException(status_code=400, detail="Collection ID or Document ID are required")
         if payload.question is None:
             raise HTTPException(status_code=400, detail="Question is required")
         
         if payload.document_id is not None:
             answer = await question_answer_handler.custom_question(question=payload.question, document_id=payload.document_id, save=True)
             return answer
-        elif payload.project_id is not None:
-            answer = await project_handler.ask_question(project_id=payload.project_id, question=payload.question)
+        elif payload.collection_id is not None:
+            answer = await collection_handler.ask_question(collection_id=payload.collection_id, question=payload.question)
             return answer
 
     except Exception as e:

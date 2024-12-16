@@ -18,7 +18,7 @@ This Alembic migration was created following the example in https://testdriven.i
 - alembic.ini
  
 
-3. Generation of the migration script (from project home) `alembic -c migrations-gcp-dev/alembic.ini revision --autogenerate -m "init"`
+3. Generation of the migration script (from collection home) `alembic -c migrations-gcp-dev/alembic.ini revision --autogenerate -m "init"`
 4. Apply change to the database `alembic -c migrations-gcp-dev/alembic.ini upgrade head`
 
 ## Apply new changes
