@@ -15,7 +15,7 @@ from app.gemini_client import GeminiClient
 
 logging.basicConfig(
     stream=sys.stdout,
-    format="%(asctime)s - %(message)s",
+    format="%(asctime)s - %(message)s - %(filename)s:%(lineno)d",
     level=logging.INFO,
     datefmt="%Y-%m-%d %H:%M:%S",
 )

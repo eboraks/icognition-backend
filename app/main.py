@@ -33,6 +33,7 @@ import app.app_logic as app_logic
 import app.html_parser as html_parser
 import app.getters as getter
 import app.deleters as deleters
+import logging
 from app.search_handler import SearchHandler
 from app.prompt_models import RAGPrompt
 from app.user_handler import UserHandler
@@ -51,18 +52,17 @@ class Groups(Enum):
     FOR_TESTING = "For Testing"
     ASK_QUESTION = "Ask Question"
 
-
-
 app = FastAPI()
 
 # Configure logging
-import logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s [%(filename)s:%(lineno)d]',
     datefmt='%H:%M:%S'
 )
 logger = logging.getLogger("icognition")
+
+
 
 
 origins = [
@@ -1065,6 +1065,12 @@ async def reformat_citiation():
     except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=500, detail="Citation reformatting failed")
+
+@app.get("/broadcast/{user_id}/{document_id}", tags=[Groups.ACTION.value], status_code=200)
+async def broadcast_document_update(user_id: str, document_id: str):
+    doc = getter.get_document_public_by_id(document_id) 
+    message = {"user_id": user_id, "document_id": document_id, "type": "document", "data": doc.model_dump_json()}
+    await manager.broadcast(json.dumps(message), user_id)
 
 
 @app.websocket("/ws")
