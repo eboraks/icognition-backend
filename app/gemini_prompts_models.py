@@ -1,26 +1,34 @@
-
 from pydantic import BaseModel
 
-from app.models import Document, Entity, Question_Answer, RagAnswerPublic, Verbatim, DocumentCitation, QuestionAnswerStatus
+from app.models import (
+    Document,
+    Entity,
+    Question_Answer,
+    RagAnswerPublic,
+    Verbatim,
+    DocumentCitation,
+    QuestionAnswerStatus,
+)
+
 # import app.transformers_util as transformers_util
 from app.gemini_client import GeminiClient
 
 gemini_client = GeminiClient()
 
 
-
-
-
 class FoundEntity(BaseModel):
     name: str
+    normalized_label: str
     type: str
     verbatim_text: str
     description: str
+
 
 class FoundQuestionAnswer(BaseModel):
     question: str
     answer: str
     citiations: list[Verbatim]
+
 
 ## Prompts class
 class SummarizePrompt(BaseModel):
@@ -33,7 +41,6 @@ class SummarizePrompt(BaseModel):
     citations_sentances: list[Verbatim]
     meta_answer: str
 
-    
     @classmethod
     def build_prompt(cls, text: str):
         """
@@ -53,8 +60,9 @@ class SummarizePrompt(BaseModel):
         Ensure you include citations of the sentences/text you used on to answer the questions, 
         try to keep the number of citations to the five most important. 
         The response must be valid JSON. 
-        Article: {BODY}""".format(BODY=text)
-    
+        Article: {BODY}""".format(
+            BODY=text
+        )
 
     def populate_document(self, document: Document) -> Document:
         """
@@ -73,8 +81,6 @@ class SummarizePrompt(BaseModel):
         return document
 
 
-
-
 class EntitiesPrompt(BaseModel):
     """
     Prompt model for extracting entities from an article
@@ -82,7 +88,6 @@ class EntitiesPrompt(BaseModel):
 
     entities: list[FoundEntity]
 
-    
     @classmethod
     def build_prompt(cls, text: str):
         """
@@ -97,14 +102,16 @@ class EntitiesPrompt(BaseModel):
         # Prompt for summarizing an article
         return """You are a researcher tasked with identifying the ten most relevent entities in an article context. Don't include irrelevant entities to the article main subject. 
         Extract only entities of type 'People', 'Products', 'Companies/Organizations', 'Countries/Cities/Places', 'Events', 'Technology' and 'Other'.
-        In your response include the name, type, verbatim_text, and description of each entity. The verbatim_text is the text from the article that the entity was extracted from.
+        In your response include the name, a normalized label I can used to search sites wikipedia search engines, type, verbatim_text, and a general description (like wikidata description). 
+        The verbatim_text is the text from the article that the entity was extracted from.
         Those fields are required for the response to be valid JSON. 
         Merge entities with name variation for example Voter and Voters. Deduplicates entities on name and do not include irrelevant entities.
         Ensure that your responses are socially unbiased and positive in nature.
         If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. 
         If you don't know the answer, please don't share false information. 
-        Article: {BODY}""".format(BODY=text)
-    
+        Article: {BODY}""".format(
+            BODY=text
+        )
 
     def entities_builder(self) -> list[Entity]:
         """
@@ -130,7 +137,6 @@ class TopicPrompt(BaseModel):
 
     topics: list[FoundEntity]
 
-    
     @classmethod
     def build_prompt(cls, text: str):
         """
@@ -143,13 +149,15 @@ class TopicPrompt(BaseModel):
             str: The prompt for the summarize task.
         """
         # Prompt for summarizing an article
-        return """You are a researcher tasked with identifying articles top 3 topics (such as Politics, Finance, Economy, Religion, etc.) 
-        Focus on topics that describe what the article is about. 
-        In your response include the name, type='topic', verbatim_text, and description of each entity. The verbatim_text is the text used to identify the topic.
+        return """You are a researcher tasked with identifying article's topic (such as Politics, Finance, Economy, Religion, etc.)  
+        In your response include the name, type='Topic', a normalized label I can used to search sites wikipedia search engines for this topic, 
+        a verbatim_text, and description of the topic. The verbatim_text is the text used to identify the topic.
         Merge topic by name, for example Voter and Voters, or Anti-Woke and anti-wokeness. Deduplicates topics on name and do not include irrelevant topics.
         Response most be valid JSON. Ensure that your responses are socially unbiased and positive in nature.
-        Article: {BODY}""".format(BODY=text)
-    
+        Article: {BODY}""".format(
+            BODY=text
+        )
+
     def entities_builder(self) -> list[Entity]:
         """
         Build the SQLModel Entities from the LLM results
@@ -168,7 +176,7 @@ class TopicPrompt(BaseModel):
 
 
 class IdentifyQuestionsAnswerPrompt(BaseModel):
-    
+
     questions_answers: list[FoundQuestionAnswer]
     meta_answer: str
 
@@ -179,10 +187,10 @@ class IdentifyQuestionsAnswerPrompt(BaseModel):
 
         Args:
             body (str): The body of the document.
-            
+
         Returns:
             Prompt: str: The prompt for the summarize task.
-        """ 
+        """
 
         # Prompt
         return """You are a researcher tasked with identifying the ten most important questions and answers an article(s) addresses. 
@@ -192,10 +200,13 @@ class IdentifyQuestionsAnswerPrompt(BaseModel):
         Use the meta_answer field to indicate if you were able to complete the task by writing "SUCCESS", or explanation why not.
         Please don't share false information. Ensure to include citations with each question and answer. 
         To reduce the number of tokens, include the start and ending strings that can be used to identify the text.
-        Article: {BODY}""".format(BODY=body)
+        Article: {BODY}""".format(
+            BODY=body
+        )
 
-
-    async def questions_answers_builder(self, document_id: str) -> list[Question_Answer]:
+    async def questions_answers_builder(
+        self, document_id: str
+    ) -> list[Question_Answer]:
         """
         Build the SQLModel Answers from the LLM results
 
@@ -207,26 +218,32 @@ class IdentifyQuestionsAnswerPrompt(BaseModel):
 
         qans = []
         for qa in self.questions_answers:
-            answer = Question_Answer(document_id=document_id, 
-                                     question=qa.question, 
-                                     answer=qa.answer, 
-                                     citations= [DocumentCitation(document_id=str(document_id), verbatims= [c.__dict__ for c in qa.citiations]).to_dict()], 
-                                     question_vector= await gemini_client.generate_embedding(qa.question))  # transformers_util.generate_embeddings(qa.question)
+            answer = Question_Answer(
+                document_id=document_id,
+                question=qa.question,
+                answer=qa.answer,
+                citations=[
+                    DocumentCitation(
+                        document_id=str(document_id),
+                        verbatims=[c.__dict__ for c in qa.citiations],
+                    ).to_dict()
+                ],
+                question_vector=await gemini_client.generate_embedding(qa.question),
+            )  # transformers_util.generate_embeddings(qa.question)
             qans.append(answer)
 
-        return qans  
- 
-    
+        return qans
+
+
 class AskQuestionPrompt(BaseModel):
     """
     Model for subtopic prompts.
     """
+
     answer: str
     meta_answer: str
     documents_citations: list[DocumentCitation]
 
-
-    
     @classmethod
     def build_prompt(cls, docs: list[Document], question: str):
         """
@@ -238,12 +255,12 @@ class AskQuestionPrompt(BaseModel):
         Returns:
             list[dict]: The list of messages for the subtopic prompt.
         """
-        
 
         _documents = "Documents:\n"
         for d in docs:
             _documents += """Document_ID: {ID}, Document_Name: {TITLE}, Text: {CONTEXT}\n""".format(
-                ID=d.id, TITLE=d.title, CONTEXT=d.original_text, URL=d.url)
+                ID=d.id, TITLE=d.title, CONTEXT=d.original_text, URL=d.url
+            )
 
         return """You are a researcher task with answering questions using documents given. 
             Compose your answer from as many documents that make sense. Keep your answer short, concise and informative.  
@@ -255,26 +272,28 @@ class AskQuestionPrompt(BaseModel):
             If there are no documents citations, include an empty field list for example, documents_citations: [].
             Format the field answer with HTML to make it more readable, for example, <p> for paragraphs, <h1> for headers, <ul> for lists, etc.
             The response must be valid JSON.
-            Question: {QUESTION}\n {DOCS}""".format(QUESTION=question, DOCS=_documents) 
-    
+            Question: {QUESTION}\n {DOCS}""".format(
+            QUESTION=question, DOCS=_documents
+        )
+
     def question_answer_builder(self, question: str) -> RagAnswerPublic:
-        
+
         if self.meta_answer == "SUCCESS":
             temp_status = QuestionAnswerStatus.COMPLETED_NO_SAVE
         else:
             temp_status = QuestionAnswerStatus.FAILED
         # DocumentCitation
         return RagAnswerPublic(
-            status=temp_status, 
-            question=question, 
-            answer=self.answer, 
+            status=temp_status,
+            question=question,
+            answer=self.answer,
             citations=self.documents_citations,
-            documents_used=[dc.document_id for dc in self.documents_citations])
-    
+            documents_used=[dc.document_id for dc in self.documents_citations],
+        )
 
 
 class ProjectTaskPrompt(BaseModel):
-    
+
     description: str
     explanation: str
     meta_answer: str
@@ -291,11 +310,12 @@ class ProjectTaskPrompt(BaseModel):
         Returns:
             list[dict]: The list of messages for the subtopic prompt.
         """
-        
+
         _articles = "Articles:\n"
         for d in docs:
             _articles += """Article_ID: {ID}, Article_Name: {TITLE}, Article: {CONTEXT}\n""".format(
-                ID=d.id, TITLE=d.title, CONTEXT=d.original_text, URL=d.url)
+                ID=d.id, TITLE=d.title, CONTEXT=d.original_text, URL=d.url
+            )
 
         return """You are a researcher task with answering questions using articles. Keep your answer short, concise and informative.  
             Please ensure that your responses are socially unbiased and positive in nature.
@@ -304,10 +324,6 @@ class ProjectTaskPrompt(BaseModel):
             If you don't know the answer, please don't share false information.
             Ensure you include citations of the most essential sentences/text you relied on to answer the questions. 
             To reduce the number of tokens in the response, use the begging and end of the string to reference the citation.\n 
-            Description: {DESCRIPTION}\n {ARTICLES}""".format(DESCRIPTION=description, ARTICLES=_articles)
-
-
-        
-
-
-
+            Description: {DESCRIPTION}\n {ARTICLES}""".format(
+            DESCRIPTION=description, ARTICLES=_articles
+        )
