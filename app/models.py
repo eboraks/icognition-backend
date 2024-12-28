@@ -7,7 +7,7 @@ from sqlalchemy.dialects.postgresql import JSONB, ARRAY, TSVECTOR
 from pgvector.sqlalchemy import Vector
 from typing import Optional, List, Dict
 from datetime import datetime
-from pydantic import BaseModel, model_serializer
+from pydantic import BaseModel
 from app.icog_util import remove_none_header_elements
 
 from app.gemini_client import GeminiClient
