@@ -812,6 +812,7 @@ class StudyCollectionPublic(SQLModel, table=False):
     objective: str = Field(default=None)
     ai_explanation: Optional[str] = Field(default=None)
     user_id: str = Field(nullable=False)
+    documents_ids: Optional[List[str]] = Field(default=[])
     status: Optional[str] = Field(default=None)
     related_docs: Optional[List[DocumentPublic]] = Field(default=[])
     tasks: Optional[list[StudyTaskPublic]] = Field(default=[])
