@@ -1070,13 +1070,60 @@ async def update_study_collection(collection: StudyCollectionPublic):
         raise HTTPException(status_code=500, detail="Study collection update failed")
 
 
+@app.put(
+    "/study_collection/{id}/documents", tags=[Groups.STUDY_COLLECTION], status_code=200
+)
+async def update_study_collection_documents(
+    collection_id: str, document_ids: List[str]
+):
+    try:
+        collection = collection_handler.get_study_collection_by_id(collection_id)
+        if collection is None:
+            raise HTTPException(status_code=404, detail="Study collection not found")
+
+        for document_id in document_ids:
+            document = getter.get_document_by_id(document_id)
+            if document is None:
+                raise HTTPException(
+                    status_code=404, detail=f"Document with id {document_id} not found"
+                )
+            collection_handler.link_collection_document(collection_id, document_id)
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Study collection update failed")
+
+
+@app.delete(
+    "/study_collection/{id}/documents",
+    tags=[Groups.STUDY_COLLECTION],
+    status_code=204,
+)
+async def delete_study_collection_document(
+    collection_id: str, documents_ids: List[str]
+):
+    try:
+        collection = collection_handler.get_study_collection_by_id(collection_id)
+        document = getter.get_document_by_id(document_id)
+        if collection is None:
+            raise HTTPException(status_code=404, detail="Study collection not found")
+
+        for document_id in documents_ids:
+            document = getter.get_document_by_id(document_id)
+            if document is None:
+                raise HTTPException(status_code=404, detail="Document not found")
+            collection_handler.unlink_collection_document(collection_id, document_id)
+    except Exception as e:
+        logging.error(e)
+        raise HTTPException(status_code=500, detail="Study collection update failed")
+
+
 @app.get(
     "/generate_study_collection/{collection_id}",
     tags=[Groups.STUDY_COLLECTION],
     response_model=StudyCollectionPublic,
     status_code=200,
 )
-async def create_study_collection(
+async def generate_study_collection(
     collection_id: str, background_tasks: BackgroundTasks
 ):
     try:
