@@ -160,7 +160,7 @@ class SearchHandler:
             ).all()
 
             logging.info(
-                f"Found {len(matches)} matched embeddings for term {search_term}"
+                f"Found {len(matches)} matched text search for term {search_term}"
             )
 
         return matches

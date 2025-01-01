@@ -496,16 +496,24 @@ async def generate_embeddings(user_id: str):
         logging.error(f"Error generating embeddings for entities {e}")
 
     ## Update search_vector for embeddings that don't have it
-    with Session(engine) as session:
-        text = """UPDATE public.embedding
-                SET search_vector = to_tsvector('english', text)
-                WHERE search_vector IS NULL;"""
-        session.execute(text)
+    update_search_vectors()
 
     ## Generate embeddings for entities that don't have embeddings
     ## May, 22. Remove Embedding.version < Entity.version) from where clause, becuase embedding have old versions (versions add additive)
     ## results in always generating embeddings for entities with version above 1. That mean that updated entities will not generate new embeddings
     ## for now. In the future this can be improved, but for now it's ok.
+
+
+def update_search_vectors():
+    ## Update search_vector for embeddings that don't have it
+    with Session(engine) as session:
+        q = text(
+            """UPDATE public.embedding
+                SET search_vector = to_tsvector('english', text)
+                WHERE search_vector IS NULL;"""
+        )
+        session.execute(q)
+        session.commit()
 
 
 async def generate_embeddings_for_entities(entities: list[Entity], user_id: str):
@@ -526,6 +534,8 @@ async def generate_embeddings_for_entities(entities: list[Entity], user_id: str)
         session.add_all(embeddings)
         session.commit()
 
+    update_search_vectors()
+
 
 async def generate_embeddings_for_docs(documents: list[Document], user_id: str):
 
@@ -541,6 +551,8 @@ async def generate_embeddings_for_docs(documents: list[Document], user_id: str):
     with Session(engine) as session:
         session.add_all(embeddings)
         session.commit()
+
+    update_search_vectors()
 
 
 async def update_entity_embedding(entity: Entity):

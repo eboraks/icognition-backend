@@ -531,10 +531,6 @@ async def generate_document_entities(source: Source):
         logger.error("Generate document entities ", e)
 
 
-def generate_document_entities_sync(source: Source):
-    asyncio.run(generate_document_entities(source))
-
-
 async def generate_document_qanda(source: Source):
     document = getter.get_document_by_id(source.document_id)
     doc_id = str(document.id)
