@@ -22,6 +22,7 @@ from app.gemini_client import GeminiClient
 from sqlalchemy import (
     and_,
     func,
+    or_,
     select,
     text,
 )
@@ -209,7 +210,12 @@ def get_entities_by_ids(entity_ids: set[int]) -> list[Entity]:
 def find_entity_by_name(entity_name: str) -> Entity:
     with Session(engine) as session:
         entity = session.scalar(
-            select(Entity).where(Entity.name.ilike(f"{entity_name}"))
+            select(Entity).where(
+                or_(
+                    Entity.name.ilike(f"{entity_name}"),
+                    Entity.normalized_label.ilike(f"{entity_name}"),
+                )
+            )
         )
     return entity
 
@@ -231,6 +237,7 @@ def find_similar_entities(entity_name: str) -> Entity:
         SELECT e.id, e.name, levenshtein(LOWER(e.name), LOWER(:needle)) AS distance
         FROM entity e 
         WHERE (levenshtein_less_equal(LOWER(e.name), LOWER(:needle), :dist) <= :dist)
+        OR (levenshtein_less_equal(LOWER(e.normalized_label), LOWER(:needle), :dist) <= :dist)
         ORDER BY levenshtein_less_equal(LOWER(e.name), LOWER(:needle), :dist) ASC
         LIMIT 1
         """
@@ -253,9 +260,23 @@ async def get_similar_entity_by_name_vector(
     user_id: str, new_entity, name_threshold: float = 0.90, desc_threshold=0.70
 ) -> Entity:
 
-    exist = find_entity_by_name(new_entity.name)
-    if exist:
-        return exist
+    try:
+        with Session(engine) as session:
+            entity = session.scalar(
+                select(Entity).where(Entity.name.ilike(f"{new_entity.name}"))
+            )
+            if entity:
+                return entity
+
+            entity = session.scalar(
+                select(Entity).where(
+                    Entity.normalized_label.ilike(f"{new_entity.name}")
+                )
+            )
+            if entity:
+                return entity
+    except Exception as e:
+        logger.error(f"Error getting similar entity by name vector: {e}")
 
     exit = find_similar_entities(new_entity.name)
     if exit:

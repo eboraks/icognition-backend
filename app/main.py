@@ -1,7 +1,17 @@
 import asyncio
 from enum import Enum
 import time
-from fastapi import FastAPI, HTTPException, BackgroundTasks, status, Response, UploadFile, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    BackgroundTasks,
+    status,
+    Response,
+    UploadFile,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,7 +33,7 @@ from app.models import (
     TreeNode,
     StudyCollectionPublic,
     StudyTaskPublic,
-    CollectionDocumentlinkPayload
+    CollectionDocumentlinkPayload,
 )
 import app.study_collection_handler as collection_handler
 from app.source_doc_handler import SourceDocHandler
@@ -33,6 +43,7 @@ import app.app_logic as app_logic
 import app.html_parser as html_parser
 import app.getters as getter
 import app.deleters as deleters
+import app.entity_handler as entity_handler
 import logging
 from app.search_handler import SearchHandler
 from app.prompt_models import RAGPrompt
@@ -52,17 +63,16 @@ class Groups(Enum):
     FOR_TESTING = "For Testing"
     ASK_QUESTION = "Ask Question"
 
+
 app = FastAPI()
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s [%(filename)s:%(lineno)d]',
-    datefmt='%H:%M:%S'
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s [%(filename)s:%(lineno)d]",
+    datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("icognition")
-
-
 
 
 origins = [
@@ -83,13 +93,14 @@ app.add_middleware(
 
 # websocket setup
 active_connections: dict[str] = {}
+
+
 class ConnectionManager:
     async def connect(self, websocket: WebSocket, session_id: str):
 
         await websocket.accept()
         active_connections[session_id] = websocket
         logger.info(f"Websocket connected for {session_id}")
-
 
     async def disconnect(self, session_id: str, message: str):
         try:
@@ -98,7 +109,9 @@ class ConnectionManager:
             del active_connections[session_id]
             logger.info(f"Websocket disconnected for {session_id}")
         except Exception as e:
-            logger.error(f"Error in disconnecting websocket {session_id}. Error: {str(e)}")
+            logger.error(
+                f"Error in disconnecting websocket {session_id}. Error: {str(e)}"
+            )
             pass
 
     async def broadcast(self, message, user_id):
@@ -111,20 +124,30 @@ class ConnectionManager:
 
         for session_id in session_ids:
             target_websocket = active_connections[session_id]
-            await target_websocket.send_text(message)        
+            await target_websocket.send_text(message)
 
 
 manager = ConnectionManager()
 
+
 async def broadcastProgress(doc_id: str, user_id: str, increment: int):
     try:
-        
-        await manager.broadcast(json.dumps({"user_id": user_id, "document_id": doc_id, "type": "progress_percentage", "data": increment}), user_id)
+
+        await manager.broadcast(
+            json.dumps(
+                {
+                    "user_id": user_id,
+                    "document_id": doc_id,
+                    "type": "progress_percentage",
+                    "data": increment,
+                }
+            ),
+            user_id,
+        )
 
     except Exception as e:
         logger.error(f"Error in broadcastProgress: {str(e)}")
         pass
-
 
 
 @app.websocket("/ws/{user_id}/{source}")
@@ -140,7 +163,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, source: str):
     except WebSocketDisconnect as e:
         logger.error(f"Websocket Exception for {session_id}. Error: {str(e)}")
         await manager.disconnect(session_id, "Error in websocket connection")
-        #await manager.broadcast("Client disconnected.", user_id)
+        # await manager.broadcast("Client disconnected.", user_id)
 
 
 @app.get("/")
@@ -159,11 +182,11 @@ async def ping():
 
     except Exception as e:
         logger.error(e)
-        raise HTTPException(status_code=500, detail=f"Database connection failed. Error: {str(e)}")
-    
-    
-    return {"Message": f"Service is up and running. DB status: {db_status}"}
+        raise HTTPException(
+            status_code=500, detail=f"Database connection failed. Error: {str(e)}"
+        )
 
+    return {"Message": f"Service is up and running. DB status: {db_status}"}
 
 
 @app.get("/status", status_code=200)
@@ -181,26 +204,35 @@ async def ping():
 
     except Exception as e:
         logger.error(e)
-        raise HTTPException(status_code=500, detail=f"Database connection failed. Error: {str(e)}")
-    
-    try: 
+        raise HTTPException(
+            status_code=500, detail=f"Database connection failed. Error: {str(e)}"
+        )
+
+    try:
         db_docs_count = getter.get_documents_count()
     except Exception as e:
         logger.error(e)
-        raise HTTPException(status_code=500, detail=f"Database connection failed. Error: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Database connection failed. Error: {str(e)}"
+        )
 
     try:
-        file_content = 'test'
-        filename = 'test.txt'
+        file_content = "test"
+        filename = "test.txt"
         sourceHandler.write_file(filename=filename, content=file_content)
-        if (file_content == sourceHandler.read_file(filename=filename)):
+        if file_content == sourceHandler.read_file(filename=filename):
             fuse_status = True
-    
+
     except Exception as e:
         logger.error(e)
-        raise HTTPException(status_code=500, detail=f"File system connection failed. Error: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"File system connection failed. Error: {str(e)}"
+        )
 
-    return {"Message": f"Service is up and running. DB status: {db_status}, DB docs count: {db_docs_count}, Fuse status: {fuse_status}"}
+    return {
+        "Message": f"Service is up and running. DB status: {db_status}, DB docs count: {db_docs_count}, Fuse status: {fuse_status}"
+    }
+
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
@@ -220,7 +252,12 @@ async def add_user(user: User):
         logger.error(e)
         raise HTTPException(status_code=500, detail="User creation failed")
 
-@app.get("/populate_user_table", status_code=204, tags=[Groups.ACTION.value, Groups.FOR_TESTING.value])
+
+@app.get(
+    "/populate_user_table",
+    status_code=204,
+    tags=[Groups.ACTION.value, Groups.FOR_TESTING.value],
+)
 async def add_user():
     user_handler = UserHandler()
 
@@ -228,11 +265,13 @@ async def add_user():
         user_handler.add_users_from_source()
     except Exception as e:
         logger.error(e)
-        raise HTTPException(status_code=500, detail="Failed to populate user table" + str(e))
+        raise HTTPException(
+            status_code=500, detail="Failed to populate user table" + str(e)
+        )
 
 
 @app.post(
-    "/bookmark", 
+    "/bookmark",
     tags=[Groups.BOOKMARK.value],
     responses={
         400: {
@@ -282,10 +321,15 @@ async def create_bookmark(
             if _doc.status == "Done":
                 logger.info(f"Bookmark already exists for {page.clean_url}")
                 response.status_code = status.HTTP_200_OK
-                
+
                 ## Broadcast the document to the user
                 doc = getter.get_document_public_by_id(_doc.id)
-                message = {"user_id": payload.user_id, "document_id": doc.id, "type": "document", "data": doc.model_dump_json()}
+                message = {
+                    "user_id": payload.user_id,
+                    "document_id": doc.id,
+                    "type": "document",
+                    "data": doc.model_dump_json(),
+                }
                 await manager.broadcast(json.dumps(message), _source.user_id)
 
                 return _source
@@ -293,17 +337,31 @@ async def create_bookmark(
                 logger.info(f"Document is still processing for {page.clean_url}")
                 response.status_code = status.HTTP_206_PARTIAL_CONTENT
 
-                message = {"user_id": payload.user_id, "document_id": _source.document_id, "type": "document_in_progress", "data": _source.model_dump_json()}
+                message = {
+                    "user_id": payload.user_id,
+                    "document_id": _source.document_id,
+                    "type": "document_in_progress",
+                    "data": _source.model_dump_json(),
+                }
                 await manager.broadcast(json.dumps(message), payload.user_id)
 
                 return _source
             elif _doc.status in ["Failure", "Pending"]:
-                logger.info(f"Document status is {_doc.status} attempting to regenerated document for {page.clean_url}")
-                
-                
-                background_tasks.add_task(run_async_task_sync(generate_document_summary, _source))
-                background_tasks.add_task(run_async_task_sync(generate_document_qanda, _source))
-                background_tasks.add_task(run_async_task_sync(generate_document_entities, _source))
+                logger.info(
+                    f"Document status is {_doc.status} attempting to regenerated document for {page.clean_url}"
+                )
+
+                background_tasks.add_task(
+                    run_async_task_sync(generate_document_summary, _source)
+                )
+                background_tasks.add_task(
+                    run_async_task_sync(generate_document_qanda, _source)
+                )
+                background_tasks.add_task(
+                    run_async_task_sync(
+                        entity_handler.generate_document_entities, _source
+                    )
+                )
                 response.status_code = status.HTTP_201_CREATED
                 return _source
         else:
@@ -311,12 +369,23 @@ async def create_bookmark(
             _source = app_logic.create_source_bookmark(page, payload.user_id)
             logger.info(f"Source created for {_source.url}")
 
-            background_tasks.add_task(run_async_task_sync(generate_document_summary, _source))
-            background_tasks.add_task(run_async_task_sync(generate_document_qanda, _source))
-            background_tasks.add_task(run_async_task_sync(generate_document_entities, _source))
-            
+            background_tasks.add_task(
+                run_async_task_sync(generate_document_summary, _source)
+            )
+            background_tasks.add_task(
+                run_async_task_sync(generate_document_qanda, _source)
+            )
+            background_tasks.add_task(
+                run_async_task_sync(entity_handler.generate_document_entities, _source)
+            )
+
             response.status_code = status.HTTP_201_CREATED
-            message = {"user_id": payload.user_id, "document_id": str(_source.document_id), "type": "document_in_progress", "data": None}
+            message = {
+                "user_id": payload.user_id,
+                "document_id": str(_source.document_id),
+                "type": "document_in_progress",
+                "data": None,
+            }
             await manager.broadcast(json.dumps(message), payload.user_id)
             return _source
     except Exception as e:
@@ -324,10 +393,15 @@ async def create_bookmark(
         raise HTTPException(status_code=500, detail="Bookmark creation failed")
 
 
-
-
-@app.post("/document/regenerate", tags=["Document"], response_model=Source, status_code=status.HTTP_202_ACCEPTED)
-async def post_regenerate_document(old_doc: Document, background_tasks: BackgroundTasks):
+@app.post(
+    "/document/regenerate",
+    tags=["Document"],
+    response_model=Source,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def post_regenerate_document(
+    old_doc: Document, background_tasks: BackgroundTasks
+):
     """
     This method create document using a source id and a URL.
     Because create_source_bookmark also generate document, this method is use to re-generate
@@ -344,8 +418,9 @@ async def post_regenerate_document(old_doc: Document, background_tasks: Backgrou
     bookmark = app_logic.reassociate_bookmark_with_document(old_doc.id, new_doc.id)
 
     if bookmark is None:
-        raise HTTPException(status_code=404, detail="Bookmark not found") 
+        raise HTTPException(status_code=404, detail="Bookmark not found")
     return bookmark
+
 
 @app.get("/regenerate/entities", tags=["Document"], status_code=200)
 async def get_regenerate_entities(background_tasks: BackgroundTasks):
@@ -355,29 +430,35 @@ async def get_regenerate_entities(background_tasks: BackgroundTasks):
 
 @app.get("/build_entity_vectors", tags=["Document"], status_code=200)
 async def get_build_entity_vectors(background_tasks: BackgroundTasks):
-    background_tasks.add_task(app_logic.generate_entities_vectors)
+    background_tasks.add_task(entity_handler.generate_entities_vectors)
     return {"Message": "Building entity vectors"}
 
 
-
-
-
-
 @app.get("/boradcast/{user_id}", tags=["Document"], status_code=200)
-async def broadcast_document_update(message: str, user_id: str, document_id: str = None):
-
+async def broadcast_document_update(
+    message: str, user_id: str, document_id: str = None
+):
 
     if document_id is not None:
-        doc = getter.get_document_public_by_id(document_id) 
-        message = {"user_id": user_id, "document_id": document_id, "type": "document", "data": doc.model_dump_json()}
+        doc = getter.get_document_public_by_id(document_id)
+        message = {
+            "user_id": user_id,
+            "document_id": document_id,
+            "type": "document",
+            "data": doc.model_dump_json(),
+        }
         await manager.broadcast(json.dumps(message), user_id)
 
     qas = question_answer_handler.get_question_answer_by_document_id(document_id)
     if len(qas) > 0:
         qas = [qa.to_public().model_dump_json() for qa in qas]
-        message = {"user_id": user_id, "document_id": document_id, "type": "doc_qanda", "data": qas}
+        message = {
+            "user_id": user_id,
+            "document_id": document_id,
+            "type": "doc_qanda",
+            "data": qas,
+        }
         await manager.broadcast(json.dumps(message), user_id)
-
 
 
 ## Background task to generate summaries from LLM
@@ -385,28 +466,40 @@ async def generate_document_summary(source: Source):
     document = getter.get_document_by_id(source.document_id)
     doc_id = str(document.id)
 
-    try: 
+    try:
         if document.status in ["Pending", "Done", "Failure"]:
             logger.info(f"Background task for document ID: {source.document_id}")
 
             await broadcastProgress(doc_id, source.user_id, 15)
-            document = await app_logic.generate_summary(doc= document)
+            document = await app_logic.generate_summary(doc=document)
             await broadcastProgress(doc_id, source.user_id, 30)
 
             ## Broadcast the document to the user
-            doc = getter.get_document_public_by_id(document.id) 
-            message = {"user_id": source.user_id, "document_id": doc.id, "type": "document", "data": doc.model_dump_json()}
+            doc = getter.get_document_public_by_id(document.id)
+            message = {
+                "user_id": source.user_id,
+                "document_id": doc.id,
+                "type": "document",
+                "data": doc.model_dump_json(),
+            }
             await manager.broadcast(json.dumps(message), source.user_id)
             await broadcastProgress(doc_id, source.user_id, 10)
 
-            await app_logic.generate_embeddings_for_docs(documents = [document], user_id = source.user_id)
-            logger.info(f"Background task for document ID: {source.document_id} completed")
+            await app_logic.generate_embeddings_for_docs(
+                documents=[document], user_id=source.user_id
+            )
+            logger.info(
+                f"Background task for document ID: {source.document_id} completed"
+            )
     except Exception as e:
         logger.error("generate_document summary", e)
 
+
 def run_async_task_sync(func, *args, **kwargs):
 
-    logger.info(f"Running async task for {func.__name__} with args: {args} and kwargs: {kwargs}")
+    logger.info(
+        f"Running async task for {func.__name__} with args: {args} and kwargs: {kwargs}"
+    )
     try:
         loop = asyncio.get_event_loop()
         if loop.is_closed():
@@ -417,38 +510,34 @@ def run_async_task_sync(func, *args, **kwargs):
         logger.error(f"Error running async task {func.__name__}: {str(e)}")
 
 
-
-async def generate_document_entities(source: Source):
-    document = getter.get_document_by_id(source.document_id)
-
-    try:
-        if len(getter.get_entities_ids_by_document_id(document.id)) == 0:
-            ent_success = await app_logic.generate_entities(user_id= source.user_id, doc = document)
-            topic_success = await app_logic.generate_topics(user_id= source.user_id, doc = document)
-            logger.info(f"Background task for generating entities and topics for: {document.id} completed. Result, number of entities: {len(ent_success)} number of topics: {len(topic_success)}")
-            await app_logic.generate_embeddings_for_entities(entities=ent_success, user_id =  source.user_id)
-            await app_logic.generate_embeddings_for_entities(entities=topic_success, user_id =  source.user_id)
-    except Exception as e:
-        logger.error("Generate document entities ", e)
-
-def generate_document_entities_sync(source: Source):
-    asyncio.run(generate_document_entities(source))
-
-
 async def generate_document_qanda(source: Source):
     document = getter.get_document_by_id(source.document_id)
     doc_id = str(document.id)
     try:
-        if len(question_answer_handler.get_question_answer_by_document_id(document.id)) == 0:
+        if (
+            len(question_answer_handler.get_question_answer_by_document_id(document.id))
+            == 0
+        ):
             await broadcastProgress(doc_id, source.user_id, 5)
 
-            await question_answer_handler.generate_doc_quesions_answers(user_id= source.user_id, doc = document)
-            qas = question_answer_handler.get_question_answer_public_by_document_id(document.id)
+            await question_answer_handler.generate_doc_quesions_answers(
+                user_id=source.user_id, doc=document
+            )
+            qas = question_answer_handler.get_question_answer_public_by_document_id(
+                document.id
+            )
             qas = [qa.model_dump() for qa in qas]
             await broadcastProgress(doc_id, source.user_id, 20)
 
-            logger.info(f"Background task for generating questions and answers for: {document.id} completed. Number of questions and answers, {len(qas)}")
-            message = {"user_id": source.user_id, "document_id": str(document.id), "data": json.dumps(qas), "type": "doc_qanda"}
+            logger.info(
+                f"Background task for generating questions and answers for: {document.id} completed. Number of questions and answers, {len(qas)}"
+            )
+            message = {
+                "user_id": source.user_id,
+                "document_id": str(document.id),
+                "data": json.dumps(qas),
+                "type": "doc_qanda",
+            }
             await manager.broadcast(json.dumps(message), source.user_id)
             await broadcastProgress(doc_id, source.user_id, 20)
 
@@ -456,42 +545,65 @@ async def generate_document_qanda(source: Source):
     except Exception as e:
         logger.error("Generate document question and answers ", e)
 
+
 def generate_document_qanda_sync(source: Source):
     asyncio.run(generate_document_qanda(source))
 
 
 ## Background task to regenerate summaries from LLM if not already exists
 async def regenerate_document(document: Document):
- 
+
     if document.status in ["Pending", "Done", "Failure"]:
-        logger.info(f"Background task for deleting document ID: {document.id} and associated records")
-        deleters.delete_document_associate_records(document_id= document.id)
+        logger.info(
+            f"Background task for deleting document ID: {document.id} and associated records"
+        )
+        deleters.delete_document_associate_records(document_id=document.id)
 
     source = getter.get_source_by_document_id(document.id)
-    try: 
+    try:
         if document.status in ["Pending", "Done", "Failure"]:
             logger.info(f"Background task for document ID: {document.id}")
-            document = await app_logic.generate_summary(doc= document)
-            await app_logic.generate_embeddings_for_docs(documents = [document], user_id = source.user_id)
-            logger.info(f"Background task for document ID: {source.document_id} completed")
+            document = await app_logic.generate_summary(doc=document)
+            await app_logic.generate_embeddings_for_docs(
+                documents=[document], user_id=source.user_id
+            )
+            logger.info(
+                f"Background task for document ID: {source.document_id} completed"
+            )
     except Exception as e:
         logger.error(e)
 
     try:
         if len(getter.get_entities_ids_by_document_id(document.id)) == 0:
-            ent_success = await app_logic.generate_entities(user_id= source.user_id, doc = document)
-            topic_success = await app_logic.generate_topics(user_id= source.user_id, doc = document)
-            logger.info(f"Background task for generating entities and topics for: {document.id} completed. Result, number of entities: {len(ent_success)} number of topics: {len(topic_success)}")
-            await app_logic.generate_embeddings_for_entities(entities=ent_success, user_id =  source.user_id)
-            await app_logic.generate_embeddings_for_entities(entities=topic_success, user_id =  source.user_id)
+            ent_success = await entity_handler.generate_entities(
+                user_id=source.user_id, doc=document
+            )
+            topic_success = await entity_handler.generate_topics(
+                user_id=source.user_id, doc=document
+            )
+            logger.info(
+                f"Background task for generating entities and topics for: {document.id} completed. Result, number of entities: {len(ent_success)} number of topics: {len(topic_success)}"
+            )
+            await entity_handler.generate_embeddings_for_entities(
+                entities=ent_success, user_id=source.user_id
+            )
+            await entity_handler.generate_embeddings_for_entities(
+                entities=topic_success, user_id=source.user_id
+            )
     except Exception as e:
         logger.error(e)
 
-
     try:
-        if len(question_answer_handler.get_question_answer_by_document_id(document.id)) == 0:
-            success = await question_answer_handler.generate_doc_quesions_answers(user_id= source.user_id, doc = document)
-            logger.info(f"Background task for generating questions and answers for: {document.id} completed. Result, {success}")
+        if (
+            len(question_answer_handler.get_question_answer_by_document_id(document.id))
+            == 0
+        ):
+            success = await question_answer_handler.generate_doc_quesions_answers(
+                user_id=source.user_id, doc=document
+            )
+            logger.info(
+                f"Background task for generating questions and answers for: {document.id} completed. Result, {success}"
+            )
             ## For now, we are not generating embeddings for questions and answers
     except Exception as e:
         logger.error(e)
@@ -507,23 +619,43 @@ async def regenerate_entities():
             deleters.delete_entities_associated_with_document(doc.id)
             deleters.delete_orphaned_entities()
         except Exception as e:
-            logger.error(f"Error deleting entities for document {doc.id}. Error {str(e)}")
-            raise Exception(f"Error deleting entities for document {doc.id}. Error {str(e)}")
-    
+            logger.error(
+                f"Error deleting entities for document {doc.id}. Error {str(e)}"
+            )
+            raise Exception(
+                f"Error deleting entities for document {doc.id}. Error {str(e)}"
+            )
+
     for document in documents:
         try:
             user_id = getter.get_source_by_document_id(doc.id).user_id
-            ent_success = await app_logic.generate_entities(user_id= user_id, doc = document)
-            topic_success = await app_logic.generate_topics(user_id= user_id, doc = document)
-            logger.info(f"Background task for generating entities and topics for: {document.id} completed. Result, number of entities: {len(ent_success)} number of topics: {len(topic_success)}")
-            await app_logic.generate_embeddings_for_entities(entities=ent_success, user_id =  user_id)
-            await app_logic.generate_embeddings_for_entities(entities=topic_success, user_id =  user_id)
+            ent_success = await entity_handler.generate_entities(
+                user_id=user_id, doc=document
+            )
+            topic_success = await entity_handler.generate_topics(
+                user_id=user_id, doc=document
+            )
+            logger.info(
+                f"Background task for generating entities and topics for: {document.id} completed. Result, number of entities: {len(ent_success)} number of topics: {len(topic_success)}"
+            )
+            await entity_handler.generate_embeddings_for_entities(
+                entities=ent_success, user_id=user_id
+            )
+            await entity_handler.generate_embeddings_for_entities(
+                entities=topic_success, user_id=user_id
+            )
         except Exception as e:
-            logger.error(f"Error generating entities for document {doc.id}. Error {str(e)}")
+            logger.error(
+                f"Error generating entities for document {doc.id}. Error {str(e)}"
+            )
 
 
-
-@app.get("/bookmarks/user/{user_id}", tags=["Bookmark"], response_model=List[Source], status_code=200)
+@app.get(
+    "/bookmarks/user/{user_id}",
+    tags=["Bookmark"],
+    response_model=List[Source],
+    status_code=200,
+)
 async def get_bookmarks_by_user_id(user_id: str):
     bookmarks = getter.get_sources_by_user_id(user_id)
 
@@ -532,6 +664,7 @@ async def get_bookmarks_by_user_id(user_id: str):
 
     logger.info(f"Icognition return {len(bookmarks)} bookmarks")
     return bookmarks
+
 
 @app.post("/bookmark/user", tags=["Bookmark"], response_model=Source, status_code=200)
 async def get_bookmarks_by_user_id(payload: PagePayload):
@@ -550,17 +683,17 @@ async def get_bookmarks_by_user_id(payload: PagePayload):
     status_code=200,
 )
 async def get_documents_plus_by_user_id(user_id: str):
-    
+
     documents = getter.get_documents_public_by_user_id(user_id)
-    
+
     if documents is None:
         raise HTTPException(status_code=404, detail="Documents not found")
-        
 
     logger.info(f"Icognition return {len(documents)} documents_plus")
     return documents
 
-@app.get('/document/{id}/html_elements', tags=["Document"], status_code=200)
+
+@app.get("/document/{id}/html_elements", tags=["Document"], status_code=200)
 async def get_document_html_elements(id: str):
     try:
         doc = getter.get_document_public_by_id(id)
@@ -568,7 +701,6 @@ async def get_document_html_elements(id: str):
     except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=404, detail="Document not found")
-
 
 
 @app.get("/bookmark", tags=["Bookmark"], response_model=Source, status_code=200)
@@ -599,15 +731,21 @@ async def get_bookmark_document(id: str, response: Response):
         return document
 
 
-@app.get("/document_plus/{source_id}", tags=["Bookmark"], responses={
+@app.get(
+    "/document_plus/{source_id}",
+    tags=["Bookmark"],
+    responses={
         404: {
             "model": HTTPError,
             "description": "Returning document error",
         },
         206: {"model": None, "description": "Document is being processed"},
         200: {"model": DocumentPublic, "description": "Document is ready"},
-    })
-async def get_document_plus(source_id: str, response: Response, background_tasks: BackgroundTasks):
+    },
+)
+async def get_document_plus(
+    source_id: str, response: Response, background_tasks: BackgroundTasks
+):
     """get document with entities and concepts"""
 
     logger.info(f"Document plus -> endpoint called on bookmark {source_id}")
@@ -628,7 +766,7 @@ async def get_document_plus(source_id: str, response: Response, background_tasks
         )
         return None
     elif document.status == "Done":
-        
+
         response.status_code = status.HTTP_200_OK
         logger.info(
             f"Document plus -> endpoint called on document status {document.status}"
@@ -655,18 +793,19 @@ async def get_document(id: str, response: Response):
     else:
         response.status_code = status.HTTP_200_OK
         return document
-    
+
+
 @app.get("/document/{id}/xray", tags=["Document"])
 async def get_document_summary(id: str, response: Response, force: str | None = None):
-    
-        try:
-            res = getter.get_document_public_by_id(id)
-            response.status_code = status.HTTP_200_OK
-            return res
-    
-        except ValueError as e:
-            logger.error(e)
-            raise HTTPException(status_code=404, detail=e)
+
+    try:
+        res = getter.get_document_public_by_id(id)
+        response.status_code = status.HTTP_200_OK
+        return res
+
+    except ValueError as e:
+        logger.error(e)
+        raise HTTPException(status_code=404, detail=e)
 
 
 @app.get("/document/{id}/questions_answers", tags=["Document"])
@@ -694,7 +833,6 @@ async def get_bookmark_keysentences(id: int, response: Response):
         logger.error(e)
         raise HTTPException(status_code=404, detail=e)
 
- 
 
 @app.delete("/bookmark/{id}", tags=["Bookmark"], status_code=204)
 async def delete_bookmark(id: str) -> None:
@@ -705,21 +843,31 @@ async def delete_bookmark(id: str) -> None:
 @app.delete("/document/{id}", tags=["Document"], status_code=204)
 async def delete_document(id: str) -> None:
     logger.info(f"Delete document and associated records for id: {id}")
-    
+
     deleters.delete_document_and_associate_records(id)
 
 
-@app.get("/subtopics/{user_id}", tags=["Subtopics"], response_model=List[SubTopicDisplay], status_code=200)
+@app.get(
+    "/subtopics/{user_id}",
+    tags=["Subtopics"],
+    response_model=List[SubTopicDisplay],
+    status_code=200,
+)
 async def get_user_subtopics(user_id: str):
     try:
-        subtopics = getter.get_subtopics_display(user_id = user_id)
+        subtopics = getter.get_subtopics_display(user_id=user_id)
         return subtopics
     except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=404, detail="Subtopics not found")
 
 
-@app.get("/subtopics_node/{user_id}", tags=["Subtopics"], response_model=List[TreeNode], status_code=200)
+@app.get(
+    "/subtopics_node/{user_id}",
+    tags=["Subtopics"],
+    response_model=List[TreeNode],
+    status_code=200,
+)
 async def get_user_subtopics_node(user_id: str):
     try:
         subtopics_nodes = getter.get_subtopics_nodes_by_user(user_id)
@@ -727,8 +875,14 @@ async def get_user_subtopics_node(user_id: str):
     except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=404, detail="Subtopics not found")
-    
-@app.get("/filter_nodes/{user_id}", tags=["Library Search"], response_model=List[TreeNode], status_code=200)
+
+
+@app.get(
+    "/filter_nodes/{user_id}",
+    tags=["Library Search"],
+    response_model=List[TreeNode],
+    status_code=200,
+)
 async def get_user_filter_nodes(user_id: str):
     try:
         start_time = time.time()
@@ -740,17 +894,18 @@ async def get_user_filter_nodes(user_id: str):
         raise HTTPException(status_code=404, detail="Error getting filter nodes")
 
 
-
-@app.post("/search", tags=["Library Search"], status_code=200, response_model=SearchResults)
+@app.post(
+    "/search", tags=["Library Search"], status_code=200, response_model=SearchResults
+)
 async def search_documents(search_payload: SearchPayload, response: Response):
     logger.info(f"Search documents with query: {search_payload.query}")
-    
+
     try:
         results = await search(search_payload.user_id, search_payload.query)
     except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=404, detail="Search failed")
-    
+
     if results.failure:
         return results
 
@@ -760,14 +915,16 @@ async def search_documents(search_payload: SearchPayload, response: Response):
     else:
         if len(results.documents_display) == 0:
             raise HTTPException(status_code=404, detail="No results found")
-        
+
         response.headers["icognitoin-answer-type"] = "DocumentDisplay"
         return results
-        
 
 
-
-@app.get("/generate_embedding/{user_id}", tags=["User Data (Entities, Document)"], status_code=200)
+@app.get(
+    "/generate_embedding/{user_id}",
+    tags=["User Data (Entities, Document)"],
+    status_code=200,
+)
 async def generate_embedding(user_id: str):
     try:
         await app_logic.generate_embeddings(user_id=user_id)
@@ -777,10 +934,11 @@ async def generate_embedding(user_id: str):
         raise HTTPException(status_code=500, detail="Embedding generation failed")
 
 
-
-    
-
-@app.get("/entities_names/{user_id}", tags=["User Data (Entities, Document)"], status_code=200)
+@app.get(
+    "/entities_names/{user_id}",
+    tags=["User Data (Entities, Document)"],
+    status_code=200,
+)
 async def get_user_entities_names(user_id: str):
     try:
         start_time = time.time()
@@ -791,20 +949,34 @@ async def get_user_entities_names(user_id: str):
         logger.error(e)
         raise HTTPException(status_code=404, detail="Entities not found")
 
-@app.get("/placeholder_image", tags=["Icons"], 
-         responses = {200: {"content": {"image/png": {}}}},
-        response_class=FileResponse)
+
+@app.get(
+    "/placeholder_image",
+    tags=["Icons"],
+    responses={200: {"content": {"image/png": {}}}},
+    response_class=FileResponse,
+)
 async def get_placeholder_image():
     return FileResponse("./app/assets/images/library_placeholder.jpg")
 
- 
-@app.get("/icon/{icon_name}", tags=["Icons"], responses = {200: {"content": {"image/png": {}}}}, response_class=FileResponse)
+
+@app.get(
+    "/icon/{icon_name}",
+    tags=["Icons"],
+    responses={200: {"content": {"image/png": {}}}},
+    response_class=FileResponse,
+)
 async def get_icon(icon_name: str):
     return FileResponse(f"./app/assets/images/{icon_name}.png")
 
 
 ## Study collection endpoints
-@app.get("/study_collections/{user_id}", tags=[Groups.STUDY_COLLECTION], response_model=List[StudyCollectionPublic], status_code=200)
+@app.get(
+    "/study_collections/{user_id}",
+    tags=[Groups.STUDY_COLLECTION],
+    response_model=List[StudyCollectionPublic],
+    status_code=200,
+)
 async def get_study_collections(user_id: str):
     try:
         collections = collection_handler.get_study_collections_public(user_id)
@@ -813,7 +985,13 @@ async def get_study_collections(user_id: str):
         logging.error(e)
         raise HTTPException(status_code=404, detail="Study collections not found")
 
-@app.get("/user_study_collections/{user_id}", tags=[Groups.STUDY_COLLECTION], response_model=List[StudyCollectionPublic], status_code=200)
+
+@app.get(
+    "/user_study_collections/{user_id}",
+    tags=[Groups.STUDY_COLLECTION],
+    response_model=List[StudyCollectionPublic],
+    status_code=200,
+)
 async def get_user_study_collections(user_id: str):
     try:
         collections = collection_handler.get_study_collections_public(user_id)
@@ -821,23 +999,42 @@ async def get_user_study_collections(user_id: str):
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=404, detail="Study collections not found")
-    
 
-@app.post("/study_collection", tags=[Groups.STUDY_COLLECTION], response_model=StudyCollectionPublic, status_code=200)
-async def create_study_collection(collection: StudyCollectionPublic, background_tasks: BackgroundTasks):
+
+@app.post(
+    "/study_collection",
+    tags=[Groups.STUDY_COLLECTION],
+    response_model=StudyCollectionPublic,
+    status_code=200,
+)
+async def create_study_collection(
+    collection: StudyCollectionPublic, background_tasks: BackgroundTasks
+):
     try:
-        collection = await collection_handler.create_study_collection(name=collection.name, 
-                objective=collection.objective, 
-                user_id = collection.user_id, 
-                tasks=collection.tasks)
-        
-        background_tasks.add_task(collection_handler.generate_collection_response, collection_id = collection.id, listener = event_listener)
+        collection = await collection_handler.create_study_collection(
+            name=collection.name,
+            objective=collection.objective,
+            user_id=collection.user_id,
+            tasks=collection.tasks,
+        )
+
+        background_tasks.add_task(
+            collection_handler.generate_collection_response,
+            collection_id=collection.id,
+            listener=event_listener,
+        )
         return collection
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Study collection creation failed")
 
-@app.put("/study_collection", tags=[Groups.STUDY_COLLECTION], response_model=StudyCollectionPublic, status_code=200)
+
+@app.put(
+    "/study_collection",
+    tags=[Groups.STUDY_COLLECTION],
+    response_model=StudyCollectionPublic,
+    status_code=200,
+)
 async def update_study_collection(collection: StudyCollectionPublic):
     try:
         collection = await collection_handler.update_study_collection(collection)
@@ -846,24 +1043,43 @@ async def update_study_collection(collection: StudyCollectionPublic):
         logging.error(e)
         raise HTTPException(status_code=500, detail="Study collection update failed")
 
-@app.get("/generate_study_collection/{collection_id}", tags=[Groups.STUDY_COLLECTION], response_model=StudyCollectionPublic, status_code=200)
-async def create_study_collection(collection_id: str, background_tasks: BackgroundTasks):
+
+@app.get(
+    "/generate_study_collection/{collection_id}",
+    tags=[Groups.STUDY_COLLECTION],
+    response_model=StudyCollectionPublic,
+    status_code=200,
+)
+async def create_study_collection(
+    collection_id: str, background_tasks: BackgroundTasks
+):
     try:
         collection = collection_handler.get_study_collection_by_id(collection_id)
 
         if collection is None:
             raise HTTPException(status_code=404, detail="Study collection not found")
-        
-        background_tasks.add_task(collection_handler.generate_collection_response, collection_id = collection.id, listener = event_listener)
+
+        background_tasks.add_task(
+            collection_handler.generate_collection_response,
+            collection_id=collection.id,
+            listener=event_listener,
+        )
         return collection
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Study collection creation failed")
 
+
 def event_listener(event):
     logger.info(f"Event listner called with event: {event}")
 
-@app.get("/study_collection/{id}/related_documents", tags=[Groups.STUDY_COLLECTION], response_model=List[DocumentPublic], status_code=200)
+
+@app.get(
+    "/study_collection/{id}/related_documents",
+    tags=[Groups.STUDY_COLLECTION],
+    response_model=List[DocumentPublic],
+    status_code=200,
+)
 async def get_collection_related_documents(id: str):
     try:
         documents = collection_handler.find_related_docs_public(id)
@@ -871,20 +1087,31 @@ async def get_collection_related_documents(id: str):
     except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=404, detail="Documents not found")
-    
 
 
-@app.get("/study_collection/{id}", tags=[Groups.STUDY_COLLECTION], response_model=StudyCollectionPublic, status_code=200)
+@app.get(
+    "/study_collection/{id}",
+    tags=[Groups.STUDY_COLLECTION],
+    response_model=StudyCollectionPublic,
+    status_code=200,
+)
 async def get_study_collection(id: str):
     try:
         collection = collection_handler.get_study_collection_by_id(id)
         return collection
     except Exception as e:
         logging.error(e)
-        raise HTTPException(status_code=404, detail=f"Study collection not found. Error {str(e)}")
-    
+        raise HTTPException(
+            status_code=404, detail=f"Study collection not found. Error {str(e)}"
+        )
 
-@app.get("/study_collection/{id}/candidate_documents", tags=[Groups.STUDY_COLLECTION], response_model=List[DocumentPublic], status_code=200)
+
+@app.get(
+    "/study_collection/{id}/candidate_documents",
+    tags=[Groups.STUDY_COLLECTION],
+    response_model=List[DocumentPublic],
+    status_code=200,
+)
 async def get_collection_candidate_documents(id: str):
     try:
         documents = collection_handler.get_list_of_candidates_docs(id)
@@ -893,6 +1120,7 @@ async def get_collection_candidate_documents(id: str):
         logger.error(e)
         raise HTTPException(status_code=404, detail="Documents not found")
 
+
 @app.delete("/study_collection/{id}", tags=[Groups.STUDY_COLLECTION], status_code=204)
 async def delete_study_collection(id: str):
     try:
@@ -900,18 +1128,31 @@ async def delete_study_collection(id: str):
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Study collection deletion failed")
-    
 
-@app.post("/study_task", tags=[Groups.STUDY_COLLECTION], response_model=StudyTaskPublic, status_code=200)
+
+@app.post(
+    "/study_task",
+    tags=[Groups.STUDY_COLLECTION],
+    response_model=StudyTaskPublic,
+    status_code=200,
+)
 async def create_study_task(task: StudyTaskPublic):
     try:
-        task = collection_handler.create_study_task(collection_id=task.collection_id, description=task.description)
+        task = collection_handler.create_study_task(
+            collection_id=task.collection_id, description=task.description
+        )
         return task
     except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=500, detail="Study task creation failed")
-    
-@app.put("/study_task", tags=[Groups.STUDY_COLLECTION], response_model=StudyTaskPublic, status_code=200)
+
+
+@app.put(
+    "/study_task",
+    tags=[Groups.STUDY_COLLECTION],
+    response_model=StudyTaskPublic,
+    status_code=200,
+)
 async def update_study_task(task: StudyTaskPublic):
     try:
         task = await collection_handler.update_study_task(task)
@@ -923,19 +1164,35 @@ async def update_study_task(task: StudyTaskPublic):
     except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=500, detail="Study task update failed")
-    
-@app.post("/study_tasks", tags=[Groups.STUDY_COLLECTION], response_model=List[StudyTaskPublic], status_code=200)
+
+
+@app.post(
+    "/study_tasks",
+    tags=[Groups.STUDY_COLLECTION],
+    response_model=List[StudyTaskPublic],
+    status_code=200,
+)
 async def create_study_tasks(tasks: List[StudyTaskPublic]):
     try:
         created_tasks = []
         for task in tasks:
-            created_tasks.append(collection_handler.create_study_task(collection_id=task.collection_id, description=task.description))
+            created_tasks.append(
+                collection_handler.create_study_task(
+                    collection_id=task.collection_id, description=task.description
+                )
+            )
         return created_tasks
     except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=500, detail="Study task creation failed")
-    
-@app.get("/study_collection_tasks/{collection_id}", tags=[Groups.STUDY_COLLECTION], response_model=List[StudyTaskPublic], status_code=200)
+
+
+@app.get(
+    "/study_collection_tasks/{collection_id}",
+    tags=[Groups.STUDY_COLLECTION],
+    response_model=List[StudyTaskPublic],
+    status_code=200,
+)
 async def get_study_tasks(collection_id: str):
     try:
         tasks = collection_handler.get_study_tasks(collection_id)
@@ -943,9 +1200,14 @@ async def get_study_tasks(collection_id: str):
     except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=404, detail="Study tasks not found")
-    
 
-@app.get("/study_collection/{collection_id}/related_entities", tags=[Groups.STUDY_COLLECTION], response_model=List[TreeNode], status_code=200)
+
+@app.get(
+    "/study_collection/{collection_id}/related_entities",
+    tags=[Groups.STUDY_COLLECTION],
+    response_model=List[TreeNode],
+    status_code=200,
+)
 async def get_collection_entities(collection_id: str):
     try:
         entities = collection_handler.get_collection_entities(collection_id)
@@ -953,29 +1215,41 @@ async def get_collection_entities(collection_id: str):
     except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=404, detail="Entities not found")
-    
 
-@app.post("/collection_document_link", tags=[Groups.STUDY_COLLECTION], status_code=200, response_model= Study_Collection_Document_Link)
+
+@app.post(
+    "/collection_document_link",
+    tags=[Groups.STUDY_COLLECTION],
+    status_code=200,
+    response_model=Study_Collection_Document_Link,
+)
 async def link_collection_document(payload: CollectionDocumentlinkPayload):
     try:
-        return collection_handler.link_collection_document(collection_id = payload.collection_id, document_id = payload.document_id)
+        return collection_handler.link_collection_document(
+            collection_id=payload.collection_id, document_id=payload.document_id
+        )
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Collection document link failed")
-    
-@app.post("/collection_document_unlink", tags=[Groups.STUDY_COLLECTION], status_code=200)
+
+
+@app.post(
+    "/collection_document_unlink", tags=[Groups.STUDY_COLLECTION], status_code=200
+)
 async def unlink_collection_document(payload: CollectionDocumentlinkPayload):
     try:
-        return collection_handler.unlink_collection_document(collection_id = payload.collection_id, document_id = payload.document_id)
+        return collection_handler.unlink_collection_document(
+            collection_id=payload.collection_id, document_id=payload.document_id
+        )
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Collection document unlink failed")
-    
+
 
 async def listen_doc_generation(event: dict):
     logger.info(f"Event listener called with event: {event['message']}")
 
-    source = event['source']
+    source = event["source"]
     if source.document_id is None:
         logger.warn(f"Document was not created for source {source.id}")
         return False
@@ -985,55 +1259,71 @@ async def listen_doc_generation(event: dict):
 
 
 @app.post("/create_source_upload_file/", tags=["Bookmark / Source"])
-async def create_source_upload_file(background_tasks: BackgroundTasks, file: UploadFile, request: Request): 
-    
-    user_id = request.headers.get('user_id')
+async def create_source_upload_file(
+    background_tasks: BackgroundTasks, file: UploadFile, request: Request
+):
+
+    user_id = request.headers.get("user_id")
     user_handler = UserHandler()
     source_handler = SourceDocHandler()
-    
+
     if user_handler.user_exits(user_id) != True:
         raise HTTPException(status_code=404, detail="User not found")
 
-
-    if file.content_type != 'application/pdf':
+    if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
-    logger.info(f"File {file.filename} with contect type of {file.content_type} uploaded for user {user_id}")
-    
+    logger.info(
+        f"File {file.filename} with contect type of {file.content_type} uploaded for user {user_id}"
+    )
+
     try:
         source = source_handler.create_source(user_id=user_id, filename=file.filename)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-    
-    async with aiofiles.open(source.filepath, 'wb') as out_file:
+
+    async with aiofiles.open(source.filepath, "wb") as out_file:
         content = await file.read()  # async read
         await out_file.write(content)  # async write
         await file.close()
 
-    background_tasks.add_task(source_handler.generate_doc_from_pdf, source, listen_doc_generation)
+    background_tasks.add_task(
+        source_handler.generate_doc_from_pdf, source, listen_doc_generation
+    )
 
-    return {"filename": file.filename}        
-    
+    return {"filename": file.filename}
 
 
-@app.post("/ask_question", tags=[Groups.ASK_QUESTION], response_model=RagAnswerPublic, status_code=200)
+@app.post(
+    "/ask_question",
+    tags=[Groups.ASK_QUESTION],
+    response_model=RagAnswerPublic,
+    status_code=200,
+)
 async def ask_question(payload: QuestionPlayload):
     try:
         if payload.collection_id is None and payload.document_id is None:
-            raise HTTPException(status_code=400, detail="Collection ID or Document ID are required")
+            raise HTTPException(
+                status_code=400, detail="Collection ID or Document ID are required"
+            )
         if payload.question is None:
             raise HTTPException(status_code=400, detail="Question is required")
-        
+
         if payload.document_id is not None:
-            answer = await question_answer_handler.custom_question(question=payload.question, document_id=payload.document_id, save=True)
+            answer = await question_answer_handler.custom_question(
+                question=payload.question, document_id=payload.document_id, save=True
+            )
             return answer
         elif payload.collection_id is not None:
-            answer = await collection_handler.ask_question(collection_id=payload.collection_id, question=payload.question)
+            answer = await collection_handler.ask_question(
+                collection_id=payload.collection_id, question=payload.question
+            )
             return answer
 
     except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=500, detail="Question answering failed")
+
 
 @app.delete("/question_answer/{id}", tags=[Groups.ASK_QUESTION], status_code=204)
 async def delete_question_answer(id: str):
@@ -1044,18 +1334,28 @@ async def delete_question_answer(id: str):
         raise HTTPException(status_code=500, detail="Question answer deletion failed")
 
 
-
-@app.post("/document/question", tags=[Groups.DOCUMENT.value], response_model=RagAnswerPublic, status_code=200)
+@app.post(
+    "/document/question",
+    tags=[Groups.DOCUMENT.value],
+    response_model=RagAnswerPublic,
+    status_code=200,
+)
 async def post_document_question(payload: QuestionPlayload):
     try:
-        logger.info(f"Question endpoint called on {payload.document_id} with question {payload.question}")
-        answer = await question_answer_handler.custom_question(question=payload.question, document_id=payload.document_id)
-        logger.info(f"Question endpoint called on {payload.document_id} with answer {answer.answer}")
+        logger.info(
+            f"Question endpoint called on {payload.document_id} with question {payload.question}"
+        )
+        answer = await question_answer_handler.custom_question(
+            question=payload.question, document_id=payload.document_id
+        )
+        logger.info(
+            f"Question endpoint called on {payload.document_id} with answer {answer.answer}"
+        )
         return answer
     except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=500, detail="Answer generation failed")
-    
+
 
 @app.get("/reformat_citiation", tags=[Groups.FOR_TESTING.value], status_code=200)
 async def reformat_citiation():
@@ -1066,10 +1366,18 @@ async def reformat_citiation():
         logger.error(e)
         raise HTTPException(status_code=500, detail="Citation reformatting failed")
 
-@app.get("/broadcast/{user_id}/{document_id}", tags=[Groups.ACTION.value], status_code=200)
+
+@app.get(
+    "/broadcast/{user_id}/{document_id}", tags=[Groups.ACTION.value], status_code=200
+)
 async def broadcast_document_update(user_id: str, document_id: str):
-    doc = getter.get_document_public_by_id(document_id) 
-    message = {"user_id": user_id, "document_id": document_id, "type": "document", "data": doc.model_dump_json()}
+    doc = getter.get_document_public_by_id(document_id)
+    message = {
+        "user_id": user_id,
+        "document_id": document_id,
+        "type": "document",
+        "data": doc.model_dump_json(),
+    }
     await manager.broadcast(json.dumps(message), user_id)
 
 
@@ -1079,3 +1387,15 @@ async def websocket_endpoint(websocket: WebSocket):
     while True:
         data = await websocket.receive_text()
         await websocket.send_text(f"Message text was: {data}")
+
+
+@app.get(
+    "/search_wikidata_for_entities", tags=[Groups.FOR_TESTING.value], status_code=200
+)
+async def search_wikidata_for_entities():
+    try:
+        await entity_handler.find_entities_without_wikidata_id()
+        return {"Message": "Wikidata search completed"}
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(status_code=500, detail="Wikidata search failed")

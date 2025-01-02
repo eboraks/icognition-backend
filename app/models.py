@@ -232,7 +232,7 @@ class Entity(SQLModel, table=True):
     wikidata_id: str = Field(default=None, nullable=True)
     score: Optional[float] = Field(default=None, nullable=True)
     update_at: datetime = Field(default=datetime.now(), nullable=True)
-    synonyms: List[dict] = Field(default=[], sa_column=Column(JSONB))
+    aliases: List[dict] = Field(default=[], sa_column=Column(JSONB))
     instance_of: Optional[Dict] = Field(default={}, sa_column=Column(JSONB))
 
     ## Many to Many relationships between entities documents
@@ -831,3 +831,12 @@ class SearchResults(BaseModel):
     documents_display: Optional[List[DocumentPublic]]
     rag_answer: Optional[RagAnswerPublic]
     failure: Optional[str] = None
+
+
+class WikidataSearchResult(BaseModel):
+    id: str
+    label: str
+    description: Optional[str] = "No description"
+    aliases: List[str] = []
+    sitelinks: List[str] = []
+    instance_of: List[str] = []

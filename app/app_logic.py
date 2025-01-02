@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from app.gemini_prompts_models import EntitiesPrompt, SummarizePrompt, TopicPrompt
 
 from app.log import get_logger
+import app.entity_handler as entity_handler
 
 logging = get_logger(__name__)
 
@@ -119,128 +120,6 @@ def reassociate_bookmark_with_document(old_document_id, new_document_id):
         return bookmark
 
 
-async def generate_entities_vectors():
-    with Session(engine) as session:
-        entities = session.scalars(
-            select(Entity).where(Entity.name_vector == None)
-        ).all()
-
-        for entity in entities:
-
-            entity.name_vector = await genimi_client.generate_embedding(entity.name)
-            session.add(entity)
-
-        session.commit()
-        logging.info(f"Vector names for {len(entities)} entities were generated")
-
-    with Session(engine) as session:
-        entities = session.scalars(
-            select(Entity).where(Entity.description_vector == None)
-        ).all()
-        logging.info(f"Entities without description vector {len(entities)}")
-
-        for entity in entities:
-            entity.description_vector = await genimi_client.generate_embedding(
-                entity.name + ": " + entity.description
-            )
-            session.add(entity)
-            session.commit()
-        logging.info(f"Vector descriptions for {len(entities)} entities were generated")
-
-
-async def insert_entities(
-    user_id, entities: list[Entity], doc: Document
-) -> list[Entity]:
-
-    ## Make sure all previous created entities have vectors
-    ## This allow search for similar entities before creating a new one
-    await generate_entities_vectors()
-
-    try:
-        session_entities = []
-        for entity in entities:
-            ## Use regex to make sure the entity is words only
-            if not re.match(r"^[A-Za-z\s]+$", entity.name):
-                logging.warning(
-                    f"Entity name '{entity.name}' contains non-word characters and will be skipped"
-                )
-                continue
-
-            if entity.type == "Other":
-                ## Skip entities that are of type 'Other' to save space and computation
-                logging.warning(
-                    f"Entity name '{entity.name}' is of type 'Other' and will be skipped"
-                )
-                continue
-
-            ## Safe insert, return existing entity if it already exists or the new one
-            session_entities.append(
-                await insert_entity_safe(
-                    user_id=user_id, new_entity=entity, _document_id=doc.id
-                )
-            )
-
-        logging.info(
-            f"{len(session_entities)} Entities for Document {doc.id} were associated"
-        )
-
-        return session_entities
-    except Exception as e:
-        logging.error(f"Error inserting entities {e}")
-        return None
-
-
-async def insert_entity_safe(
-    user_id: str, new_entity: Entity, _document_id: str
-) -> Entity:
-
-    matched_entity = await getter.get_similar_entity_by_name_vector(
-        user_id=user_id, new_entity=new_entity
-    )
-
-    with Session(engine) as session:
-
-        if matched_entity:
-
-            logging.info(
-                f"Matched Entity. New: {new_entity.name} Existing: {matched_entity.name}"
-            )
-
-            session.merge(
-                Document_Entity_Link(
-                    document_id=_document_id,
-                    entity_id=matched_entity.id,
-                    verbatim_text=new_entity.verbatim_text,
-                    description=new_entity.description,
-                )
-            )
-            session.commit()
-            return new_entity
-        else:
-            new_entity.name_vector = await genimi_client.generate_embedding(
-                new_entity.name
-            )
-            new_entity.description_vector = await genimi_client.generate_embedding(
-                new_entity.name + ": " + new_entity.description
-            )
-            session.add(new_entity)
-            session.commit()
-            session.refresh(new_entity)
-
-            session.merge(Entity_User_Link(user_id=user_id, entity_id=new_entity.id))
-            session.merge(
-                Document_Entity_Link(
-                    document_id=_document_id,
-                    entity_id=new_entity.id,
-                    verbatim_text=new_entity.verbatim_text,
-                    description=new_entity.description,
-                )
-            )
-
-            session.commit()
-            return new_entity
-
-
 async def generate_summary(doc: Document, testing: bool = False) -> Document:
     """
     Function that takes pages and return a document with the generated summary,
@@ -291,103 +170,6 @@ async def generate_summary(doc: Document, testing: bool = False) -> Document:
         doc.status = "Failure"
         logging.error(f"Error generating with LLM {e}")
         update_document(doc)
-        return None
-
-
-async def generate_entities(
-    user_id: str, doc: Document, testing: bool = False
-) -> list[Entity]:
-    """
-    Generate entities for a document
-
-    args:
-        user_id: str
-        doc: Document
-        testing: bool
-    """
-    try:
-        logging.info(f"Generating entities for document {doc.id}")
-
-        ## If file exists, load it and return payload
-        filename = f"response_two_{doc.id}.json"
-        if os.path.exists(filename):
-            with open(filename, "rb") as f:
-                response = pickle.load(f)
-                logging.info(f"Response loaded from file for document {doc.id}")
-        else:
-            response = await genimi_client.generate_response(
-                EntitiesPrompt.build_prompt(doc.original_text), EntitiesPrompt
-            )
-            # logging.info(f"Response from LLM {response}")
-
-            if testing:
-                with open(filename, "wb") as f:
-                    pickle.dump(response, f)
-
-        # Using the entities builder to get the entities from the response
-        entities = response.entities_builder()
-
-        if len(entities) == 0:
-            logging.info(f"No entities were found for document {doc.id}")
-            return []
-
-        ## Iterate over entities check if verbatim_text is in the original_text, if not, remove it
-        entities = [
-            entity
-            for entity in entities
-            if doc.original_text.find(entity.verbatim_text) != -1
-        ]
-
-        return await insert_entities(user_id, entities, doc)
-
-    except Exception as e:
-        logging.error(f"generate_entities: Error generating entities from LLM API {e}")
-        return None
-
-
-async def generate_topics(
-    user_id: str, doc: Document, testing: bool = False
-) -> list[Entity]:
-    """
-    # Generate topics for a document
-    """
-    try:
-        logging.info(f"Generating entities for document {doc.id}")
-
-        ## If file exists, load it and return payload
-        filename = f"response_two_{doc.id}.json"
-        if os.path.exists(filename):
-            with open(filename, "rb") as f:
-                response = pickle.load(f)
-                logging.info(f"Response loaded from file for document {doc.id}")
-        else:
-            response = await genimi_client.generate_response(
-                TopicPrompt.build_prompt(doc.original_text), TopicPrompt
-            )
-            # logging.info(f"Response from LLM {response}")
-
-            if testing:
-                with open(filename, "wb") as f:
-                    pickle.dump(response, f)
-
-        # Using the entities builder to get the topics (also entities) from the response
-        entities = response.entities_builder()
-
-        if len(entities) == 0:
-            logging.info(f"No topic were found for document {doc.id}")
-            return []
-
-        ## Iterate over entities check if verbatim_text is in the original_text, if not, remove it
-        entities = [
-            entity
-            for entity in entities
-            if doc.original_text.find(entity.verbatim_text) != -1
-        ]
-
-        return await insert_entities(user_id, entities, doc)
-
-    except Exception as e:
-        logging.error(f"generate_topics: Error generating entities from LLM API {e}")
         return None
 
 
@@ -491,7 +273,9 @@ async def generate_embeddings(user_id: str):
         logging.error(f"Error generating embeddings for documents {e}")
 
     try:
-        await generate_embeddings_for_entities(entities=entities, user_id=user_id)
+        await entity_handler.generate_embeddings_for_entities(
+            entities=entities, user_id=user_id
+        )
     except Exception as e:
         logging.error(f"Error generating embeddings for entities {e}")
 
@@ -506,25 +290,6 @@ async def generate_embeddings(user_id: str):
     ## May, 22. Remove Embedding.version < Entity.version) from where clause, becuase embedding have old versions (versions add additive)
     ## results in always generating embeddings for entities with version above 1. That mean that updated entities will not generate new embeddings
     ## for now. In the future this can be improved, but for now it's ok.
-
-
-async def generate_embeddings_for_entities(entities: list[Entity], user_id: str):
-
-    logging.info(f"Generating embeddings for {len(entities)} entities")
-
-    with Session(engine) as session:
-
-        embeddings = []
-        for entity in entities:
-            session.add(entity)
-            for emb in entity.to_embeddings():
-                if emb.text:
-                    emb.vector = await genimi_client.generate_embedding(emb.text)
-                    emb.user_id = user_id
-                    embeddings.append(emb)
-
-        session.add_all(embeddings)
-        session.commit()
 
 
 async def generate_embeddings_for_docs(documents: list[Document], user_id: str):
