@@ -12,6 +12,17 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    BackgroundTasks,
+    status,
+    Response,
+    UploadFile,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,6 +54,7 @@ import app.app_logic as app_logic
 import app.html_parser as html_parser
 import app.getters as getter
 import app.deleters as deleters
+import app.entity_handler as entity_handler
 import logging
 from app.search_handler import SearchHandler
 from app.prompt_models import RAGPrompt
@@ -111,6 +123,9 @@ class ConnectionManager:
             logger.error(
                 f"Error in disconnecting websocket {session_id}. Error: {str(e)}"
             )
+            logger.error(
+                f"Error in disconnecting websocket {session_id}. Error: {str(e)}"
+            )
             pass
 
     async def broadcast(self, message, user_id):
@@ -123,6 +138,7 @@ class ConnectionManager:
 
         for session_id in session_ids:
             target_websocket = active_connections[session_id]
+            await target_websocket.send_text(message)
             await target_websocket.send_text(message)
 
 
@@ -416,6 +432,7 @@ async def post_regenerate_document(
 
     if bookmark is None:
         raise HTTPException(status_code=404, detail="Bookmark not found")
+        raise HTTPException(status_code=404, detail="Bookmark not found")
     return bookmark
 
 
@@ -427,7 +444,7 @@ async def get_regenerate_entities(background_tasks: BackgroundTasks):
 
 @app.get("/build_entity_vectors", tags=["Document"], status_code=200)
 async def get_build_entity_vectors(background_tasks: BackgroundTasks):
-    background_tasks.add_task(app_logic.generate_entities_vectors)
+    background_tasks.add_task(entity_handler.generate_entities_vectors)
     return {"Message": "Building entity vectors"}
 
 
@@ -1149,6 +1166,12 @@ def event_listener(event):
     response_model=List[DocumentPublic],
     status_code=200,
 )
+@app.get(
+    "/study_collection/{id}/related_documents",
+    tags=[Groups.STUDY_COLLECTION],
+    response_model=List[DocumentPublic],
+    status_code=200,
+)
 async def get_collection_related_documents(id: str):
     try:
         documents = collection_handler.find_related_docs_public(id)
@@ -1158,6 +1181,12 @@ async def get_collection_related_documents(id: str):
         raise HTTPException(status_code=404, detail="Documents not found")
 
 
+@app.get(
+    "/study_collection/{id}",
+    tags=[Groups.STUDY_COLLECTION],
+    response_model=StudyCollectionPublic,
+    status_code=200,
+)
 @app.get(
     "/study_collection/{id}",
     tags=[Groups.STUDY_COLLECTION],
@@ -1205,8 +1234,17 @@ async def delete_study_collection(id: str):
     response_model=StudyTaskPublic,
     status_code=200,
 )
+@app.post(
+    "/study_task",
+    tags=[Groups.STUDY_COLLECTION],
+    response_model=StudyTaskPublic,
+    status_code=200,
+)
 async def create_study_task(task: StudyTaskPublic):
     try:
+        task = collection_handler.create_study_task(
+            collection_id=task.collection_id, description=task.description
+        )
         task = collection_handler.create_study_task(
             collection_id=task.collection_id, description=task.description
         )
@@ -1216,6 +1254,12 @@ async def create_study_task(task: StudyTaskPublic):
         raise HTTPException(status_code=500, detail="Study task creation failed")
 
 
+@app.put(
+    "/study_task",
+    tags=[Groups.STUDY_COLLECTION],
+    response_model=StudyTaskPublic,
+    status_code=200,
+)
 @app.put(
     "/study_task",
     tags=[Groups.STUDY_COLLECTION],
@@ -1241,10 +1285,21 @@ async def update_study_task(task: StudyTaskPublic):
     response_model=List[StudyTaskPublic],
     status_code=200,
 )
+@app.post(
+    "/study_tasks",
+    tags=[Groups.STUDY_COLLECTION],
+    response_model=List[StudyTaskPublic],
+    status_code=200,
+)
 async def create_study_tasks(tasks: List[StudyTaskPublic]):
     try:
         created_tasks = []
         for task in tasks:
+            created_tasks.append(
+                collection_handler.create_study_task(
+                    collection_id=task.collection_id, description=task.description
+                )
+            )
             created_tasks.append(
                 collection_handler.create_study_task(
                     collection_id=task.collection_id, description=task.description
@@ -1256,6 +1311,12 @@ async def create_study_tasks(tasks: List[StudyTaskPublic]):
         raise HTTPException(status_code=500, detail="Study task creation failed")
 
 
+@app.get(
+    "/study_collection_tasks/{collection_id}",
+    tags=[Groups.STUDY_COLLECTION],
+    response_model=List[StudyTaskPublic],
+    status_code=200,
+)
 @app.get(
     "/study_collection_tasks/{collection_id}",
     tags=[Groups.STUDY_COLLECTION],
@@ -1277,6 +1338,12 @@ async def get_study_tasks(collection_id: str):
     response_model=List[TreeNode],
     status_code=200,
 )
+@app.get(
+    "/study_collection/{collection_id}/related_entities",
+    tags=[Groups.STUDY_COLLECTION],
+    response_model=List[TreeNode],
+    status_code=200,
+)
 async def get_collection_entities(collection_id: str):
     try:
         entities = collection_handler.get_collection_entities(collection_id)
@@ -1292,8 +1359,17 @@ async def get_collection_entities(collection_id: str):
     status_code=200,
     response_model=Study_Collection_Document_Link,
 )
+@app.post(
+    "/collection_document_link",
+    tags=[Groups.STUDY_COLLECTION],
+    status_code=200,
+    response_model=Study_Collection_Document_Link,
+)
 async def link_collection_document(payload: CollectionDocumentlinkPayload):
     try:
+        return collection_handler.link_collection_document(
+            collection_id=payload.collection_id, document_id=payload.document_id
+        )
         return collection_handler.link_collection_document(
             collection_id=payload.collection_id, document_id=payload.document_id
         )
@@ -1307,6 +1383,9 @@ async def link_collection_document(payload: CollectionDocumentlinkPayload):
 )
 async def unlink_collection_document(payload: CollectionDocumentlinkPayload):
     try:
+        return collection_handler.unlink_collection_document(
+            collection_id=payload.collection_id, document_id=payload.document_id
+        )
         return collection_handler.unlink_collection_document(
             collection_id=payload.collection_id, document_id=payload.document_id
         )
@@ -1333,6 +1412,13 @@ async def create_source_upload_file(
 ):
 
     user_id = request.headers.get("user_id")
+
+
+async def create_source_upload_file(
+    background_tasks: BackgroundTasks, file: UploadFile, request: Request
+):
+
+    user_id = request.headers.get("user_id")
     user_handler = UserHandler()
     source_handler = SourceDocHandler()
 
@@ -1341,6 +1427,10 @@ async def create_source_upload_file(
 
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
+
+    logger.info(
+        f"File {file.filename} with contect type of {file.content_type} uploaded for user {user_id}"
+    )
 
     logger.info(
         f"File {file.filename} with contect type of {file.content_type} uploaded for user {user_id}"
@@ -1356,6 +1446,9 @@ async def create_source_upload_file(
         await out_file.write(content)  # async write
         await file.close()
 
+    background_tasks.add_task(
+        source_handler.generate_doc_from_pdf, source, listen_doc_generation
+    )
     background_tasks.add_task(
         source_handler.generate_doc_from_pdf, source, listen_doc_generation
     )
@@ -1375,6 +1468,9 @@ async def ask_question(payload: QuestionPlayload):
             raise HTTPException(
                 status_code=400, detail="Collection ID or Document ID are required"
             )
+            raise HTTPException(
+                status_code=400, detail="Collection ID or Document ID are required"
+            )
         if payload.question is None:
             raise HTTPException(status_code=400, detail="Question is required")
 
@@ -1382,8 +1478,14 @@ async def ask_question(payload: QuestionPlayload):
             answer = await question_answer_handler.custom_question(
                 question=payload.question, document_id=payload.document_id, save=True
             )
+            answer = await question_answer_handler.custom_question(
+                question=payload.question, document_id=payload.document_id, save=True
+            )
             return answer
         elif payload.collection_id is not None:
+            answer = await collection_handler.ask_question(
+                collection_id=payload.collection_id, question=payload.question
+            )
             answer = await collection_handler.ask_question(
                 collection_id=payload.collection_id, question=payload.question
             )
@@ -1403,6 +1505,12 @@ async def delete_question_answer(id: str):
         raise HTTPException(status_code=500, detail="Question answer deletion failed")
 
 
+@app.post(
+    "/document/question",
+    tags=[Groups.DOCUMENT.value],
+    response_model=RagAnswerPublic,
+    status_code=200,
+)
 @app.post(
     "/document/question",
     tags=[Groups.DOCUMENT.value],
@@ -1456,3 +1564,15 @@ async def websocket_endpoint(websocket: WebSocket):
     while True:
         data = await websocket.receive_text()
         await websocket.send_text(f"Message text was: {data}")
+
+
+@app.get(
+    "/search_wikidata_for_entities", tags=[Groups.FOR_TESTING.value], status_code=200
+)
+async def search_wikidata_for_entities():
+    try:
+        await entity_handler.find_entities_without_wikidata_id()
+        return {"Message": "Wikidata search completed"}
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(status_code=500, detail="Wikidata search failed")

@@ -3,11 +3,11 @@ import json, logging, sys
 import uuid as uuid_pkg
 from sqlmodel import SQLModel, Field, Float, JSON, Integer, Relationship, String
 from sqlalchemy import Column, Index
-from sqlalchemy.dialects.postgresql import TEXT, JSONB, ARRAY, TSVECTOR
+from sqlalchemy.dialects.postgresql import JSONB, ARRAY, TSVECTOR
 from pgvector.sqlalchemy import Vector
 from typing import Optional, List, Dict
 from datetime import datetime
-from pydantic import BaseModel, model_serializer
+from pydantic import BaseModel
 from app.icog_util import remove_none_header_elements
 
 from app.gemini_client import GeminiClient
@@ -221,6 +221,7 @@ class Entity(SQLModel, table=True):
     id: uuid_pkg.UUID = Field(default_factory=uuid_pkg.uuid4, primary_key=True)
     version: int = Field(default=1, nullable=True)
     name: str = Field(default=None, nullable=True)
+    normalized_label: str = Field(default=None, nullable=True)
     name_vector: List[float] | None = Field(sa_column=Column(Vector(768)))
     verbatim_text: str = Field(default=None, nullable=True)
     description: str = Field(default=None, nullable=True)
@@ -231,7 +232,8 @@ class Entity(SQLModel, table=True):
     wikidata_id: str = Field(default=None, nullable=True)
     score: Optional[float] = Field(default=None, nullable=True)
     update_at: datetime = Field(default=datetime.now(), nullable=True)
-    synonyms: List[dict] = Field(default=[], sa_column=Column(JSON))
+    aliases: List[dict] = Field(default=[], sa_column=Column(JSONB))
+    instance_of: Optional[Dict] = Field(default={}, sa_column=Column(JSONB))
 
     ## Many to Many relationships between entities documents
     documents: list["Document"] = Relationship(
@@ -830,3 +832,12 @@ class SearchResults(BaseModel):
     documents_display: Optional[List[DocumentPublic]]
     rag_answer: Optional[RagAnswerPublic]
     failure: Optional[str] = None
+
+
+class WikidataSearchResult(BaseModel):
+    id: str
+    label: str
+    description: Optional[str] = "No description"
+    aliases: List[str] = []
+    sitelinks: List[str] = []
+    instance_of: List[str] = []
