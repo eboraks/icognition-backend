@@ -1,8 +1,9 @@
 from app.wikidata_client import WikidataClient
+import app.entity_handler as entity_handler
 import asyncio
 
 
-async def main():
+async def wikidata_search():
     client = WikidataClient()
     label = "Rousseau"
     results = await client.search_by_label(label)
@@ -12,6 +13,10 @@ async def main():
     results = await client.text_search(label)
     for result in results:
         print(result.model_dump_json())
+
+
+async def main():
+    await entity_handler.merge_duplicate_entities()
 
 
 if __name__ == "__main__":

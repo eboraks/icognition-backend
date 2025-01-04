@@ -44,7 +44,7 @@ async def create_study_collection(
     tasks: list[str] = [],
 ) -> StudyCollectionPublic:
     with Session(engine) as session:
-        collection = Study_Collection(objective=objective, name=name, user_id=user_id)
+        collection = Study_Collection(description=objective, name=name, user_id=user_id)
 
         for task in tasks:
             task = Study_Task(description=task.description)
@@ -104,8 +104,8 @@ async def update_study_collection(
         if proj_exist:
             if proj_exist.name != collection.name:
                 proj_exist.name = collection.name
-            if proj_exist.objective != collection.objective:
-                proj_exist.objective = collection.objective
+            if proj_exist.objective != collection.description:
+                proj_exist.objective = collection.description
 
             await proj_exist.generate_vector(genimi_client)
         session.commit()

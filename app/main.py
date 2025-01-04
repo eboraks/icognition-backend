@@ -1051,7 +1051,7 @@ async def create_study_collection(
     try:
         collection = await collection_handler.create_study_collection(
             name=collection.name,
-            objective=collection.objective,
+            objective=collection.description,
             user_id=collection.user_id,
             documents_ids=collection.documents_ids,
             tasks=collection.tasks,
@@ -1166,12 +1166,6 @@ def event_listener(event):
     response_model=List[DocumentPublic],
     status_code=200,
 )
-@app.get(
-    "/study_collection/{id}/related_documents",
-    tags=[Groups.STUDY_COLLECTION],
-    response_model=List[DocumentPublic],
-    status_code=200,
-)
 async def get_collection_related_documents(id: str):
     try:
         documents = collection_handler.find_related_docs_public(id)
@@ -1181,12 +1175,6 @@ async def get_collection_related_documents(id: str):
         raise HTTPException(status_code=404, detail="Documents not found")
 
 
-@app.get(
-    "/study_collection/{id}",
-    tags=[Groups.STUDY_COLLECTION],
-    response_model=StudyCollectionPublic,
-    status_code=200,
-)
 @app.get(
     "/study_collection/{id}",
     tags=[Groups.STUDY_COLLECTION],
@@ -1234,12 +1222,6 @@ async def delete_study_collection(id: str):
     response_model=StudyTaskPublic,
     status_code=200,
 )
-@app.post(
-    "/study_task",
-    tags=[Groups.STUDY_COLLECTION],
-    response_model=StudyTaskPublic,
-    status_code=200,
-)
 async def create_study_task(task: StudyTaskPublic):
     try:
         task = collection_handler.create_study_task(
@@ -1260,12 +1242,6 @@ async def create_study_task(task: StudyTaskPublic):
     response_model=StudyTaskPublic,
     status_code=200,
 )
-@app.put(
-    "/study_task",
-    tags=[Groups.STUDY_COLLECTION],
-    response_model=StudyTaskPublic,
-    status_code=200,
-)
 async def update_study_task(task: StudyTaskPublic):
     try:
         task = await collection_handler.update_study_task(task)
@@ -1279,12 +1255,6 @@ async def update_study_task(task: StudyTaskPublic):
         raise HTTPException(status_code=500, detail="Study task update failed")
 
 
-@app.post(
-    "/study_tasks",
-    tags=[Groups.STUDY_COLLECTION],
-    response_model=List[StudyTaskPublic],
-    status_code=200,
-)
 @app.post(
     "/study_tasks",
     tags=[Groups.STUDY_COLLECTION],
@@ -1317,12 +1287,6 @@ async def create_study_tasks(tasks: List[StudyTaskPublic]):
     response_model=List[StudyTaskPublic],
     status_code=200,
 )
-@app.get(
-    "/study_collection_tasks/{collection_id}",
-    tags=[Groups.STUDY_COLLECTION],
-    response_model=List[StudyTaskPublic],
-    status_code=200,
-)
 async def get_study_tasks(collection_id: str):
     try:
         tasks = collection_handler.get_study_tasks(collection_id)
@@ -1338,12 +1302,6 @@ async def get_study_tasks(collection_id: str):
     response_model=List[TreeNode],
     status_code=200,
 )
-@app.get(
-    "/study_collection/{collection_id}/related_entities",
-    tags=[Groups.STUDY_COLLECTION],
-    response_model=List[TreeNode],
-    status_code=200,
-)
 async def get_collection_entities(collection_id: str):
     try:
         entities = collection_handler.get_collection_entities(collection_id)
@@ -1353,12 +1311,6 @@ async def get_collection_entities(collection_id: str):
         raise HTTPException(status_code=404, detail="Entities not found")
 
 
-@app.post(
-    "/collection_document_link",
-    tags=[Groups.STUDY_COLLECTION],
-    status_code=200,
-    response_model=Study_Collection_Document_Link,
-)
 @app.post(
     "/collection_document_link",
     tags=[Groups.STUDY_COLLECTION],
@@ -1505,12 +1457,6 @@ async def delete_question_answer(id: str):
         raise HTTPException(status_code=500, detail="Question answer deletion failed")
 
 
-@app.post(
-    "/document/question",
-    tags=[Groups.DOCUMENT.value],
-    response_model=RagAnswerPublic,
-    status_code=200,
-)
 @app.post(
     "/document/question",
     tags=[Groups.DOCUMENT.value],

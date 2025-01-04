@@ -1,7 +1,7 @@
 import os
 import pickle
 import re
-from sqlalchemy import select
+from sqlalchemy import select, func, update
 from sqlalchemy.orm import Session
 from app.models import Entity, Document, Document_Entity_Link, Entity_User_Link, Source
 from app.gemini_client import GeminiClient
@@ -323,3 +323,80 @@ async def find_entities_without_wikidata_id():
 
         for entity in entities:
             await search_wikidata_and_update_entity(entity)
+
+
+async def find_duplicate_entities() -> list[tuple[str, list[Entity]]]:
+    """
+    Find entities with duplicate names and return them grouped.
+    Returns list of tuples containing (name, list of duplicate entities)
+    """
+    try:
+        with Session(engine) as session:
+            # First get all entity names that have duplicates
+            stmt = (
+                select(Entity.name, func.count(Entity.id).label("count"))
+                .group_by(Entity.name)
+                .having(func.count(Entity.id) > 1)
+            )
+
+            duplicate_names = session.execute(stmt).all()
+
+            # For each duplicate name, get all entities
+            duplicates = []
+            for name, _ in duplicate_names:
+                entities = session.scalars(
+                    select(Entity).where(Entity.name == name)
+                ).all()
+                duplicates.append((name, entities))
+
+            logging.info(f"Found {len(duplicates)} entities with duplicates")
+            return duplicates
+    except Exception as e:
+        logging.error(f"Error finding duplicate entities: {e}")
+        return []
+
+
+async def merge_duplicate_entities():
+    """
+    Merge all duplicate entities by keeping one and updating references
+    """
+    try:
+        duplicates = await find_duplicate_entities()
+
+        with Session(engine) as session:
+            for name, entities in duplicates:
+                # Use the first entity as primary
+                primary_entity = entities[0]
+                duplicate_entities = entities[1:]
+
+                logging.info(
+                    f"Merging {len(duplicate_entities)} duplicates of '{name}'"
+                )
+
+                for dup_entity in duplicate_entities:
+                    # Update all document_entity_links to point to primary entity
+                    stmt = (
+                        update(Document_Entity_Link)
+                        .where(Document_Entity_Link.entity_id == dup_entity.id)
+                        .values(entity_id=primary_entity.id)
+                    )
+                    session.execute(stmt)
+
+                    # Update all entity_user_links to point to primary entity
+                    stmt = (
+                        update(Entity_User_Link)
+                        .where(Entity_User_Link.entity_id == dup_entity.id)
+                        .values(entity_id=primary_entity.id)
+                    )
+                    session.execute(stmt)
+
+                    # Delete the duplicate entity
+                    session.delete(dup_entity)
+
+                session.commit()
+
+        logging.info("Completed merging duplicate entities")
+        return True
+    except Exception as e:
+        logging.error(f"Error merging duplicate entities: {e}")
+        return False

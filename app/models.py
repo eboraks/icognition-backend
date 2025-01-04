@@ -500,7 +500,7 @@ class Study_Collection(SQLModel, table=True):
 
     id: uuid_pkg.UUID = Field(default_factory=uuid_pkg.uuid4, primary_key=True)
     name: str = Field(nullable=False)
-    objective: str = Field(default=None, nullable=True)
+    description: str = Field(default=None, nullable=True)
     ai_explanation: str = Field(default=None, nullable=True)
     user_id: str = Field(nullable=False)
     status: str = Field(default="PENDING", nullable=True)
@@ -510,7 +510,7 @@ class Study_Collection(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.now, nullable=True)
 
     async def generate_vector(self, geminiClient: GeminiClient):
-        text = f"{self.objective} \n"
+        text = f"{self.description} \n"
         for task in self.tasks:
             text += f"{task.description} \n"
 
@@ -522,7 +522,7 @@ class Study_Collection(SQLModel, table=True):
         return StudyCollectionPublic(
             id=self.id,
             name=self.name,
-            objective=self.objective,
+            description=self.description,
             ai_explanation=self.ai_explanation,
             user_id=self.user_id,
             created_at=self.created_at,
@@ -811,7 +811,7 @@ class StudyCollectionPublic(SQLModel, table=False):
 
     id: Optional[uuid_pkg.UUID] = Field(default=None)
     name: str = Field(nullable=False)
-    objective: str = Field(default=None)
+    description: str = Field(default=None)
     ai_explanation: Optional[str] = Field(default=None)
     user_id: str = Field(nullable=False)
     documents_ids: Optional[List[str]] = Field(default=[])
