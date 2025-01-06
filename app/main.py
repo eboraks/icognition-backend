@@ -1084,7 +1084,9 @@ async def update_study_collection(collection: StudyCollectionPublic):
 
 
 @app.put(
-    "/study_collection/{id}/documents", tags=[Groups.STUDY_COLLECTION], status_code=200
+    "/study_collection/{collection_id}/documents",
+    tags=[Groups.STUDY_COLLECTION],
+    status_code=200,
 )
 async def update_study_collection_documents(
     collection_id: str, document_ids: List[str]

@@ -811,7 +811,7 @@ class StudyCollectionPublic(SQLModel, table=False):
 
     id: Optional[uuid_pkg.UUID] = Field(default=None)
     name: str = Field(nullable=False)
-    description: str = Field(default=None)
+    description: Optional[str] = Field(default=None)
     ai_explanation: Optional[str] = Field(default=None)
     user_id: str = Field(nullable=False)
     documents_ids: Optional[List[str]] = Field(default=[])
