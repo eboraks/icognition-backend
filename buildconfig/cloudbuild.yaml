@@ -30,7 +30,7 @@ steps:
     '--region', 'us-central1',
     '--add-volume', 'name=bucket01,type=cloud-storage,bucket=icog-dev-bucket-01',
     '--add-volume-mount', 'volume=bucket01,mount-path=/mnt/icog/dev-bucket-01',
-    '--set-env-vars', 'INSTANCE_CONNECTION_NAME=stg-icognition:us-central1:psql-icog-dev',
+    '--set-env-vars', 'INSTANCE_CONNECTION_NAME=stg-icognition:us-central1:pg17-icog-dev',
     '--set-env-vars', 'GEMINI_FLASH_MODEL=models/gemini-1.5-flash-001',
     '--set-env-vars', 'GEMINI_PRO_MODEL=models/gemini-1.5-pro-001',
     '--set-env-vars', 'GEMINI_EMBEDDING_MODEL=models/text-embedding-004',
@@ -43,7 +43,7 @@ steps:
     '--set-secrets', 'DB_USER=central-db-icog-user:latest',
     '--set-secrets', 'DB_PASSWORD=central-db-icog-password:latest',
     '--set-secrets', 'GCP_AI_KEY=GCP_AI_KEY:latest',
-    '--add-cloudsql-instances', 'stg-icognition:us-central1:psql-icog-dev',
+    '--add-cloudsql-instances', 'stg-icognition:us-central1:pg17-icog-dev',
     ]
 timeout: 1200s
 options:
