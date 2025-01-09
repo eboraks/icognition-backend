@@ -1366,13 +1366,6 @@ async def create_source_upload_file(
 ):
 
     user_id = request.headers.get("user_id")
-
-
-async def create_source_upload_file(
-    background_tasks: BackgroundTasks, file: UploadFile, request: Request
-):
-
-    user_id = request.headers.get("user_id")
     user_handler = UserHandler()
     source_handler = SourceDocHandler()
 
