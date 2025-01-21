@@ -8,26 +8,17 @@ from fastapi import (
     status,
     Response,
     UploadFile,
-    Request,
+    File,
+    Form,
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi import (
-    FastAPI,
-    HTTPException,
-    BackgroundTasks,
-    status,
-    Response,
-    UploadFile,
-    Request,
-    WebSocket,
-    WebSocketDisconnect,
-)
+
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from typing import List
+from typing import List, Annotated
 from app.models import (
     User,
     Source,
@@ -1324,9 +1315,7 @@ async def link_collection_document(payload: CollectionDocumentlinkPayload):
         return collection_handler.link_collection_document(
             collection_id=payload.collection_id, document_id=payload.document_id
         )
-        return collection_handler.link_collection_document(
-            collection_id=payload.collection_id, document_id=payload.document_id
-        )
+
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Collection document link failed")
@@ -1340,9 +1329,7 @@ async def unlink_collection_document(payload: CollectionDocumentlinkPayload):
         return collection_handler.unlink_collection_document(
             collection_id=payload.collection_id, document_id=payload.document_id
         )
-        return collection_handler.unlink_collection_document(
-            collection_id=payload.collection_id, document_id=payload.document_id
-        )
+
     except Exception as e:
         logging.error(e)
         raise HTTPException(status_code=500, detail="Collection document unlink failed")
@@ -1362,10 +1349,11 @@ async def listen_doc_generation(event: dict):
 
 @app.post("/create_source_upload_file/", tags=["Bookmark / Source"])
 async def create_source_upload_file(
-    background_tasks: BackgroundTasks, file: UploadFile, request: Request
+    file: Annotated[UploadFile, File()],
+    user_id: Annotated[str, Form()],
+    background_tasks: BackgroundTasks,
 ):
 
-    user_id = request.headers.get("user_id")
     user_handler = UserHandler()
     source_handler = SourceDocHandler()
 
@@ -1374,10 +1362,6 @@ async def create_source_upload_file(
 
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
-
-    logger.info(
-        f"File {file.filename} with contect type of {file.content_type} uploaded for user {user_id}"
-    )
 
     logger.info(
         f"File {file.filename} with contect type of {file.content_type} uploaded for user {user_id}"
@@ -1393,9 +1377,6 @@ async def create_source_upload_file(
         await out_file.write(content)  # async write
         await file.close()
 
-    background_tasks.add_task(
-        source_handler.generate_doc_from_pdf, source, listen_doc_generation
-    )
     background_tasks.add_task(
         source_handler.generate_doc_from_pdf, source, listen_doc_generation
     )
