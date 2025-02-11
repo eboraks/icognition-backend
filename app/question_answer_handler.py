@@ -1,3 +1,7 @@
+from app.log import get_logger
+logging = get_logger(__name__)
+
+
 from sqlalchemy import and_, select
 import app.getters as getter
 from app.models import (
@@ -12,8 +16,6 @@ from app.gemini_client import GeminiClient
 from app.gemini_prompts_models import AskQuestionPrompt, IdentifyQuestionsAnswerPrompt
 
 
-from app.log import get_logger
-logging = get_logger(__name__)
 
 engine = get_engine()
 genimi_client = GeminiClient()

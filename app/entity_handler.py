@@ -1,3 +1,7 @@
+from app.log import get_logger
+logging = get_logger(__name__)
+
+
 import os
 import pickle
 import re
@@ -8,12 +12,10 @@ from app.gemini_client import GeminiClient
 import app.getters as getter
 from app.wikidata_client import WikidataClient
 from app.gemini_prompts_models import EntitiesPrompt, TopicPrompt
-from app.log import get_logger
 from app.db_connector import get_engine
 
 engine = get_engine()
 
-logging = get_logger(__name__)
 genimi_client = GeminiClient()
 
 wikidata = WikidataClient()

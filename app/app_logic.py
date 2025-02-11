@@ -1,3 +1,7 @@
+## Initialize logging
+from app.log import get_logger
+logging = get_logger(__name__)
+
 import datetime
 import os, pickle
 import re
@@ -25,13 +29,9 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import Session
-
 from app.gemini_prompts_models import EntitiesPrompt, SummarizePrompt, TopicPrompt
-
-from app.log import get_logger
 import app.entity_handler as entity_handler
 
-logging = get_logger(__name__)
 
 
 env_vers = os.environ
@@ -159,8 +159,11 @@ async def generate_summary(doc: Document, testing: bool = False) -> Document:
     try:
         ## raw_answer is the response from LLM with the support sentences.
         doc = response.populate_document(doc)
-        doc.ai_summary_vector = await doc.generate_vector(geminiClient=genimi_client)
-        doc.status = "Done"
+
+        if doc.ai_is_about and doc.ai_bullet_points:
+            doc.ai_summary_vector = await doc.generate_vector(
+                geminiClient=genimi_client
+            )
         doc.update_at = datetime.datetime.now()
         update_document(doc)
         logging.info(f"Document {doc.id} was updated with summary and bullet points")

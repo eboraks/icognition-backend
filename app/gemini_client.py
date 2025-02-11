@@ -1,15 +1,13 @@
+from app.log import get_logger
+logging = get_logger(__name__)
+
+
 import os
 import google.generativeai as genai
 from pydantic import BaseModel
 from pydantic_core import ValidationError
-import logging
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s [%(filename)s:%(lineno)d]',
-    datefmt='%H:%M:%S'
-)
-logger = logging.getLogger("gemini_client")
+
 
 class GeminiClient:
 
@@ -19,6 +17,9 @@ class GeminiClient:
         self.pro_model_name = _pro_model_name
         genai.configure(api_key = os.getenv("GCP_AI_KEY"))
         
+        # Initialize clients once
+        self.flash_client = genai.GenerativeModel(self.flash_model_name)
+        self.pro_client = genai.GenerativeModel(self.pro_model_name)
 
     def get_models_names(self):
         """ 
@@ -38,13 +39,15 @@ class GeminiClient:
 
     async def generate_response(self, prompt: str, prompt_model: BaseModel, gemini_model = os.getenv("GEMINI_FLASH_MODEL"), attempts: int = 3):
         
-
-        client = genai.GenerativeModel(gemini_model)
-        logging.info(f"Generating response for prompt_model: {prompt_model}")
-        response = await client.generate_content_async(prompt, 
-                generation_config={"response_mime_type": "application/json",  "response_schema": prompt_model})
-        
         try:
+            # Use the appropriate pre-initialized client
+            client = self.flash_client if gemini_model == self.flash_model_name else self.pro_client
+            
+            logging.info(f"Gemini Client: Generating response for prompt_model: {prompt_model}")
+            response = await client.generate_content_async(prompt, 
+                generation_config={"response_mime_type": "application/json",  "response_schema": prompt_model})
+            
+            logging.info(f"Gemini Client: Response: {response.text[0:20]}")
             validated_response = prompt_model.model_validate_json(response.text, strict=False)
         except ValidationError as e:
             logging.error(f"Error validating the response: {e}")

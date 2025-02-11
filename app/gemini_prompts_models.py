@@ -74,9 +74,15 @@ class SummarizePrompt(BaseModel):
         Returns:
             Document: The populated document.
         """
-        document.ai_is_about = self.what_this_article_is_about
-        document.ai_bullet_points = self.key_points
-        document.ai_citations = [c.__dict__ for c in self.citations_sentances]
+        if self.what_this_article_is_about:
+            document.ai_is_about = self.what_this_article_is_about
+            document.ai_bullet_points = self.key_points
+            document.ai_citations = [c.__dict__ for c in self.citations_sentances]
+            document.llm_service_meta = {'message': self.meta_answer}
+            document.status = "Done"
+        else:
+            document.llm_service_meta = {'message': self.meta_answer}
+            document.status = "Failure"
 
         return document
 
@@ -270,7 +276,7 @@ class AskQuestionPrompt(BaseModel):
             If you don't know the answer, please don't share false information.
             Make sure to include the documents_citations with the verbatim text of up to ten sentences/text you used to answer the question.
             If there are no documents citations, include an empty field list for example, documents_citations: [].
-            Format the field answer with HTML to make it more readable, for example, <p> for paragraphs, <h1> for headers, <ul> for lists, etc.
+            Format the field answer with HTML to make it more readable, for example, <p> for paragraphs, <h5> for headers and titles, <ul> for lists, etc.
             The response must be valid JSON.
             Question: {QUESTION}\n {DOCS}""".format(
             QUESTION=question, DOCS=_documents

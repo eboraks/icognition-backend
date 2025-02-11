@@ -1,3 +1,7 @@
+from app.log import get_logger
+logger = get_logger(__name__)
+
+
 import asyncio
 from enum import Enum
 import time
@@ -46,10 +50,10 @@ import app.html_parser as html_parser
 import app.getters as getter
 import app.deleters as deleters
 import app.entity_handler as entity_handler
-import logging
 from app.search_handler import SearchHandler
 from app.prompt_models import RAGPrompt
 from app.user_handler import UserHandler
+
 
 search = SearchHandler()
 
@@ -68,14 +72,6 @@ class Groups(Enum):
 
 app = FastAPI()
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s [%(filename)s:%(lineno)d]",
-    datefmt="%H:%M:%S",
-)
-logger = logging.getLogger("icognition")
-
 
 origins = [
     "chrome-extension://oeilkphkfimekfadiflbljknbhfmppej",
@@ -93,22 +89,22 @@ app.add_middleware(
 )
 
 
-# websocket setup
-active_connections: dict[str] = {}
-
 
 class ConnectionManager:
+    
+    active_connections: dict[str, WebSocket] = {}
+
     async def connect(self, websocket: WebSocket, session_id: str):
 
         await websocket.accept()
-        active_connections[session_id] = websocket
+        self.active_connections[session_id] = websocket
         logger.info(f"Websocket connected for {session_id}")
 
     async def disconnect(self, session_id: str, message: str):
         try:
-            websocket = active_connections[session_id]
+            websocket = self.active_connections[session_id]
             await websocket.close(code=1000, reason=message)
-            del active_connections[session_id]
+            del self.active_connections[session_id]
             logger.info(f"Websocket disconnected for {session_id}")
         except Exception as e:
             logger.error(
@@ -119,18 +115,30 @@ class ConnectionManager:
             )
             pass
 
-    async def broadcast(self, message, user_id):
-
-        ## Find session_id that include the string user_id
-        session_ids = [key for key in active_connections.keys() if user_id in key]
-
-        if len(session_ids) == 0:
-            logger.info(f"Could not find websocket for {user_id} in broadcast")
-
-        for session_id in session_ids:
-            target_websocket = active_connections[session_id]
-            await target_websocket.send_text(message)
-            await target_websocket.send_text(message)
+    async def broadcast(self, message: str, user_id: str):
+        # Find all session keys that contain the user_id
+        matching_sessions = [
+            session_id for session_id in self.active_connections.keys() 
+            if user_id in session_id
+        ]
+        
+        disconnected = []
+        for session_id in matching_sessions:
+            websocket = self.active_connections[session_id]
+            try:
+                await websocket.send_text(message)
+            except RuntimeError as e:
+                # Connection is closed, mark for removal
+                logger.info(f"WebSocket closed for session {session_id}, removing connection")
+                disconnected.append(session_id)
+            except Exception as e:
+                logger.error(f"Error broadcasting message: {str(e)}")
+                disconnected.append(session_id)
+        
+        # Clean up disconnected websockets
+        for session_id in disconnected:
+            if session_id in self.active_connections:
+                del self.active_connections[session_id]
 
 
 manager = ConnectionManager()
@@ -345,7 +353,7 @@ async def create_bookmark(
 
                 message = {
                     "user_id": payload.user_id,
-                    "document_id": _source.document_id,
+                    "document_id": str(_source.document_id),
                     "type": "document_in_progress",
                     "data": _source.model_dump_json(),
                 }
@@ -358,14 +366,12 @@ async def create_bookmark(
                 )
 
                 background_tasks.add_task(
-                    run_async_task_sync(generate_document_summary, _source)
+                    run_async_task_sync, generate_document_summary, _source
                 )
                 background_tasks.add_task(
-                    run_async_task_sync(generate_document_qanda, _source)
+                    run_async_task_sync, generate_document_qanda, _source
                 )
-                background_tasks.add_task(
-                    run_async_task_sync(generate_document_entities, _source)
-                )
+                
                 response.status_code = status.HTTP_201_CREATED
                 return _source
         else:
@@ -374,14 +380,12 @@ async def create_bookmark(
             logger.info(f"Source created for {_source.url}")
 
             background_tasks.add_task(
-                run_async_task_sync(generate_document_summary, _source)
+                run_async_task_sync, generate_document_summary, _source
             )
             background_tasks.add_task(
-                run_async_task_sync(generate_document_qanda, _source)
+                run_async_task_sync, generate_document_qanda, _source
             )
-            background_tasks.add_task(
-                run_async_task_sync(generate_document_entities, _source)
-            )
+            
 
             response.status_code = status.HTTP_201_CREATED
             message = {
@@ -423,8 +427,17 @@ async def post_regenerate_document(
 
     if bookmark is None:
         raise HTTPException(status_code=404, detail="Bookmark not found")
-        raise HTTPException(status_code=404, detail="Bookmark not found")
     return bookmark
+
+
+@app.get("/extract_entities_from_document", tags=["Document"], status_code=201)
+async def extract_entities_from_document(document_id: str, background_tasks: BackgroundTasks):
+    
+    background_tasks.add_task(
+        generate_document_entities, document_id
+    )
+    return {"Message": "Extracting entities from document"}
+
 
 
 @app.get("/regenerate/entities", tags=["Document"], status_code=200)
@@ -515,25 +528,26 @@ def run_async_task_sync(func, *args, **kwargs):
         logger.error(f"Error running async task {func.__name__}: {str(e)}")
 
 
-async def generate_document_entities(source: Source):
-    document = getter.get_document_by_id(source.document_id)
+async def generate_document_entities(document_id: str):
+    document = getter.get_document_by_id(document_id)
+    user_id = getter.get_source_by_document_id(document_id).user_id
 
     try:
         if len(getter.get_entities_ids_by_document_id(document.id)) == 0:
-            ent_success = await app_logic.generate_entities(
-                user_id=source.user_id, doc=document
+            ent_success = await entity_handler.generate_entities(
+                user_id=user_id, doc=document
             )
-            topic_success = await app_logic.generate_topics(
-                user_id=source.user_id, doc=document
+            topic_success = await entity_handler.generate_topics(
+                user_id=user_id, doc=document
             )
             logger.info(
                 f"Background task for generating entities and topics for: {document.id} completed. Result, number of entities: {len(ent_success)} number of topics: {len(topic_success)}"
             )
             await app_logic.generate_embeddings_for_entities(
-                entities=ent_success, user_id=source.user_id
+                entities=ent_success, user_id=user_id
             )
             await app_logic.generate_embeddings_for_entities(
-                entities=topic_success, user_id=source.user_id
+                entities=topic_success, user_id=user_id
             )
     except Exception as e:
         logger.error("Generate document entities ", e)
@@ -604,10 +618,10 @@ async def regenerate_document(document: Document):
 
     try:
         if len(getter.get_entities_ids_by_document_id(document.id)) == 0:
-            ent_success = await app_logic.generate_entities(
+            ent_success = await entity_handler.generate_entities(
                 user_id=source.user_id, doc=document
             )
-            topic_success = await app_logic.generate_topics(
+            topic_success = await entity_handler.generate_topics(
                 user_id=source.user_id, doc=document
             )
             logger.info(
@@ -658,10 +672,10 @@ async def regenerate_entities():
     for document in documents:
         try:
             user_id = getter.get_source_by_document_id(doc.id).user_id
-            ent_success = await app_logic.generate_entities(
+            ent_success = await entity_handler.generate_entities(
                 user_id=user_id, doc=document
             )
-            topic_success = await app_logic.generate_topics(
+            topic_success = await entity_handler.generate_topics(
                 user_id=user_id, doc=document
             )
             logger.info(
