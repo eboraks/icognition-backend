@@ -1,11 +1,13 @@
 from app.log import get_logger
-logging = get_logger(__name__)
+logger = get_logger(__name__)
 
 
 import os
 import google.generativeai as genai
 from pydantic import BaseModel
 from pydantic_core import ValidationError
+import asyncio
+import json
 
 
 
@@ -37,31 +39,32 @@ class GeminiClient:
         return models_names 
 
 
-    async def generate_response(self, prompt: str, prompt_model: BaseModel, gemini_model = os.getenv("GEMINI_FLASH_MODEL"), attempts: int = 3):
-        
+    async def generate_response(self, prompt: str, prompt_model: BaseModel):
+        logger.info(f"Gemini Client: Generating response for prompt_model: {prompt_model}")
         try:
-            # Use the appropriate pre-initialized client
-            client = self.flash_client if gemini_model == self.flash_model_name else self.pro_client
             
-            logging.info(f"Gemini Client: Generating response for prompt_model: {prompt_model}")
+
+            # Use the appropriate pre-initialized client
+            client = self.flash_client
+            
+            # Make the API call
             response = await client.generate_content_async(prompt, 
                 generation_config={"response_mime_type": "application/json",  "response_schema": prompt_model})
             
-            logging.info(f"Gemini Client: Response: {response.text[0:20]}")
-            validated_response = prompt_model.model_validate_json(response.text, strict=False)
-        except ValidationError as e:
-            logging.error(f"Error validating the response: {e}")
-            if (attempts > 0):
-                logging.info(f"Retrying the response generation for prompt_model: {prompt_model}")
-                return await self.generate_response(prompt=prompt, prompt_model=prompt_model, gemini_model=os.getenv("GEMINI_FLASH_MODEL"), attempts = attempts - 1)
-            
+            # Parse and validate response
+            try:
+                json_response = json.loads(response.text)
+                validated_response = prompt_model.model_validate(json_response)
+                return validated_response
+            except Exception as e:
+                logger.error(f"Error validating the response: {str(e)}")
+                raise e
+
         except Exception as e:
-            logging.error(f"Error validating the response: {e}")
-            return await self.generate_response(prompt=prompt, prompt_model=prompt_model, gemini_model=os.getenv("GEMINI_FLASH_MODEL"), attempts = attempts - 1)
+            logger.error(f"Error validating the response: {str(e)}")
+            raise e
     
 
-        return validated_response
-    
     async def generate_embedding(self, content: str, title: str = None, task_type: str = "retrieval_document", model_name: str = os.getenv("GEMINI_EMBEDDING_MODEL")):
         """
         Generate embeddings for a given string content
@@ -87,14 +90,15 @@ class GeminiClient:
                     title=title
                 )
         except Exception as e:
-            logging.error(f"Error generating embeddings: {e}")
+            logger.error(f"Error generating embeddings: {e}")
             result = None
 
         try: 
             return result['embedding']
         except Exception as e:
-            logging.error(f"Error extracting embeddings: {e}")
+            logger.error(f"Error extracting embeddings: {e}")
             return None
+    
     
     @classmethod
     def pro_model_name(cls):

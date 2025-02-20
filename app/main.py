@@ -53,6 +53,9 @@ import app.entity_handler as entity_handler
 from app.search_handler import SearchHandler
 from app.prompt_models import RAGPrompt
 from app.user_handler import UserHandler
+from app.background_task_manager import task_manager
+import subprocess
+import os.path
 
 
 search = SearchHandler()
@@ -364,29 +367,40 @@ async def create_bookmark(
                 logger.info(
                     f"Document status is {_doc.status} attempting to regenerated document for {page.clean_url}"
                 )
-
+                await generate_document_summary(_source)
+                await generate_document_qanda(_source)
+                
+                # Run entity generation in external process
                 background_tasks.add_task(
-                    run_async_task_sync, generate_document_summary, _source
-                )
-                background_tasks.add_task(
-                    run_async_task_sync, generate_document_qanda, _source
+                    run_external_function,
+                    "generate_document_entities",
+                    [str(_source.document_id)]
                 )
                 
                 response.status_code = status.HTTP_201_CREATED
+                message = {
+                    "user_id": payload.user_id,
+                    "document_id": str(_source.document_id),
+                    "type": "document_in_progress",
+                    "data": None,
+                }
+                await manager.broadcast(json.dumps(message), payload.user_id)
                 return _source
         else:
             logger.info(f"Page object created for {page.clean_url}")
             _source = app_logic.create_source_bookmark(page, payload.user_id)
             logger.info(f"Source created for {_source.url}")
 
+            await generate_document_summary(_source)
+            await generate_document_qanda(_source)
+            
+            # Run entity generation in external process
             background_tasks.add_task(
-                run_async_task_sync, generate_document_summary, _source
-            )
-            background_tasks.add_task(
-                run_async_task_sync, generate_document_qanda, _source
+                run_external_function,
+                "generate_document_entities",
+                [str(_source.document_id)]
             )
             
-
             response.status_code = status.HTTP_201_CREATED
             message = {
                 "user_id": payload.user_id,
@@ -490,6 +504,11 @@ async def generate_document_summary(source: Source):
 
             await broadcastProgress(doc_id, source.user_id, 15)
             document = await app_logic.generate_summary(doc=document)
+            
+            if document is None:
+                logger.error(f"Document generate summary failed for {source.document_id}")
+                raise Exception("Document generate summary failed")
+            
             await broadcastProgress(doc_id, source.user_id, 30)
 
             ## Broadcast the document to the user
@@ -513,19 +532,6 @@ async def generate_document_summary(source: Source):
         logger.error("generate_document summary", e)
 
 
-def run_async_task_sync(func, *args, **kwargs):
-
-    logger.info(
-        f"Running async task for {func.__name__} with args: {args} and kwargs: {kwargs}"
-    )
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        loop.create_task(func(*args, **kwargs))
-    except Exception as e:
-        logger.error(f"Error running async task {func.__name__}: {str(e)}")
 
 
 async def generate_document_entities(document_id: str):
@@ -1025,7 +1031,7 @@ async def get_study_collections(user_id: str):
         collections = collection_handler.get_study_collections_public(user_id)
         return collections
     except Exception as e:
-        logging.error(e)
+        logger.error(e)
         raise HTTPException(status_code=404, detail="Study collections not found")
 
 
@@ -1040,7 +1046,7 @@ async def get_user_study_collections(user_id: str):
         collections = collection_handler.get_study_collections_public(user_id)
         return collections
     except Exception as e:
-        logging.error(e)
+        logger.error(e)
         raise HTTPException(status_code=404, detail="Study collections not found")
 
 
@@ -1069,7 +1075,7 @@ async def create_study_collection(
         )
         return collection
     except Exception as e:
-        logging.error(e)
+        logger.error(e)
         raise HTTPException(status_code=500, detail="Study collection creation failed")
 
 
@@ -1084,7 +1090,7 @@ async def update_study_collection(collection: StudyCollectionPublic):
         collection = await collection_handler.update_study_collection(collection)
         return collection
     except Exception as e:
-        logging.error(e)
+        logger.error(e)
         raise HTTPException(status_code=500, detail="Study collection update failed")
 
 
@@ -1109,7 +1115,7 @@ async def update_study_collection_documents(
                 )
             collection_handler.link_collection_document(collection_id, document_id)
     except Exception as e:
-        logging.error(e)
+        logger.error(e)
         raise HTTPException(status_code=500, detail="Study collection update failed")
 
 
@@ -1133,7 +1139,7 @@ async def delete_study_collection_document(
                 raise HTTPException(status_code=404, detail="Document not found")
             collection_handler.unlink_collection_document(collection_id, document_id)
     except Exception as e:
-        logging.error(e)
+        logger.error(e)
         raise HTTPException(status_code=500, detail="Study collection update failed")
 
 
@@ -1159,7 +1165,7 @@ async def generate_study_collection(
         )
         return collection
     except Exception as e:
-        logging.error(e)
+        logger.error(e)
         raise HTTPException(status_code=500, detail="Study collection creation failed")
 
 
@@ -1193,7 +1199,7 @@ async def get_study_collection(id: str):
         collection = collection_handler.get_study_collection_by_id(id)
         return collection
     except Exception as e:
-        logging.error(e)
+        logger.error(e)
         raise HTTPException(
             status_code=404, detail=f"Study collection not found. Error {str(e)}"
         )
@@ -1219,7 +1225,7 @@ async def delete_study_collection(id: str):
     try:
         collection_handler.delete_study_collection(id)
     except Exception as e:
-        logging.error(e)
+        logger.error(e)
         raise HTTPException(status_code=500, detail="Study collection deletion failed")
 
 
@@ -1277,11 +1283,6 @@ async def create_study_tasks(tasks: List[StudyTaskPublic]):
                     collection_id=task.collection_id, description=task.description
                 )
             )
-            created_tasks.append(
-                collection_handler.create_study_task(
-                    collection_id=task.collection_id, description=task.description
-                )
-            )
         return created_tasks
     except Exception as e:
         logger.error(e)
@@ -1331,7 +1332,7 @@ async def link_collection_document(payload: CollectionDocumentlinkPayload):
         )
 
     except Exception as e:
-        logging.error(e)
+        logger.error(e)
         raise HTTPException(status_code=500, detail="Collection document link failed")
 
 
@@ -1345,7 +1346,7 @@ async def unlink_collection_document(payload: CollectionDocumentlinkPayload):
         )
 
     except Exception as e:
-        logging.error(e)
+        logger.error(e)
         raise HTTPException(status_code=500, detail="Collection document unlink failed")
 
 
@@ -1410,24 +1411,18 @@ async def ask_question(payload: QuestionPlayload):
             raise HTTPException(
                 status_code=400, detail="Collection ID or Document ID are required"
             )
-            raise HTTPException(
-                status_code=400, detail="Collection ID or Document ID are required"
-            )
+
         if payload.question is None:
             raise HTTPException(status_code=400, detail="Question is required")
 
         if payload.document_id is not None:
-            answer = await question_answer_handler.custom_question(
-                question=payload.question, document_id=payload.document_id, save=True
-            )
+            
             answer = await question_answer_handler.custom_question(
                 question=payload.question, document_id=payload.document_id, save=True
             )
             return answer
         elif payload.collection_id is not None:
-            answer = await collection_handler.ask_question(
-                collection_id=payload.collection_id, question=payload.question
-            )
+            
             answer = await collection_handler.ask_question(
                 collection_id=payload.collection_id, question=payload.question
             )
@@ -1512,3 +1507,45 @@ async def search_wikidata_for_entities():
     except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=500, detail="Wikidata search failed")
+
+
+@app.post("/run_external/{function_name}", tags=[Groups.ACTION.value])
+async def run_external_function(function_name: str, args: list[str] = []):
+    """Execute a function in external_runner.py"""
+    logger.info(f"Running external function {function_name} with args: {args}")
+    
+    # Construct the command
+    runner_path = os.path.join(os.path.dirname(__file__), "external_runner.py")
+    command = ["python", runner_path, function_name] + args
+    
+    try:
+        # Create and run the subprocess
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        # Get output
+        stdout, stderr = await process.communicate()
+        
+        # Log results
+        logger.info(f"External function completed with return code: {process.returncode}")
+        if stdout:
+            logger.info(f"stdout: {stdout.decode()}")
+        if stderr:
+            logger.error(f"stderr: {stderr.decode()}")
+            
+        return {
+            "status": "completed",
+            "return_code": process.returncode,
+            "stdout": stdout.decode() if stdout else None,
+            "stderr": stderr.decode() if stderr else None
+        }
+        
+    except Exception as e:
+        logger.error(f"Error running external function: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Failed to run external function: {str(e)}"
+        )
