@@ -22,6 +22,7 @@ class GeminiClient:
         # Initialize clients once
         self.flash_client = genai.GenerativeModel(self.flash_model_name)
         self.pro_client = genai.GenerativeModel(self.pro_model_name)
+        self.flash_2_client = genai.GenerativeModel('models/gemini-2.0-flash')
 
     def get_models_names(self):
         """ 

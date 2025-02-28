@@ -178,7 +178,7 @@ def get_meta_tags(soup: BeautifulSoup) -> dict:
     <meta data-rh="true" property="og:url" content="https://www.nytimes.com/2024/05/16/opinion/israeli-palestine-psyche.html">
     <meta data-rh="true" property="og:title" content="Opinion | The View Within Israel Turns Bleak">
     <meta data-rh="true" property="og:image" content="https://static01.nyt.com/images/2024/05/18/multimedia/17stack-3-hkpc/17stack-3-hkpc-facebookJumbo.jpg">
-    <meta data-rh="true" property="og:description" content="Attitudes toward the “Palestinian problem” range from detached fatigue to the belief that driving Palestinians into submission is God’s work.">
+    <meta data-rh="true" property="og:description" content="Attitudes toward the "Palestinian problem" range from detached fatigue to the belief that driving Palestinians into submission is God's work.">
     <meta data-rh="true" property="og:type" content="article">
     <meta property="og:site_name" content="The Atlantic">
     <meta name="author" content="Ed Yong">
@@ -344,9 +344,13 @@ def create_page(payload: PagePayload) -> Page:
 
         paragraphs = get_paragraphs(article_element)
         elements = json.dumps(get_elements(article_element))
+        # Convert BeautifulSoup Tag to string
+        html_root = str(article_element) if article_element else None
     elif payload.source == "pdf":
+        root_element = html
         paragraphs = get_paragraphs(html)
         elements = json.dumps(get_elements(html))
+        html_root = str(html) if html else None
 
  
     if paragraphs is None:
@@ -374,7 +378,7 @@ def create_page(payload: PagePayload) -> Page:
     if page.clean_url is None:
         page.clean_url = clean_url(payload.url)
     page.metadata_description = get_description(metatags)
-
+    page.html_root_element = html_root  # Store as string instead of BS4 Tag
 
     return page
 
@@ -442,3 +446,4 @@ def identify_lowest_common_article_div(soup: BeautifulSoup) -> str:
                 selected_div = div
         
     return selected_div
+

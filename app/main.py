@@ -1,4 +1,5 @@
 from app.log import get_logger
+from app.gemini_chat_prompts_models import InitiateDocumentChat
 logger = get_logger(__name__)
 
 
@@ -182,6 +183,14 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, source: str):
         await manager.disconnect(session_id, "Error in websocket connection")
         # await manager.broadcast("Client disconnected.", user_id)
 
+ 
+def event_listener(**kwargs):
+    print(f"Document ID: {kwargs['doc_id']}")
+    print(f"Ask: {kwargs['ask']}")
+    print(f"Response: {kwargs['response']}")
+    print("-" * 50)
+
+
 
 @app.get("/")
 async def root():
@@ -334,7 +343,14 @@ async def create_bookmark(
     try:
         _source = getter.get_source_by_url(payload.user_id, page.clean_url)
         if _source is not None:
+            
+            _source.html_root_element = page.html_root_element
+            app_logic.merge_record(_source)
+            
             _doc = getter.get_document_by_source_id(_source.id)
+            doc_chat = InitiateDocumentChat(document_id = _doc.id)
+            background_tasks.add_task(doc_chat.init_doc_chat, listener = event_listener)
+            
             if _doc.status == "Done":
                 logger.info(f"Bookmark already exists for {page.clean_url}")
                 response.status_code = status.HTTP_200_OK
@@ -391,8 +407,12 @@ async def create_bookmark(
             _source = app_logic.create_source_bookmark(page, payload.user_id)
             logger.info(f"Source created for {_source.url}")
 
+
+
             await generate_document_summary(_source)
             await generate_document_qanda(_source)
+            
+            
             
             # Run entity generation in external process
             background_tasks.add_task(

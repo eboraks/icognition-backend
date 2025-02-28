@@ -1,4 +1,5 @@
 ## Initialize logging
+from sqlmodel import SQLModel
 from app.log import get_logger
 logging = get_logger(__name__)
 
@@ -10,6 +11,7 @@ from app import html_parser
 from app.db_connector import get_engine
 from app.source_doc_handler import SourceDocHandler
 from app.models import (
+    Chat_History,
     DocumentCitation,
     Entity_User_Link,
     Question_Answer,
@@ -61,6 +63,40 @@ def create_page(payload: PagePayload) -> Page:
 
     return page
 
+
+def insert_chat_history(chat_history: Chat_History):
+    with Session(engine) as session:
+        session.add(chat_history)
+        session.commit()
+        session.refresh(chat_history)
+    return chat_history
+
+
+
+def merge_record(record):
+    """
+    Merge a record into the database
+    
+    Args:
+        record: SQLAlchemy model instance to merge
+        
+    Returns:
+        The merged record or None if input was None
+        
+    Raises:
+        ValueError: If record is None
+    """
+    if record is None:
+        logging.error("Cannot merge None record")
+        raise ValueError("Record cannot be None")
+        
+    try:
+        with Session(engine) as session:
+            session.merge(record)
+            session.commit()
+    except Exception as e:
+        logging.error(f"Error merging record: {str(e)}")
+        raise e
 
 def clone_document(doc: Document):
 

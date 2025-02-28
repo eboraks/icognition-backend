@@ -1,6 +1,7 @@
 import time
 from app.db_connector import get_engine
 from app.models import (
+    Chat_History,
     Source,
     Document,
     Document_Entity_Link,
@@ -14,6 +15,8 @@ from app.models import (
     SubTopic_Entity_Link,
     SubTopicDisplay,
     TreeNode,
+    Content_Type,
+    Entity_Type,
 )
 from app.deleters import delete_document_and_associate_records
 from sqlalchemy.orm import Session, joinedload
@@ -359,13 +362,22 @@ def get_source_by_document_id(document_id: str) -> Source:
 
 
 def get_source_by_url(user_id: str, url: str) -> Source:
+    """Get source by URL and user ID.
+    
+    Args:
+        user_id (str): The user ID
+        url (str): The URL to look up
+        
+    Returns:
+        Source: The source object if found, None otherwise
+    """
     url = html_parser.clean_url(url)
-    session = Session(engine)
-    source = session.scalar(
-        select(Source).where(and_(Source.url == url, Source.user_id == user_id))
-    )
-    session.close()
-    return source
+    with Session(engine) as session:
+        source = session.scalar(
+            select(Source).where(and_(Source.url == url, Source.user_id == user_id))
+        )
+        session.expunge_all()
+        return source
 
 
 def get_source_document(id: int) -> Document:
@@ -669,3 +681,30 @@ def get_filter_nodes_by_user_id(user_id: str) -> list[TreeNode]:
     filter_nodes.sort(key=lambda x: x.doc_count, reverse=True)
 
     return filter_nodes
+
+
+def get_content_types() -> list[Content_Type]:
+    """Get all content types from the database.
+    
+    Returns:
+        list[Content_Type]: List of all content types
+    """
+    with Session(engine) as session:
+        content_types = session.scalars(select(Content_Type)).all()
+    return content_types
+
+def get_entity_types() -> list[Entity_Type]:
+    """Get all entity types from the database.
+    
+    Returns:
+        list[Entity_Type]: List of all entity types
+    """
+    with Session(engine) as session:
+        entity_types = session.scalars(select(Entity_Type)).all()
+    return entity_types
+
+
+def get_chat_history(chat_id: str) -> list[Chat_History]:
+    with Session(engine) as session:
+        chat_history = session.scalars(select(Chat_History).where(Chat_History.chat_id == chat_id)).all()
+    return chat_history

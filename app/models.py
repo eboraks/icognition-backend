@@ -328,7 +328,7 @@ class Document(SQLModel, table=True):
     subtopics: list["SubTopic"] = Relationship(
         back_populates="documents", link_model=SubTopic_Document_Link
     )
-
+    
     def to_public(self, cosine_similarity: float = None) -> "DocumentPublic":
 
         if type(self.html_elements) == str:
@@ -700,6 +700,7 @@ class Page(SQLModel, table=False):
     image_url: Optional[str] = Field(default=None)
     site_name: Optional[str] = Field(default=None)
     metadata_description: Optional[str] = Field(default=None)
+    html_root_element: Optional[str] = Field(default=None)
 
 
 class User(SQLModel, table=True):
@@ -731,7 +732,7 @@ class Source(SQLModel, table=True):
     cloned_documents: List[uuid_pkg.UUID] = Field(
         default=[], sa_column=Column(ARRAY(Integer))
     )
-
+    html_root_element: Optional[str] = Field(default=None, nullable=True)
 
 class Embedding(SQLModel, table=True):
     id: int = Field(default=None, primary_key=True)
@@ -841,3 +842,43 @@ class WikidataSearchResult(BaseModel):
     aliases: List[str] = []
     sitelinks: List[str] = []
     instance_of: List[str] = []
+    
+    
+class Content_Type(SQLModel, table=True):
+    id: int = Field(default=None, primary_key=True)
+    name: str = Field(nullable=False)
+    description: str = Field(nullable=False)
+    category: str = Field(nullable=False)
+    follow_up_questions: List[str] = Field(default=[], sa_column=Column(JSON))
+
+
+class Entity_Type(SQLModel, table=True):
+    id: int = Field(default=None, primary_key=True)
+    name: str = Field(nullable=False)
+    description: str = Field(nullable=False)
+    follow_up_questions: List[str] = Field(default=[], sa_column=Column(JSON))
+    
+    
+class Chat_History(SQLModel, table=True):
+    """Stores chat history for document interactions"""
+    
+    id: int = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=datetime.now, nullable=False)
+    asked_by: str = Field(nullable=False)  # system, user, initial_summary
+    chat_id: uuid_pkg.UUID = Field(nullable=False)
+    chat_type: str = Field(nullable=False)
+    user_id: str = Field(nullable=False)
+    prompt: str = Field(nullable=False)
+    response: Dict = Field(sa_column=Column(JSON), default={})
+    
+    
+class EventName(Enum):
+    """Enum for event names used in event listeners"""
+    ERROR = "error"
+    INIT_DOC_CHAT = "init_doc_chat"
+    ENTITIES = "entities"
+    BIAS_CATEGORIZATION = "bias_categorization"
+    CHAT_ALREADY_INITIATED = "chat_already_initiated"
+    
+    
+    

@@ -12,7 +12,8 @@ user_id = 'yU13Hk9BwEQiREgh91YM6EFKR7M2'
 
 @pytest.mark.asyncio
 async def test_summarization():
-    document = getter.get_document_public_by_id(109)
+    document = getter.get_document_by_id('34ebf24f-6449-4344-97bd-e162e1d93b08')
+    
 
     prompt = SummarizePrompt.build_prompt(document.original_text)
     generated_response = await genimi_client.generate_response(prompt, SummarizePrompt)
