@@ -1,0 +1,57 @@
+steps:
+  - id: initial_analysis
+    prompt: "This is the content we are going to analyze: {SUPPORT_INFO}"
+    step_name: "analyzing content"
+    event_name: "content_analysis"
+    asked_by: "system"
+    use_support_info: true
+    support_info_source: "html_root_element"
+
+  - id: content_type
+    prompt: "Categorize the type of the content; Is it news article, blog post, product description, etc. Use the following content types as a reference: {SUPPORT_INFO}"
+    step_name: "categorizing content type"
+    event_name: "content_type"
+    asked_by: "system"
+    response_model: "ContentType"
+    use_support_info: true
+    support_info_source: "content_types"
+    save_result_as: "content_type_answer"
+
+  - id: main_idea
+    prompt: "What is the main idea, message or topic of the {content_type}?"
+    step_name: "getting main idea"
+    event_name: "INIT_DOC_CHAT"
+    response_model: "Answer"
+    template_variables:
+      - name: "content_type"
+        source: "content_type_answer"
+        field: "content_type"
+        default: "content"
+
+  - id: bias_categorization
+    prompt: "Identify the level of bias in the {content_type}. Use the following bias categorization to identify the level of bias: {SUPPORT_INFO}"
+    step_name: "identifying bias"
+    event_name: "BIAS_CATEGORIZATION"
+    response_model: "Answer"
+    use_support_info: true
+    support_info_source: "bias_categorization_file"
+    support_info_path: "app/data/bias_categorization.json"
+    optional: true
+    template_variables:
+      - name: "content_type"
+        source: "content_type_answer"
+        field: "content_type"
+        default: "content"
+
+  - id: entity_identification
+    prompt: "Identify the types of the entities mentioned in the {content_type} using the schema.org RDF file. Describe the type in the context of the content. The schema.org RDF: {SUPPORT_INFO}"
+    step_name: "identifying entities"
+    event_name: "ENTITIES"
+    response_model: "Types"
+    use_support_info: true
+    support_info_source: "entity_types"
+    template_variables:
+      - name: "content_type"
+        source: "content_type_answer"
+        field: "content_type"
+        default: "content" 
