@@ -859,7 +859,7 @@ class Entity_Type(SQLModel, table=True):
     follow_up_questions: List[str] = Field(default=[], sa_column=Column(JSON))
     
     
-class Chat_History(SQLModel, table=True):
+class Chat_Message(SQLModel, table=True):
     """Stores chat history for document interactions"""
     
     id: int = Field(default=None, primary_key=True)
@@ -869,6 +869,7 @@ class Chat_History(SQLModel, table=True):
     chat_type: str = Field(nullable=False)
     user_id: str = Field(nullable=False)
     prompt: str = Field(nullable=False)
+    event_name: str = Field(nullable=False)
     response: Dict = Field(sa_column=Column(JSON), default={})
     
     
@@ -877,8 +878,11 @@ class EventName(Enum):
     ERROR = "error"
     INIT_DOC_CHAT = "init_doc_chat"
     ENTITIES = "entities"
+    CONTENT_TYPE = "content_type"
     BIAS_CATEGORIZATION = "bias_categorization"
     CHAT_ALREADY_INITIATED = "chat_already_initiated"
-    
+    CONTENT_TITLE = "content_title"
+    SUMMARY = "summary"
+    MANUAL_MESSAGE = "manual_message"
     
     

@@ -17,7 +17,6 @@ from google.genai.types import (
     Tool,
 )
 from google.api_core import exceptions
-
 # Set up logger
 logger = logging.getLogger(__name__)
 
@@ -43,9 +42,11 @@ def retry_with_backoff(exceptions=(Exception,), max_retries=3, delay=1):
 
 
 class ChatClient:
-    def __init__(self, response_schema: BaseModel, model_name: str = "models/gemini-2.0-flash", temperature: float = 0.5, system_instruction: str = """
-  You are a research assistant that can help with analysis of the provided text.
-  You will be provided with a text or HTML and you will need to extract information and analyze it and provide insights about the content."""):
+    def __init__(self, response_model: BaseModel, 
+                 model_name: str = "models/gemini-2.0-flash", 
+                 temperature: float = 0.5, 
+                 system_instruction: str = ""):
+        
         self.client = genai.Client(api_key=os.getenv("GCP_AI_KEY"))
         self.model_name = model_name
         self.system_instruction = system_instruction
@@ -55,7 +56,7 @@ class ChatClient:
                             config = GenerateContentConfig(
                                     system_instruction = self.system_instruction,
                                     response_mime_type = "application/json",
-                                    response_schema = response_schema,
+                                    response_schema = response_model,
                                     temperature = 0.5))
     
     def get_model_name(self):
@@ -79,19 +80,19 @@ class ChatClient:
             ValidationError                    # Pydantic validation errors
         )
     )
-    def send_message(self, prompt: str, prompt_support_info: str = None, response_model: BaseModel = None):
+    def send_message(self, prompt: str, response_model: BaseModel = None):
         
-        _config = GenerateContentConfig(
-            response_mime_type = "application/json",
-            response_schema = response_model,
-            temperature = self.temperature)
-        
-        if prompt_support_info is not None:
-            prompt = prompt.format(SUPPORT_INFO = prompt_support_info)
+        if response_model:
             
-        if "SUPPORT_INFO" in prompt:
-            logger.error("SUPPORT_INFO placeholder found in prompt without support info provided")
-            raise ValueError("SUPPORT_INFO is not allowed in the prompt")
+            _config = GenerateContentConfig(
+                response_mime_type = "application/json",
+                response_schema = response_model,
+                temperature = self.temperature)
+        
+        else:
+            _config = GenerateContentConfig(
+                response_mime_type= "application/json",
+                temperature = self.temperature)
         
         logger.debug(f"Sending message with prompt: {prompt[:100]}...")  # Log first 100 chars of prompt
         response = self.chat.send_message(prompt, config = _config)
@@ -117,9 +118,12 @@ class ChatClient:
 
 
 ## main function    
-async def main():
-   return ChatClient()
+def main():
+   client = ChatClient(system_instruction = "You are a helpful assistant.", response_model = None)
+   print("Got client")
+   response = client.send_message(prompt = "What is the capital of France?", response_model = None)
+   print(response)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

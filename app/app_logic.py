@@ -11,7 +11,7 @@ from app import html_parser
 from app.db_connector import get_engine
 from app.source_doc_handler import SourceDocHandler
 from app.models import (
-    Chat_History,
+    Chat_Message,
     DocumentCitation,
     Entity_User_Link,
     Question_Answer,
@@ -64,7 +64,7 @@ def create_page(payload: PagePayload) -> Page:
     return page
 
 
-def insert_chat_history(chat_history: Chat_History):
+def insert_chat_history(chat_history: Chat_Message):
     with Session(engine) as session:
         session.add(chat_history)
         session.commit()

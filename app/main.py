@@ -1,5 +1,5 @@
 from app.log import get_logger
-from app.gemini_chat_prompts_models import InitiateDocumentChat
+from app.gemini_chat_prompts_models import ChatInitiator
 logger = get_logger(__name__)
 
 
@@ -184,7 +184,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, source: str):
         # await manager.broadcast("Client disconnected.", user_id)
 
  
-def event_listener(**kwargs):
+def chat_event_listener(**kwargs):
     print(f"Document ID: {kwargs['doc_id']}")
     print(f"Ask: {kwargs['ask']}")
     print(f"Response: {kwargs['response']}")
@@ -348,8 +348,8 @@ async def create_bookmark(
             app_logic.merge_record(_source)
             
             _doc = getter.get_document_by_source_id(_source.id)
-            doc_chat = InitiateDocumentChat(document_id = _doc.id)
-            background_tasks.add_task(doc_chat.init_doc_chat, listener = event_listener)
+            doc_chat = ChatInitiator(document_id = _doc.id, user_id = _source.user_id, event_listener = chat_event_listener)
+            background_tasks.add_task(doc_chat.start_analyze)
             
             if _doc.status == "Done":
                 logger.info(f"Bookmark already exists for {page.clean_url}")
@@ -1091,7 +1091,7 @@ async def create_study_collection(
         background_tasks.add_task(
             collection_handler.generate_collection_response,
             collection_id=collection.id,
-            listener=event_listener,
+            listener=chat_event_listener,
         )
         return collection
     except Exception as e:
@@ -1181,7 +1181,7 @@ async def generate_study_collection(
         background_tasks.add_task(
             collection_handler.generate_collection_response,
             collection_id=collection.id,
-            listener=event_listener,
+            listener=chat_event_listener,
         )
         return collection
     except Exception as e:
@@ -1189,7 +1189,7 @@ async def generate_study_collection(
         raise HTTPException(status_code=500, detail="Study collection creation failed")
 
 
-def event_listener(event):
+def chat_event_listener(event):
     logger.info(f"Event listner called with event: {event}")
 
 

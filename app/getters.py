@@ -1,7 +1,7 @@
 import time
 from app.db_connector import get_engine
 from app.models import (
-    Chat_History,
+    Chat_Message,
     Source,
     Document,
     Document_Entity_Link,
@@ -704,7 +704,7 @@ def get_entity_types() -> list[Entity_Type]:
     return entity_types
 
 
-def get_chat_history(chat_id: str) -> list[Chat_History]:
+def get_chat_history(chat_id: str) -> list[Chat_Message]:
     with Session(engine) as session:
-        chat_history = session.scalars(select(Chat_History).where(Chat_History.chat_id == chat_id)).all()
+        chat_history = session.scalars(select(Chat_Message).where(Chat_Message.chat_id == chat_id)).all()
     return chat_history
