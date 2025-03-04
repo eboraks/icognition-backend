@@ -1,9 +1,8 @@
 aiohttp==3.9.3
 httpx==0.23.2
-alembic==1.13.1
+alembic
 annotated-types==0.6.0
 anyio==4.2.0
-asn1crypto==1.5.1
 asttokens==2.4.1
 beautifulsoup4==4.12.3
 blis==0.7.11
@@ -60,8 +59,8 @@ psutil==5.9.8
 ptyprocess==0.7.0
 pure-eval==0.2.2
 pycountry==23.12.11
-pydantic==2.5.3
-pydantic_core==2.14.6
+pydantic>=2.5
+pydantic_core>=2.14
 Pygments==2.17.2
 pytest==8.3.3
 pytest-asyncio
@@ -82,7 +81,7 @@ soupsieve==2.5
 ##spacy==3.7.2
 ##spacy-legacy==3.0.12
 ##spacy-loggers==1.0.5
-SQLAlchemy==2.0.25
+SQLAlchemy>=2.0
 sqlmodel==0.0.14
 srsly==2.4.8
 stack-data==0.6.3
@@ -95,8 +94,7 @@ tornado==6.4
 #torch==2.2.2
 tqdm==4.66.1
 traitlets==5.14.1
-typer==0.9.0
-typing_extensions==4.9.0
+typing_extensions
 urllib3==2.1.0
 uvicorn==0.27.0.post1
 wasabi==1.1.2
@@ -104,12 +102,12 @@ wcwidth==0.2.13
 weasel==0.3.4
 wheel==0.41.2
 widgetsnbextension==4.0.9
-google-generativeai==0.7.2
+google-generativeai
 google-cloud-storage==2.18.2
-google-genai==1.2.0
+google-genai
 pymupdf4llm==0.0.13
 python-multipart==0.0.9
 aiofiles==24.1.0
 markdown==3.7
 websockets==13.1
-levenshtein==0.26.1
+levenshtein>=0.27.1

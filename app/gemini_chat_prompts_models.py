@@ -14,6 +14,18 @@ from app.models import Chat_Message, EventName
 logger = logging.getLogger(__name__)
 
 
+class ChatMessagePublic(BaseModel):
+    id: str
+    chat_id: str
+    question: str
+    answer: str
+    created_at: str
+
+
+    
+
+
+
 class Answer(BaseModel):
     answer_for_chat: str
     short_answer_for_computer: str
@@ -168,6 +180,9 @@ class ChatInitiator:
         
         ## Get the chat history and if it exists, send event that the chat is already initiated
         chat_history = getters.get_chat_history(self._doc.id)
+
+        event_names = [message.event_name for message in chat_history]
+
         if len(chat_history) > 2:
             event_data = {
                 "name": EventName.CHAT_ALREADY_INITIATED.value,
@@ -191,75 +206,94 @@ class ChatInitiator:
             bias_categorization = []
         
         
-        content_response = self._process_chat_step(
-            _the_ask_prompt = "This is the content we are going to analyze: ",
-            _support_prompt = self._source.html_root_element,
-            _response_model = None,
-            _asked_by = "system",
-            _chat_type = "document",
-            _event_name = EventName.INIT_DOC_CHAT.value
-        )
+        if EventName.INIT_DOC_CHAT.value not in event_names:
+            content_response = self._process_chat_step(
+                _the_ask_prompt = "This is the content we are going to analyze: ",
+                _support_prompt = self._source.html_root_element,
+                _response_model = None,
+                _asked_by = "system",
+                _chat_type = "document",
+                _event_name = EventName.INIT_DOC_CHAT.value
+            )
         
         if content_response is None:
             logger.error("Error in content response")
             return
-            
-        content_title = self._process_chat_step(
-            _the_ask_prompt = "Identify the title of the content",
-            _support_prompt = "",
-            _response_model = Answer,
-            _asked_by = "system",
-            _chat_type = "document",
+        
+        if EventName.CONTENT_TITLE.value not in event_names:
+            content_title = self._process_chat_step(
+                _the_ask_prompt = "Identify the title of the content",
+                _support_prompt = "",
+                _response_model = Answer,
+                _asked_by = "system",
+                _chat_type = "document",
             _event_name = EventName.CONTENT_TITLE.value
-        )
+            )
         
         logger.info(f"Content title: {content_title.short_answer_for_computer}")
         
         content_title_str = content_title.short_answer_for_computer if content_title.short_answer_for_computer else None
         
-        content_type_answer = self._process_chat_step(
-            _the_ask_prompt = "Categorize the type of the content. ",
-            _support_prompt = """Is it news article, blog post, product description, etc. 
+        if EventName.CONTENT_TYPE.value not in event_names:
+            content_type_answer = self._process_chat_step(
+                _the_ask_prompt = "Categorize the type of the content. ",
+                _support_prompt = """Is it news article, blog post, product description, etc. 
                 Use the following content types as a reference: """ + str(content_types),
             _response_model = ContentType,
             _asked_by = "system",
             _chat_type = "document",
             _event_name = EventName.CONTENT_TYPE.value
-        )
+            )
         
         content_type_str = content_type_answer.content_type if content_type_answer.content_type else "content"
         
         content_name = content_title_str if content_title_str else content_type_str
         
-        summary_response = self._process_chat_step(
-            _the_ask_prompt = f"Summaries the main idea in the {content_name} and create a short overview in bullet points that is easy to understand",
-            _support_prompt = "",
+        if EventName.SUMMARY.value not in event_names:
+            summary_response = self._process_chat_step(
+                _the_ask_prompt = f"Summaries the main idea in the \"{content_name}\" and create a short overview in bullet points that is easy to understand",
+                _support_prompt = "",
             _response_model = Summary,
             _asked_by = "system",
             _chat_type = "document",
             _event_name = EventName.SUMMARY.value
-        )
+            )
         logger.info(f"Summary: {summary_response.summary_for_chat}")
         
         if len(bias_categorization) > 0:
-            
-            self._process_chat_step(
-                _the_ask_prompt = f"Identify the level of bias in the {content_name}. ",
-                _support_prompt = """Use the following bias categorization to identify the level of bias: """ + json.dumps(bias_categorization),
-                _response_model = Answer,
-                _asked_by = "system",
-                _chat_type = "document",
+            if EventName.BIAS_CATEGORIZATION.value not in event_names:
+                self._process_chat_step(
+                    _the_ask_prompt = f"Identify the level of bias in the {content_name}. ",
+                    _support_prompt = """Use the following bias categorization to identify the level of bias: """ + json.dumps(bias_categorization),
+                    _response_model = Answer,
+                    _asked_by = "system",
+                    _chat_type = "document",
                 _event_name = EventName.BIAS_CATEGORIZATION.value
             )
             
-            
-        self._process_chat_step(
-            _the_ask_prompt = f"Identify the entities in the {content_name}",
-            _support_prompt = """Use the following schema.org entities as a reference: """ + str(entity_types),
-            _response_model = Types,
-            _asked_by = "system",
-            _chat_type = "document",
+        if EventName.ENTITIES.value not in event_names:
+            self._process_chat_step(
+                _the_ask_prompt = f"Identify the entities in the {content_name}",
+                _support_prompt = """Use the following schema.org entities as a reference: """ + str(entity_types),
+                _response_model = Types,
+                _asked_by = "system",
+                _chat_type = "document",
             _event_name = EventName.ENTITIES.value
-        )
+            )
             
-            
+    
+class ChatHandler:
+    
+    def __init__(self, document_id: str, user_id: str, event_listener: Callable = None):
+        self._doc = getters.get_document_by_id(document_id)
+        self._user_id = user_id
+        self._event_listener = event_listener
+    
+    def get_initial_chat_history(self) -> list[Chat_Message]:
+
+        chat = getters.get_chat_history(self._doc.id)
+
+        ## Filter out message with event_name = SUMMARY, 
+        chat = [message for message in chat if message.event_name in [EventName.SUMMARY.value]]
+
+        return chat

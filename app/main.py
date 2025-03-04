@@ -1,5 +1,5 @@
 from app.log import get_logger
-from app.gemini_chat_prompts_models import ChatInitiator
+from app.gemini_chat_prompts_models import ChatInitiator, ChatHandler
 logger = get_logger(__name__)
 
 
@@ -55,7 +55,6 @@ from app.search_handler import SearchHandler
 from app.prompt_models import RAGPrompt
 from app.user_handler import UserHandler
 from app.background_task_manager import task_manager
-import subprocess
 import os.path
 
 
@@ -321,6 +320,21 @@ async def create_bookmark(
             status_code=400,
             detail="User ID not provided for the bookmark",
         )
+
+    # Check if user exists, create if not
+    user_handler = UserHandler()
+    
+    if not user_handler.user_exits(payload.user_id):
+        logger.info(f"Creating new user with ID: {payload.user_id}")
+        try:
+            user = User(id=payload.user_id)
+            user_handler.add_user(user)
+        except Exception as e:
+            logger.error(f"Failed to create user: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to create user"
+            )
 
     # Check if payload.url is not the root URL of a website
     if html_parser.unsupported_page_url(payload.url):
@@ -886,6 +900,18 @@ async def get_document_questions_answers(id: str, response: Response):
         return qas
 
     except ValueError as e:
+        logger.error(e)
+        raise HTTPException(status_code=404, detail=e)
+
+
+@app.get("/document/{id}/chat", tags=["Document"])
+async def get_document_chat(id: str, response: Response):
+    try:
+        chat_handler = ChatHandler(document_id=id, user_id="")
+        chat = chat_handler.get_initial_chat_history()
+        response.status_code = status.HTTP_200_OK
+        return chat
+    except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=404, detail=e)
 
