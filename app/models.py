@@ -872,7 +872,21 @@ class Chat_Message(SQLModel, table=True):
     event_name: str = Field(nullable=False)
     response: Dict = Field(sa_column=Column(JSON), default={})
     
-    
+    def to_dict(self) -> dict:
+        """Convert Chat_Message to a JSON-serializable dictionary"""
+        return {
+            "id": str(self.id),
+            "created_at": self.created_at.isoformat(),
+            "asked_by": self.asked_by,
+            "chat_id": str(self.chat_id),
+            "chat_type": self.chat_type,
+            "user_id": self.user_id,
+            "prompt": self.prompt,
+            "event_name": self.event_name,
+            "response": self.response
+        }
+
+
 class EventName(Enum):
     """Enum for event names used in event listeners"""
     ERROR = "error"

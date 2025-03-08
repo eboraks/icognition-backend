@@ -2,6 +2,7 @@ import logging, sys
 import app.getters as getter
 from app.db_connector import get_engine
 from app.models import (
+    Chat_Message,
     Source,
     Document,
     Document_Entity_Link,
@@ -35,6 +36,12 @@ logging.basicConfig(
 engine = get_engine()
 
 ### This file contains the logic for deleting records from the database
+
+
+def delete_chat_message(chat_message_id: int) -> None:
+    with Session(engine) as session:
+        session.execute(delete(Chat_Message).where(Chat_Message.id == chat_message_id))
+        session.commit()
 
 
 def delete_source_and_associate_records(source_id) -> None:

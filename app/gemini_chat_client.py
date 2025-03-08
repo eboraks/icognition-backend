@@ -45,19 +45,29 @@ class ChatClient:
     def __init__(self, response_model: BaseModel, 
                  model_name: str = "models/gemini-2.0-flash", 
                  temperature: float = 0.5, 
-                 system_instruction: str = ""):
+                 system_instruction: str = "",
+                 chat_history: list = None):
         
         self.client = genai.Client(api_key=os.getenv("GCP_AI_KEY"))
         self.model_name = model_name
         self.system_instruction = system_instruction
-        self.temperature = temperature 
+        self.temperature = temperature
+        self.response_model = response_model
     
-        self.chat = self.client.chats.create(model = self.model_name, 
-                            config = GenerateContentConfig(
-                                    system_instruction = self.system_instruction,
-                                    response_mime_type = "application/json",
-                                    response_schema = response_model,
-                                    temperature = 0.5))
+        # Create the chat session
+        self.chat = self.client.chats.create(
+            model=self.model_name, 
+            config=GenerateContentConfig(
+                system_instruction=self.system_instruction,
+                response_mime_type="application/json",
+                response_schema=response_model,
+                temperature=self.temperature
+            )
+        )
+        
+        # If chat history is provided, add it to the chat
+        if chat_history:
+            self.set_chat_history(chat_history)
     
     def get_model_name(self):
         return self.model_name
@@ -67,6 +77,32 @@ class ChatClient:
     
     def get_system_instruction(self):
         return self.system_instruction
+
+    def set_chat_history(self, chat_history: list):
+        """
+        Set the chat history for the Gemini chat session.
+        
+        Args:
+            chat_history: A list of Chat_Message objects representing the conversation history
+        """
+        try:
+            # Add each message from the history to the chat
+            prompt = f"Here is the conversation history:\n"
+            for message in chat_history:
+                    # Add the prompt to the chat
+                prompt += f"Time: {message.created_at} User: {message.asked_by} Message: {message.prompt}. Response: {message.response}\n\n"
+                     
+            try:
+                self.chat.send_message(prompt)
+            except Exception as e:
+                logger.error(f"Error sending message to chat history: {str(e)}")
+                return False
+            logger.info(f"Successfully set chat history with {len(chat_history)} messages")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error setting chat history: {str(e)}")
+            return False
 
     async def send_message_async(self, message: str):
         return self.chat.send_message(message)

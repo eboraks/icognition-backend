@@ -1,5 +1,5 @@
 from app.log import get_logger
-from app.gemini_chat_prompts_models import ChatInitiator, ChatHandler
+from app.gemini_chat_prompts_models import GeminiChatHandler, ChatStorageHandler
 logger = get_logger(__name__)
 
 
@@ -25,22 +25,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from typing import List, Annotated
 from app.models import (
+    Chat_Message,
+    QuestionPlayload,
     User,
     Source,
     Document,
     PagePayload,
     DocumentPublic,
     HTTPError,
-    RagAnswerPublic,
-    QuestionPlayload,
     SearchPayload,
     SearchResults,
-    Study_Collection_Document_Link,
     SubTopicDisplay,
     TreeNode,
     StudyCollectionPublic,
     StudyTaskPublic,
-    CollectionDocumentlinkPayload,
 )
 import app.study_collection_handler as collection_handler
 from app.source_doc_handler import SourceDocHandler
@@ -52,10 +50,11 @@ import app.getters as getter
 import app.deleters as deleters
 import app.entity_handler as entity_handler
 from app.search_handler import SearchHandler
-from app.prompt_models import RAGPrompt
 from app.user_handler import UserHandler
 from app.background_task_manager import task_manager
 import os.path
+from app.chat_session_manager import chat_session_manager
+from contextlib import asynccontextmanager
 
 
 search = SearchHandler()
@@ -73,7 +72,16 @@ class Groups(Enum):
     ASK_QUESTION = "Ask Question"
 
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Initialize resources
+    chat_session_manager.start_cleanup_task()
+    yield
+    # Shutdown: Clean up resources
+    # If you need to clean up any resources when the app shuts down, do it here
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 origins = [
@@ -90,7 +98,6 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["icognitoin-answer-type"],
 )
-
 
 
 class ConnectionManager:
@@ -356,94 +363,34 @@ async def create_bookmark(
     ## Check in bookmark already exists
     try:
         _source = getter.get_source_by_url(payload.user_id, page.clean_url)
+
+        if _source is None:
+            logger.info(f"Source not found for {page.clean_url}, creating new source")
+            _source = app_logic.create_source_bookmark(page, payload.user_id)
+
         if _source is not None:
-            
+            logger.info(f"Source found for {page.clean_url}, updating source")
             _source.html_root_element = page.html_root_element
             app_logic.merge_record(_source)
             
             _doc = getter.get_document_by_source_id(_source.id)
-            doc_chat = ChatInitiator(document_id = _doc.id, user_id = _source.user_id, event_listener = chat_event_listener)
-            background_tasks.add_task(doc_chat.start_analyze)
             
-            if _doc.status == "Done":
-                logger.info(f"Bookmark already exists for {page.clean_url}")
-                response.status_code = status.HTTP_200_OK
-
-                ## Broadcast the document to the user
-                doc = getter.get_document_public_by_id(_doc.id)
-                message = {
-                    "user_id": payload.user_id,
-                    "document_id": doc.id,
-                    "type": "document",
-                    "data": doc.model_dump_json(),
-                }
-                await manager.broadcast(json.dumps(message), _source.user_id)
-
+            if ChatStorageHandler.chat_status(_doc.id):
+                logger.info(f"Chat is complete for {page.clean_url}")
+                chat_messages = ChatStorageHandler.get_initial_chat_history(_doc.id)
+                # Use the to_dict method to convert Chat_Message objects to dictionaries
+                chat_messages_json = json.dumps([msg.to_dict() for msg in chat_messages])
+                await manager.broadcast(json.dumps({"user_id": str(_source.user_id), 
+                                                    "document_id": str(_doc.id), 
+                                                    "type": "chat-ready", 
+                                                    "data": chat_messages_json}), str(_source.user_id))
                 return _source
-            elif _doc.status == "Processing":
-                logger.info(f"Document is still processing for {page.clean_url}")
-                response.status_code = status.HTTP_206_PARTIAL_CONTENT
-
-                message = {
-                    "user_id": payload.user_id,
-                    "document_id": str(_source.document_id),
-                    "type": "document_in_progress",
-                    "data": _source.model_dump_json(),
-                }
-                await manager.broadcast(json.dumps(message), payload.user_id)
-
+            else:
+                doc_chat = GeminiChatHandler(document_id = _doc.id, user_id = _source.user_id, event_listener = chat_event_listener)
+                background_tasks.add_task(doc_chat.start_analyze)
                 return _source
-            elif _doc.status in ["Failure", "Pending"]:
-                logger.info(
-                    f"Document status is {_doc.status} attempting to regenerated document for {page.clean_url}"
-                )
-                await generate_document_summary(_source)
-                await generate_document_qanda(_source)
-                
-                # Run entity generation in external process
-                background_tasks.add_task(
-                    run_external_function,
-                    "generate_document_entities",
-                    [str(_source.document_id)]
-                )
-                
-                response.status_code = status.HTTP_201_CREATED
-                message = {
-                    "user_id": payload.user_id,
-                    "document_id": str(_source.document_id),
-                    "type": "document_in_progress",
-                    "data": None,
-                }
-                await manager.broadcast(json.dumps(message), payload.user_id)
-                return _source
-        else:
-            logger.info(f"Page object created for {page.clean_url}")
-            _source = app_logic.create_source_bookmark(page, payload.user_id)
-            logger.info(f"Source created for {_source.url}")
-
-
-
-            await generate_document_summary(_source)
-            await generate_document_qanda(_source)
             
-            
-            
-            # Run entity generation in external process
-            background_tasks.add_task(
-                run_external_function,
-                "generate_document_entities",
-                [str(_source.document_id)]
-            )
-            
-            response.status_code = status.HTTP_201_CREATED
-            message = {
-                "user_id": payload.user_id,
-                "document_id": str(_source.document_id),
-                "type": "document_in_progress",
-                "data": None,
-            }
-            await manager.broadcast(json.dumps(message), payload.user_id)
-            return _source
+        
     except Exception as e:
         logger.error("Error in create_bookmark: ", e)
         raise HTTPException(status_code=500, detail="Bookmark creation failed")
@@ -905,9 +852,9 @@ async def get_document_questions_answers(id: str, response: Response):
 
 
 @app.get("/document/{id}/chat", tags=["Document"])
-async def get_document_chat(id: str, response: Response):
+async def get_document_chat(id: str, response: Response) -> List[Chat_Message]:
     try:
-        chat_handler = ChatHandler(document_id=id, user_id="")
+        chat_handler = ChatStorageHandler(document_id=id, user_id="")
         chat = chat_handler.get_initial_chat_history()
         response.status_code = status.HTTP_200_OK
         return chat
@@ -1327,8 +1274,7 @@ async def create_study_tasks(tasks: List[StudyTaskPublic]):
             created_tasks.append(
                 collection_handler.create_study_task(
                     collection_id=task.collection_id, description=task.description
-                )
-            )
+                ))
         return created_tasks
     except Exception as e:
         logger.error(e)
@@ -1365,35 +1311,9 @@ async def get_collection_entities(collection_id: str):
         raise HTTPException(status_code=404, detail="Entities not found")
 
 
-@app.post(
-    "/collection_document_link",
-    tags=[Groups.STUDY_COLLECTION],
-    status_code=200,
-    response_model=Study_Collection_Document_Link,
-)
-async def link_collection_document(payload: CollectionDocumentlinkPayload):
-    try:
-        return collection_handler.link_collection_document(
-            collection_id=payload.collection_id, document_id=payload.document_id
-        )
-
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=500, detail="Collection document link failed")
 
 
-@app.post(
-    "/collection_document_unlink", tags=[Groups.STUDY_COLLECTION], status_code=200
-)
-async def unlink_collection_document(payload: CollectionDocumentlinkPayload):
-    try:
-        return collection_handler.unlink_collection_document(
-            collection_id=payload.collection_id, document_id=payload.document_id
-        )
 
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=500, detail="Collection document unlink failed")
 
 
 async def listen_doc_generation(event: dict):
@@ -1448,7 +1368,7 @@ async def create_source_upload_file(
 @app.post(
     "/ask_question",
     tags=[Groups.ASK_QUESTION],
-    response_model=RagAnswerPublic,
+    response_model=Chat_Message,
     status_code=200,
 )
 async def ask_question(payload: QuestionPlayload):
@@ -1461,54 +1381,81 @@ async def ask_question(payload: QuestionPlayload):
         if payload.question is None:
             raise HTTPException(status_code=400, detail="Question is required")
 
+        # Extract user_id from the payload or use a default
+        user_id = payload.user_id if hasattr(payload, "user_id") else "anonymous"
+        
         if payload.document_id is not None:
+            # Get or create a chat session for this user and document
+            context_id = str(payload.document_id)
+            context_type = "document"
             
-            answer = await question_answer_handler.custom_question(
-                question=payload.question, document_id=payload.document_id, save=True
+            # Get or create the chat session
+            session = chat_session_manager.get_or_create_session(
+                user_id=user_id,
+                context_id=context_id,
+                context_type=context_type
             )
-            return answer
+            
+            # Ask the question using the session - returns a Chat_Message
+            chat_message = await session.ask_question(payload.question)
+            
+            # Broadcast the message to connected WebSocket clients
+            await manager.broadcast(
+                json.dumps({
+                    "user_id": user_id,
+                    "document_id": context_id,
+                    "type": "chat_message",
+                    "data": chat_message.to_dict()
+                }),
+                user_id
+            )
+            
+            # Return the Chat_Message directly
+            return chat_message
+            
         elif payload.collection_id is not None:
+            # Similar approach for collections
+            context_id = str(payload.collection_id)
+            context_type = "collection"
             
-            answer = await collection_handler.ask_question(
-                collection_id=payload.collection_id, question=payload.question
+            # Get or create the chat session
+            session = chat_session_manager.get_or_create_session(
+                user_id=user_id,
+                context_id=context_id,
+                context_type=context_type
             )
-            return answer
+            
+            # Ask the question using the session - returns a Chat_Message
+            chat_message = await session.ask_question(payload.question)
+            
+            # Broadcast the message to connected WebSocket clients
+            await manager.broadcast(
+                json.dumps({
+                    "user_id": user_id,
+                    "collection_id": context_id,
+                    "type": "chat_message",
+                    "data": chat_message.to_dict()
+                }),
+                user_id
+            )
+            
+            # Return the Chat_Message directly
+            return chat_message
 
     except Exception as e:
-        logger.error(e)
+        logger.error(f"Error in ask_question: {str(e)}")
         raise HTTPException(status_code=500, detail="Question answering failed")
 
 
-@app.delete("/question_answer/{id}", tags=[Groups.ASK_QUESTION], status_code=204)
-async def delete_question_answer(id: str):
+@app.delete("/chat_message/{id}", tags=[Groups.ASK_QUESTION], status_code=204)
+async def delete_chat_message(id: int):
     try:
-        await question_answer_handler.delete_question_answer(id)
+        deleters.delete_chat_message(id)
     except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=500, detail="Question answer deletion failed")
 
 
-@app.post(
-    "/document/question",
-    tags=[Groups.DOCUMENT.value],
-    response_model=RagAnswerPublic,
-    status_code=200,
-)
-async def post_document_question(payload: QuestionPlayload):
-    try:
-        logger.info(
-            f"Question endpoint called on {payload.document_id} with question {payload.question}"
-        )
-        answer = await question_answer_handler.custom_question(
-            question=payload.question, document_id=payload.document_id
-        )
-        logger.info(
-            f"Question endpoint called on {payload.document_id} with answer {answer.answer}"
-        )
-        return answer
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=500, detail="Answer generation failed")
 
 
 @app.get("/reformat_citiation", tags=[Groups.FOR_TESTING.value], status_code=200)
@@ -1595,3 +1542,5 @@ async def run_external_function(function_name: str, args: list[str] = []):
             status_code=500, 
             detail=f"Failed to run external function: {str(e)}"
         )
+
+

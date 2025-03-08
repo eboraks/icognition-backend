@@ -85,7 +85,7 @@ class Types(BaseModel):
     def __str__(self):
         return str(self.types)
 
-class ChatInitiator:
+class GeminiChatHandler:
     def __init__(self, document_id: str, user_id: str, temperature: float = 0.5, event_listener: Callable = None):
         self._doc = getters.get_document_by_id(document_id)
         self._source = getters.get_source_by_document_id(document_id)
@@ -178,12 +178,9 @@ class ChatInitiator:
         
     def start_analyze(self):
         
-        ## Get the chat history and if it exists, send event that the chat is already initiated
-        chat_history = getters.get_chat_history(self._doc.id)
 
-        event_names = [message.event_name for message in chat_history]
-
-        if len(chat_history) > 2:
+        ## If the chat is already initiated, send event that the chat is already initiated
+        if ChatStorageHandler.chat_status(self._doc.id):
             event_data = {
                 "name": EventName.CHAT_ALREADY_INITIATED.value,
                 "doc_id": str(self._doc.id),
@@ -193,6 +190,11 @@ class ChatInitiator:
             self._event_listener(event_data)
             return
         
+
+        ## Get the chat history and if it exists, send event that the chat is already initiated
+        chat_history = getters.get_chat_history(self._doc.id)
+        event_names = [message.event_name for message in chat_history]
+
         ## Get the content types and entity types
         content_types = getters.get_content_types()
         entity_types = getters.get_entity_types()
@@ -282,18 +284,39 @@ class ChatInitiator:
             )
             
     
-class ChatHandler:
+class ChatStorageHandler:
     
-    def __init__(self, document_id: str, user_id: str, event_listener: Callable = None):
-        self._doc = getters.get_document_by_id(document_id)
-        self._user_id = user_id
-        self._event_listener = event_listener
-    
-    def get_initial_chat_history(self) -> list[Chat_Message]:
+    @classmethod    
+    def chat_status(self, document_id: str) -> bool:
 
-        chat = getters.get_chat_history(self._doc.id)
+        event_names = [message.event_name for message in getters.get_chat_history(document_id)]
+
+        if len(event_names) == 0:
+            return False
+
+        enum_values = ['init_doc_chat', 'content_type', 'content_title', 'summary']
+
+        for enum_value in enum_values:
+            if enum_value not in event_names:
+                return False
+
+        return True
+    
+
+    
+    @classmethod
+    def get_initial_chat_history(self, document_id: str) -> list[Chat_Message]:
+
+        chat = getters.get_chat_history(document_id)
 
         ## Filter out message with event_name = SUMMARY, 
-        chat = [message for message in chat if message.event_name in [EventName.SUMMARY.value]]
+        initial_chat_history = [message for message in chat if message.event_name in [EventName.SUMMARY.value]]
+        user_messages = [message for message in chat if message.asked_by == "user"]
 
-        return chat
+        
+        ## Add the user messages to the chat history
+        initial_chat_history.extend(user_messages)
+        initial_chat_history.sort(key=lambda x: x.created_at)
+
+
+        return initial_chat_history
