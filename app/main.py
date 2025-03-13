@@ -1,5 +1,6 @@
 from app.log import get_logger
-from app.gemini_chat_prompts_models import GeminiChatHandler, ChatStorageHandler
+from app.chat_handler import ChatHandler
+from app.response_models import Answer, ContentType, Summary, Topic, Type, Types, ChatMessagePublic, chat_messages_to_document_public
 logger = get_logger(__name__)
 
 
@@ -39,6 +40,8 @@ from app.models import (
     TreeNode,
     StudyCollectionPublic,
     StudyTaskPublic,
+    WebSocketMessageType,
+    BroadcastMessage,
 )
 import app.study_collection_handler as collection_handler
 from app.source_doc_handler import SourceDocHandler
@@ -149,6 +152,21 @@ class ConnectionManager:
         for session_id in disconnected:
             if session_id in self.active_connections:
                 del self.active_connections[session_id]
+    
+    async def broadcast_message(self, broadcast_message: BroadcastMessage):
+        """
+        Broadcast a message using the BroadcastMessage format
+        
+        Args:
+            broadcast_message: The BroadcastMessage object to broadcast
+        """
+        try:
+            # Convert the message to JSON and broadcast it
+            json_message = broadcast_message.to_json()
+            await self.broadcast(json_message, broadcast_message.user_id)
+            logger.debug(f"Broadcast message of type {broadcast_message.message_type} to user {broadcast_message.user_id}")
+        except Exception as e:
+            logger.error(f"Error broadcasting message: {str(e)}")
 
 
 manager = ConnectionManager()
@@ -156,18 +174,16 @@ manager = ConnectionManager()
 
 async def broadcastProgress(doc_id: str, user_id: str, increment: int):
     try:
-
-        await manager.broadcast(
-            json.dumps(
-                {
-                    "user_id": user_id,
-                    "document_id": doc_id,
-                    "type": "progress_percentage",
-                    "data": increment,
-                }
-            ),
-            user_id,
+        # Create a progress message
+        progress_message = BroadcastMessage(
+            user_id=user_id,
+            message_type=WebSocketMessageType.PROGRESS_PERCENTAGE.value,
+            data=increment,
+            document_id=doc_id
         )
+        
+        # Broadcast the message
+        await manager.broadcast_message(progress_message)
 
     except Exception as e:
         logger.error(f"Error in broadcastProgress: {str(e)}")
@@ -375,19 +391,25 @@ async def create_bookmark(
             
             _doc = getter.get_document_by_source_id(_source.id)
             
-            if ChatStorageHandler.chat_status(_doc.id):
+            if ChatHandler.chat_status(_doc.id):
                 logger.info(f"Chat is complete for {page.clean_url}")
-                chat_messages = ChatStorageHandler.get_initial_chat_history(_doc.id)
-                # Use the to_dict method to convert Chat_Message objects to dictionaries
-                chat_messages_json = json.dumps([msg.to_dict() for msg in chat_messages])
-                await manager.broadcast(json.dumps({"user_id": str(_source.user_id), 
-                                                    "document_id": str(_doc.id), 
-                                                    "type": "chat-ready", 
-                                                    "data": chat_messages_json}), str(_source.user_id))
+                chat_handler = ChatHandler(document_id = _doc.id, user_id = _source.user_id, event_listener = manager.broadcast_message)
+                chat_messages = chat_handler.generate_explain_message()
+                
+                # Create a chat ready message
+                chat_ready_message = BroadcastMessage(
+                    user_id=str(_source.user_id),
+                    message_type=WebSocketMessageType.CHAT_READY.value,
+                    data=[msg.to_dict() for msg in chat_messages],
+                    document_id=str(_doc.id)
+                )
+                
+                # Broadcast the message
+                await manager.broadcast_message(chat_ready_message)
                 return _source
             else:
-                doc_chat = GeminiChatHandler(document_id = _doc.id, user_id = _source.user_id, event_listener = chat_event_listener)
-                background_tasks.add_task(doc_chat.start_analyze)
+                chat_handler = ChatHandler(document_id = _doc.id, user_id = _source.user_id, event_listener = manager.broadcast_message)
+                background_tasks.add_task(chat_handler.start_analyze)
                 return _source
             
         
@@ -494,13 +516,17 @@ async def generate_document_summary(source: Source):
 
             ## Broadcast the document to the user
             doc = getter.get_document_public_by_id(document.id)
-            message = {
-                "user_id": source.user_id,
-                "document_id": doc.id,
-                "type": "document",
-                "data": doc.model_dump_json(),
-            }
-            await manager.broadcast(json.dumps(message), source.user_id)
+            
+            # Create a document message
+            document_message = BroadcastMessage(
+                user_id=source.user_id,
+                message_type=WebSocketMessageType.DOCUMENT.value,
+                data=doc.model_dump_json(),
+                document_id=doc.id
+            )
+            
+            # Broadcast the message
+            await manager.broadcast_message(document_message)
             await broadcastProgress(doc_id, source.user_id, 10)
 
             await app_logic.generate_embeddings_for_docs(
@@ -562,13 +588,17 @@ async def generate_document_qanda(source: Source):
             logger.info(
                 f"Background task for generating questions and answers for: {document.id} completed. Number of questions and answers, {len(qas)}"
             )
-            message = {
-                "user_id": source.user_id,
-                "document_id": str(document.id),
-                "data": json.dumps(qas),
-                "type": "doc_qanda",
-            }
-            await manager.broadcast(json.dumps(message), source.user_id)
+            
+            # Create a Q&A message
+            qanda_message = BroadcastMessage(
+                user_id=source.user_id,
+                message_type=WebSocketMessageType.DOC_QANDA.value,
+                data=json.dumps(qas),
+                document_id=str(document.id)
+            )
+            
+            # Broadcast the message
+            await manager.broadcast_message(qanda_message)
             await broadcastProgress(doc_id, source.user_id, 20)
 
             ## For now, we are not generating embeddings for questions and answers
@@ -714,13 +744,13 @@ async def get_bookmarks_by_user_id(payload: PagePayload):
 )
 async def get_documents_plus_by_user_id(user_id: str):
 
-    documents = getter.get_documents_public_by_user_id(user_id)
-
-    if documents is None:
+    results = getter.get_document_public_from_chat_by_user_id(user_id)
+    
+    if results is None:
         raise HTTPException(status_code=404, detail="Documents not found")
 
-    logger.info(f"Icognition return {len(documents)} documents_plus")
-    return documents
+    logger.info(f"Icognition return {len(results)} documents_plus")
+    return results
 
 
 @app.get("/document/{id}/html_elements", tags=["Document"], status_code=200)
@@ -854,13 +884,118 @@ async def get_document_questions_answers(id: str, response: Response):
 @app.get("/document/{id}/chat", tags=["Document"])
 async def get_document_chat(id: str, response: Response) -> List[Chat_Message]:
     try:
-        chat_handler = ChatStorageHandler(document_id=id, user_id="")
-        chat = chat_handler.get_initial_chat_history()
-        response.status_code = status.HTTP_200_OK
-        return chat
+        user_id = getter.get_source_by_document_id(id).user_id
+        chat_handler = ChatHandler(user_id=user_id, document_id=id)
+        chat_messages = chat_handler.get_initial_chat_history(document_id=id)
+
+        """
+        chat_ready_message = BroadcastMessage(
+                    user_id=str(_source.user_id),
+                    message_type=WebSocketMessageType.CHAT_READY.value,
+                    data=[msg.to_dict() for msg in chat_messages],
+                    document_id=str(_doc.id)
+                )
+        """
+        if chat_messages is not None:
+            chat_messages = [msg.to_dict() for msg in chat_messages]
+
+            response.status_code = status.HTTP_200_OK
+            return chat_messages
+        else:
+            response.status_code = status.HTTP_204_NO_CONTENT
+            return None
     except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=404, detail=e)
+
+@app.get("/document/{id}/explain", tags=["Document"])
+async def get_document_explain(id: str, response: Response):
+
+    try:
+        user_id = getter.get_source_by_document_id(id).user_id
+        chat_handler = ChatHandler(document_id=id, user_id=user_id)
+        explain_message = chat_handler.generate_explain_message()
+        response.status_code = status.HTTP_200_OK
+        return explain_message
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(status_code=404, detail=e)
+
+
+@app.get("/document/from_chat/{id}", tags=["Document"], response_model=DocumentPublic)
+async def get_document_from_chat(id: str, response: Response):
+    """
+    Create a DocumentPublic object from chat history for a document
+    
+    This endpoint extracts information from chat messages with different event types:
+    - SUMMARY event type is used for DocumentPublic.is_about
+    - ENTITIES event type is used for DocumentPublic.entities_and_concepts
+    - CONTENT_TITLE event type is used for DocumentPublic.title
+    - CONTENT_TYPE event type is used for DocumentPublic.source_type
+    
+    Args:
+        id: The document ID
+        
+    Returns:
+        A DocumentPublic object with data extracted from the chat history
+    """
+    try:
+        # Create a ChatHandler instance
+        chat_handler = ChatHandler(document_id=id)
+        
+        # Get DocumentPublic from chat history
+        document = chat_handler.get_document_from_chat_history()
+        
+        if document is None:
+            raise HTTPException(
+                status_code=404, 
+                detail="Could not create document from chat history. Chat history may be empty."
+            )
+        
+        response.status_code = status.HTTP_200_OK
+        return document
+        
+    except Exception as e:
+        logger.error(f"Error in get_document_from_chat: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/document/{id}/update_from_chat", tags=["Document"], response_model=DocumentPublic)
+async def update_document_from_chat(id: str, response: Response):
+    """
+    Create a DocumentPublic object from chat history
+    
+    This endpoint extracts information from chat messages with different event types:
+    - SUMMARY event type is used for DocumentPublic.is_about
+    - ENTITIES event type is used for DocumentPublic.entities_and_concepts
+    - CONTENT_TITLE event type is used for DocumentPublic.title
+    - CONTENT_TYPE event type is used for DocumentPublic.source_type
+    
+    Args:
+        id: The document ID
+        
+    Returns:
+        A DocumentPublic object with data extracted from the chat history
+    """
+    try:
+        # Create a ChatHandler instance
+        chat_handler = ChatHandler(document_id=id)
+        
+        # Get DocumentPublic from chat history
+        document = chat_handler.get_document_from_chat_history()
+        
+        if document is None:
+            raise HTTPException(
+                status_code=404, 
+                detail="Could not create document from chat history. Chat history may be empty."
+            )
+        
+        response.status_code = status.HTTP_200_OK
+        return document
+        
+    except Exception as e:
+        logger.error(f"Error in update_document_from_chat: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/bookmark/{id}/keysentences", tags=["Bookmark"])
@@ -1382,65 +1517,45 @@ async def ask_question(payload: QuestionPlayload):
             raise HTTPException(status_code=400, detail="Question is required")
 
         # Extract user_id from the payload or use a default
-        user_id = payload.user_id if hasattr(payload, "user_id") else "anonymous"
+        user_id = getter.get_source_by_document_id(payload.document_id).user_id
         
         if payload.document_id is not None:
-            # Get or create a chat session for this user and document
-            context_id = str(payload.document_id)
-            context_type = "document"
+            # Use the ChatInitiationHandler to ask the question
+            # Get or create a chat session
+            chat_handler = ChatHandler(document_id = payload.document_id, user_id = user_id, event_listener = manager.broadcast_message)
             
-            # Get or create the chat session
-            session = chat_session_manager.get_or_create_session(
+            response = await chat_handler.ask_question(payload.question)
+
+            # Create a chat message
+            broadcast_message = BroadcastMessage(
                 user_id=user_id,
-                context_id=context_id,
-                context_type=context_type
+                message_type=WebSocketMessageType.CHAT_MESSAGE.value,
+                data=response.model_dump_json(),
+                document_id=str(payload.document_id)
             )
             
-            # Ask the question using the session - returns a Chat_Message
-            chat_message = await session.ask_question(payload.question)
+            # Broadcast the message
+            await manager.broadcast_message(broadcast_message)
             
-            # Broadcast the message to connected WebSocket clients
-            await manager.broadcast(
-                json.dumps({
-                    "user_id": user_id,
-                    "document_id": context_id,
-                    "type": "chat_message",
-                    "data": chat_message.to_dict()
-                }),
-                user_id
-            )
-            
-            # Return the Chat_Message directly
-            return chat_message
+            return response
             
         elif payload.collection_id is not None:
-            # Similar approach for collections
-            context_id = str(payload.collection_id)
-            context_type = "collection"
+            # Use the ChatInitiationHandler to ask the question
+            chat_handler = ChatHandler(collection_id = payload.collection_id, user_id = user_id, event_listener = manager.broadcast_message)
+            response = await chat_handler.ask_question(payload.question)
             
-            # Get or create the chat session
-            session = chat_session_manager.get_or_create_session(
+            # Create a chat message
+            broadcast_message = BroadcastMessage(
                 user_id=user_id,
-                context_id=context_id,
-                context_type=context_type
+                message_type=WebSocketMessageType.CHAT_MESSAGE.value,
+                data=response.model_dump_json(),
+                collection_id=str(payload.collection_id)
             )
             
-            # Ask the question using the session - returns a Chat_Message
-            chat_message = await session.ask_question(payload.question)
+            # Broadcast the message
+            await manager.broadcast_message(broadcast_message)
             
-            # Broadcast the message to connected WebSocket clients
-            await manager.broadcast(
-                json.dumps({
-                    "user_id": user_id,
-                    "collection_id": context_id,
-                    "type": "chat_message",
-                    "data": chat_message.to_dict()
-                }),
-                user_id
-            )
-            
-            # Return the Chat_Message directly
-            return chat_message
+            return response
 
     except Exception as e:
         logger.error(f"Error in ask_question: {str(e)}")
@@ -1473,13 +1588,19 @@ async def reformat_citiation():
 )
 async def broadcast_document_update(user_id: str, document_id: str):
     doc = getter.get_document_public_by_id(document_id)
-    message = {
-        "user_id": user_id,
-        "document_id": document_id,
-        "type": "document",
-        "data": doc.model_dump_json(),
-    }
-    await manager.broadcast(json.dumps(message), user_id)
+    
+    # Create a document message
+    document_message = BroadcastMessage(
+        user_id=user_id,
+        message_type=WebSocketMessageType.DOCUMENT.value,
+        data=doc.model_dump_json(),
+        document_id=document_id
+    )
+    
+    # Broadcast the message
+    await manager.broadcast_message(document_message)
+    
+    return {"status": "success", "message": f"Document {document_id} broadcast to user {user_id}"}
 
 
 @app.websocket("/ws")

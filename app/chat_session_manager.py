@@ -6,8 +6,7 @@ from typing import Dict, Optional, Tuple, Union
 from datetime import datetime, timedelta
 from app.gemini_chat_client import ChatClient
 from app.models import Chat_Message, EventName
-from app.gemini_chat_prompts_models import Answer
-from app.app_logic import insert_chat_history
+from app.response_models import Answer
 import app.getters as getters
 from uuid import UUID
 
@@ -58,7 +57,6 @@ class ChatSession:
             logger.error(f"Error loading chat history: {str(e)}")
         
         # Initialize chat client with history
-        from app.gemini_chat_prompts_models import Answer
         self.chat_client = ChatClient(
             response_model=Answer, 
             system_instruction=system_instruction,
@@ -74,60 +72,7 @@ class ChatSession:
         """Check if the session has expired"""
         return datetime.now() > self.last_activity + timedelta(minutes=timeout_minutes)
     
-    async def ask_question(self, question: str) -> Chat_Message:
-        """
-        Ask a question to the chat client and store the conversation
-        
-        Args:
-            question: The question to ask
-            
-        Returns:
-            The Chat_Message object containing the response
-        """
-        from app.gemini_chat_prompts_models import Answer
-        
-        self.update_activity()
-        
-        try:
-            # Send the question to the chat client
-            response = self.chat_client.send_message(prompt=question, response_model=Answer)
-            
-            # Store the conversation in the database
-            message = Chat_Message(
-                chat_id=UUID(self.context_id) if isinstance(self.context_id, str) else self.context_id,
-                chat_type=self.context_type,
-                user_id=self.user_id,
-                prompt=question,
-                asked_by="user",
-                response=response.model_dump_json() if hasattr(response, "model_dump_json") else json.dumps(response),
-                event_name=EventName.MANUAL_MESSAGE.value
-            )
-            message = insert_chat_history(message)
-            
-            return message
-            
-        except Exception as e:
-            logger.error(f"Error in ask_question: {str(e)}")
-            # Create an error message
-            error_response = {
-                "answer_for_chat": f"I'm sorry, I encountered an error: {str(e)}",
-                "short_answer_for_computer": f"Error: {str(e)}",
-                "citations": [],
-                "status": "error"
-            }
-            
-            message = Chat_Message(
-                chat_id=UUID(self.context_id) if isinstance(self.context_id, str) else self.context_id,
-                chat_type=self.context_type,
-                user_id=self.user_id,
-                prompt=question,
-                asked_by="user",
-                response=json.dumps(error_response),
-                event_name=EventName.ERROR.value
-            )
-            message = insert_chat_history(message)
-            
-            return message
+    
 
 
 class ChatSessionManager:

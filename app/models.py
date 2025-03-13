@@ -898,5 +898,71 @@ class EventName(Enum):
     CONTENT_TITLE = "content_title"
     SUMMARY = "summary"
     MANUAL_MESSAGE = "manual_message"
+    EXPLAIN_CONTENT = "explain_content"
+    
+class WebSocketMessageType(Enum):
+    """Enum for WebSocket message types used in broadcasts"""
+    DOCUMENT = "document"
+    DOCUMENT_READY = "document_ready"
+    CHAT_READY = "chat-ready"
+    CHAT_NOT_READY = "chat-not-ready"
+    CHAT_MESSAGE = "chat-message"
+    PROGRESS_PERCENTAGE = "progress_percentage"
+    DOC_QANDA = "doc_qanda"
+    ERROR = "error"
+    
+class BroadcastMessage:
+    """
+    Simple message format for WebSocket broadcasts
+    """
+    
+    def __init__(
+        self, 
+        user_id: str, 
+        message_type: str, 
+        data: any, 
+        document_id: str = None, 
+        collection_id: str = None
+    ):
+        """
+        Initialize a broadcast message
+        
+        Args:
+            user_id: The ID of the user to receive the message
+            message_type: The type of message (string value)
+            data: The message payload
+            document_id: Optional document ID related to the message
+            collection_id: Optional collection ID related to the message
+        """
+        self.user_id = user_id
+        self.message_type = message_type
+        self.data = data
+        self.document_id = document_id
+        self.collection_id = collection_id
+    
+    def to_json(self) -> str:
+        """
+        Convert the message to a JSON string
+        
+        Returns:
+            A JSON string representation of the message
+        """
+        message = {
+            "user_id": str(self.user_id),
+            "type": self.message_type
+        }
+        
+        # Add document_id if provided
+        if self.document_id:
+            message["document_id"] = str(self.document_id)
+            
+        # Add collection_id if provided
+        if self.collection_id:
+            message["collection_id"] = str(self.collection_id)
+        
+        # Add data
+        message["data"] = self.data
+        
+        return json.dumps(message)
     
     

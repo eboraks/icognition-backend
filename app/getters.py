@@ -1,4 +1,5 @@
 import time
+from app.document_public_factory import chat_messages_to_document_public
 from app.db_connector import get_engine
 from app.models import (
     Chat_Message,
@@ -55,6 +56,23 @@ def get_document_public_by_id(document_id: str) -> DocumentPublic:
         session.add_all(doc.entities)
 
         return doc.to_public()
+
+
+def get_document_public_from_chat_by_user_id(user_id: str) -> list[DocumentPublic]:
+    with Session(engine) as session:
+        chat_ids = session.scalars(select(Chat_Message.chat_id).where(Chat_Message.user_id == user_id)).unique().all()
+
+        results = []
+        for chat_id in chat_ids:
+            chat_history = session.scalars(select(Chat_Message).where(Chat_Message.chat_id == chat_id)).unique().all()
+
+            if len(chat_history) > 0:
+                doc = DocumentPublic(id=str(chat_id), title="Placeholder")
+                doc = chat_messages_to_document_public(chat_history, doc)
+                results.append(doc)
+
+    return results
+
 
 
 def get_document_by_id(document_id: str) -> Document:

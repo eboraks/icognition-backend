@@ -17,6 +17,7 @@ from google.genai.types import (
     Tool,
 )
 from google.api_core import exceptions
+from google.genai.errors import ServerError
 # Set up logger
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,25 @@ def retry_with_backoff(exceptions=(Exception,), max_retries=3, delay=1):
         return wrapper
     return decorator
 
+def async_retry_with_backoff(exceptions=(Exception,), max_retries=3, delay=1):
+    def decorator(func):
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            retries = 0
+            while retries < max_retries:
+                try:
+                    return await func(*args, **kwargs)
+                except exceptions as e:
+                    retries += 1
+                    if retries == max_retries:
+                        logger.error(f"Max retries ({max_retries}) reached for {func.__name__}. Error: {str(e)}")
+                        raise e
+                    wait_time = delay * (2 ** (retries - 1))  # Exponential backoff
+                    logger.warning(f"Retrying {func.__name__} after {wait_time}s. Attempt {retries}/{max_retries}")
+                    await asyncio.sleep(wait_time)
+            return None
+        return wrapper
+    return decorator
 
 class ChatClient:
     def __init__(self, response_model: BaseModel, 
@@ -104,8 +124,20 @@ class ChatClient:
             logger.error(f"Error setting chat history: {str(e)}")
             return False
 
+    @async_retry_with_backoff(
+        exceptions=(
+            exceptions.InternalServerError,    # 500 errors
+            exceptions.ResourceExhausted,      # Rate limits
+            exceptions.ServiceUnavailable,     # 503 errors
+            exceptions.DeadlineExceeded,       # Timeout errors
+            ValidationError,                   # Pydantic validation errors
+            ServerError                        # Google Generative AI server errors
+        )
+    )
     async def send_message_async(self, message: str):
-        return self.chat.send_message(message)
+        # Run the synchronous method in an executor to avoid blocking
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: self.chat.send_message(message))
     
     @retry_with_backoff(
         exceptions=(
@@ -113,7 +145,8 @@ class ChatClient:
             exceptions.ResourceExhausted,      # Rate limits
             exceptions.ServiceUnavailable,     # 503 errors
             exceptions.DeadlineExceeded,       # Timeout errors
-            ValidationError                    # Pydantic validation errors
+            ValidationError,                   # Pydantic validation errors
+            ServerError                        # Google Generative AI server errors
         )
     )
     def send_message(self, prompt: str, response_model: BaseModel = None):

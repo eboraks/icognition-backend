@@ -64,12 +64,32 @@ def create_page(payload: PagePayload) -> Page:
     return page
 
 
-def insert_chat_history(chat_history: Chat_Message):
+def insert_or_update_chat_history(chat_history: Chat_Message):
     with Session(engine) as session:
-        session.add(chat_history)
-        session.commit()
-        session.refresh(chat_history)
-    return chat_history
+
+        ## Check if the chat history already exists using chat_id, user_id and event_name
+        existing_chat_history = session.scalar(
+            select(Chat_Message).where(
+                Chat_Message.chat_id == chat_history.chat_id,
+                Chat_Message.user_id == chat_history.user_id,
+                Chat_Message.event_name == chat_history.event_name, 
+                Chat_Message.asked_by == "system"
+            )
+        )
+
+        if existing_chat_history:
+            existing_chat_history.response = chat_history.response
+            existing_chat_history.prompt = chat_history.prompt
+            existing_chat_history.asked_by = chat_history.asked_by
+            existing_chat_history.created_at = chat_history.created_at
+            session.commit()
+            session.refresh(existing_chat_history)
+            return existing_chat_history
+        else:
+            session.add(chat_history)
+            session.commit()
+            session.refresh(chat_history)
+            return chat_history
 
 
 
