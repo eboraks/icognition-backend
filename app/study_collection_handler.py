@@ -2,7 +2,6 @@ from scipy.spatial import distance
 from app.log import get_logger
 from datetime import datetime
 from app.models import (
-    DocumentPublic,
     Entity,
     RagAnswerPublic,
     SearchResults,
@@ -248,77 +247,9 @@ def find_related_docs(
         return docs
 
 
-def find_related_docs_public(
-    collection_id: str, cosine_distance_freshhold: float = 0.30
-) -> list[DocumentPublic]:
-    """This is a wrapper function that returns the list of related documents for a collection in a public format
-
-    Args:
-        collection_id (str): _description_
-        cosine_distance_freshhold (float, optional): _description_. Defaults to 0.30.
-
-    Returns:
-        list[DocumentPublic]: _description_
-    """
-    docs = find_related_docs(collection_id, cosine_distance_freshhold)
-    docs_public = calculate_cosine_dist_collection_docs(collection_id, docs)
-    return docs_public
 
 
-def get_list_of_candidates_docs(
-    collection_id: str, max_docs=10
-) -> list[DocumentPublic]:
 
-    related_docs = find_related_docs(collection_id)
-    related_docs_ids = [doc.id for doc in related_docs]
-
-    ## Get the list of all documents that are not linked to the collection
-    with Session(engine) as session:
-
-        stmt = (
-            select(Document)
-            .filter(Document.id.notin_(related_docs_ids))
-            .limit(max_docs)
-        )
-        docs = session.scalars(stmt).all()
-        docs_public = [doc.to_public() for doc in docs]
-
-    return docs_public
-
-
-def calculate_cosine_dist_collection_docs(
-    collection_id: str, documents: list[Document]
-) -> list[DocumentPublic]:
-
-    with Session(engine) as session:
-        collection_vector = session.scalar(
-            select(Study_Collection.objective_tasks_vector).where(
-                Study_Collection.id == collection_id
-            )
-        )
-
-        docs_public = []
-        for doc in documents:
-            session.add(doc)
-            doc_vector = doc.ai_summary_vector
-            try:
-                dis = 1 - distance.cosine(collection_vector, doc_vector)
-            except Exception as e:
-                logging.error(f"Error while calculating cosine distance. Error: {e}")
-                dis = 0.0
-            pub = doc.to_public(cosine_similarity=dis)
-            docs_public.append(pub)
-
-    return docs_public
-
-
-async def ask_question(collection_id: str, question: str) -> RagAnswerPublic:
-
-    searcher = SearchHandler()
-    docs = find_related_docs(collection_id)
-
-    answer = await searcher.rag_workflow(docs=docs, search_term=question)
-    return answer
 
 
 def get_collection(collection_id: str) -> Study_Collection:

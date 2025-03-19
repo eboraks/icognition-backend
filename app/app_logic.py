@@ -79,7 +79,8 @@ def insert_or_update_chat_history(chat_history: Chat_Message):
 
         if existing_chat_history:
             existing_chat_history.response = chat_history.response
-            existing_chat_history.prompt = chat_history.prompt
+            existing_chat_history.user_prompt = chat_history.user_prompt
+            existing_chat_history.ai_prompt = chat_history.ai_prompt
             existing_chat_history.asked_by = chat_history.asked_by
             existing_chat_history.created_at = chat_history.created_at
             session.commit()

@@ -3,7 +3,7 @@ import app.getters as getter
 import app.icog_util as util
 import uuid as uuid_pkg
 from app.db_connector import get_engine
-from app.models import Document, DocumentPublic, RagAnswerPublic, SearchResults
+from app.models import Document, RagAnswerPublic, SearchResults
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -236,7 +236,7 @@ class SearchHandler:
         threshold: float = 0.5,
         max_results: int = 20,
         attempts: int = 1,
-    ) -> list[DocumentPublic]:
+    ) -> list[Document]:
 
         priority = self.search_text(user_id=user_id, search_term=search_term)
 
@@ -254,7 +254,7 @@ class SearchHandler:
 
         matched_docs = self.tuple_results_to_matched_documents(priority)
 
-        docs = self.docs_convert_matches_to_doc_public(matched_docs)
+        docs = self.docs_convert_matches_to_doc(matched_docs)
 
         return docs
 
@@ -295,18 +295,18 @@ class SearchHandler:
 
         return results
 
-    def docs_convert_matches_to_doc_public(
+    def docs_convert_matches_to_doc(
         self, matched_docs: list[MatchedDocument], max_results: int = 20
-    ) -> list[DocumentPublic]:
+    ) -> list[Document]:
         """
-        This function returns a list of DocumentDisplay objects
+        This function returns a list of Document objects
         """
         logging.info(f"Get document display for matched documents")
         results = []
         for doc in matched_docs:
-            public = getter.get_document_public_by_id(doc.id)
-            public.cosine_similarity = doc.cosine_similarity
-            results.append(public)
+            document = getter.get_document_by_id(doc.id)
+            document.cosine_similarity = doc.cosine_similarity
+            results.append(document)
 
         ## Sort the results by cosine similarity DESC
         results = sorted(results, key=lambda x: x.cosine_similarity, reverse=True)

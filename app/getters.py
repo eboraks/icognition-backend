@@ -1,12 +1,11 @@
 import time
-from app.document_public_factory import chat_messages_to_document_public
+from app.document_public_factory import chat_messages_to_document_dict
 from app.db_connector import get_engine
 from app.models import (
     Chat_Message,
     Source,
     Document,
     Document_Entity_Link,
-    DocumentPublic,
     Entity,
     Question_Answer,
     SubTopic,
@@ -48,17 +47,17 @@ def get_documents_count() -> int:
     return count
 
 
-def get_document_public_by_id(document_id: str) -> DocumentPublic:
+def get_document_public_by_id(document_id: str) -> dict:
     with Session(engine) as session:
         doc = session.scalar(select(Document).where(Document.id == document_id))
         if doc is None:
             raise ValueError(f"Document with id {document_id} not found")
         session.add_all(doc.entities)
 
-        return doc.to_public()
+        return doc.to_dict()
 
 
-def get_document_public_from_chat_by_user_id(user_id: str) -> list[DocumentPublic]:
+def get_document_public_from_chat_by_user_id(user_id: str) -> list[dict]:
     with Session(engine) as session:
         chat_ids = session.scalars(select(Chat_Message.chat_id).where(Chat_Message.user_id == user_id)).unique().all()
 
@@ -67,12 +66,11 @@ def get_document_public_from_chat_by_user_id(user_id: str) -> list[DocumentPubli
             chat_history = session.scalars(select(Chat_Message).where(Chat_Message.chat_id == chat_id)).unique().all()
 
             if len(chat_history) > 0:
-                doc = DocumentPublic(id=str(chat_id), title="Placeholder")
-                doc = chat_messages_to_document_public(chat_history, doc)
-                results.append(doc)
+                doc_dict = {"id": str(chat_id), "title": "Placeholder"}
+                doc_dict = chat_messages_to_document_dict(chat_history, doc_dict)
+                results.append(doc_dict)
 
     return results
-
 
 
 def get_document_by_id(document_id: str) -> Document:
@@ -143,7 +141,7 @@ def get_documents_by_user_id(user_id: str, document_status="Done") -> list[Docum
 
 def get_documents_public_by_user_id(
     user_id: str, document_status="Done"
-) -> list[DocumentPublic]:
+) -> list[dict]:
     results = []
     with Session(engine) as session:
 
@@ -163,7 +161,7 @@ def get_documents_public_by_user_id(
 
     for doc in docs:
         try:
-            results.append(doc.to_public())
+            results.append(doc.to_dict())
         except Exception as e:
             logger.error(f"Error getting document {doc.id} public by user id: {e}")
 

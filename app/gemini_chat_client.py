@@ -110,7 +110,7 @@ class ChatClient:
             prompt = f"Here is the conversation history:\n"
             for message in chat_history:
                     # Add the prompt to the chat
-                prompt += f"Time: {message.created_at} User: {message.asked_by} Message: {message.prompt}. Response: {message.response}\n\n"
+                prompt += f"Time: {message.created_at} User: {message.asked_by} Message: {message.user_prompt}. Response: {message.response}\n\n"
                      
             try:
                 self.chat.send_message(prompt)

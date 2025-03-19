@@ -1,6 +1,6 @@
 from app.log import get_logger
 from app.chat_handler import ChatHandler
-from app.response_models import Answer, ContentType, Summary, Topic, Type, Types, ChatMessagePublic, chat_messages_to_document_public
+from app.response_models import Answer, ContentType, Summary, Topic, Type, Types, ChatMessagePublic, chat_messages_to_document
 logger = get_logger(__name__)
 
 
@@ -32,7 +32,6 @@ from app.models import (
     Source,
     Document,
     PagePayload,
-    DocumentPublic,
     HTTPError,
     SearchPayload,
     SearchResults,
@@ -409,7 +408,7 @@ async def create_bookmark(
                 return _source
             else:
                 chat_handler = ChatHandler(document_id = _doc.id, user_id = _source.user_id, event_listener = manager.broadcast_message)
-                background_tasks.add_task(chat_handler.start_analyze)
+                background_tasks.add_task(chat_handler.start_analyze, _doc)
                 return _source
             
         
@@ -739,7 +738,7 @@ async def get_bookmarks_by_user_id(payload: PagePayload):
 @app.get(
     "/documents_plus/user/{user_id}",
     tags=["Document"],
-    response_model=List[DocumentPublic],
+    response_model=List[dict],
     status_code=200,
 )
 async def get_documents_plus_by_user_id(user_id: str):
@@ -800,42 +799,49 @@ async def get_bookmark_document(id: str, response: Response):
             "description": "Returning document error",
         },
         206: {"model": None, "description": "Document is being processed"},
-        200: {"model": DocumentPublic, "description": "Document is ready"},
+        200: {"model": dict, "description": "Document is ready"},
     },
 )
 async def get_document_plus(
     source_id: str, response: Response, background_tasks: BackgroundTasks
 ):
-    """get document with entities and concepts"""
+    try:
+        source = getter.get_source_by_id(source_id)
+        if source is None:
+            raise ValueError(f"Source with source_id {source_id} not found")
 
-    logger.info(f"Document plus -> endpoint called on bookmark {source_id}")
-    source = getter.get_source_by_id(source_id)
-    if source is None:
-        raise HTTPException(status_code=404, detail="Bookmark not found")
+        if source.document_id is None:
+            generate_document_summary(source)
+            raise HTTPException(
+                status_code=404,
+                detail=f"Document is being generated for source_id {source_id}",
+            )
 
-    document = getter.get_document_by_source_id(source_id)
+        document = getter.get_document_public_by_id(source.document_id)
 
-    if document is None:
-        raise HTTPException(status_code=404, detail="Document not found")
+        if document is None:
+            raise HTTPException(
+                status_code=404, detail=f"Document with id {source.document_id} not found"
+            )
 
-    # If document is still in processing, let the client know
-    if document.status in ["Processing", "Pending"]:
-        response.status_code = status.HTTP_206_PARTIAL_CONTENT
-        logger.info(
-            f"Document plus -> endpoint called on document status {document.status}"
-        )
-        return None
-    elif document.status == "Done":
+        logger.info(f"Document status: {document.get('status', 'Unknown')}")
 
-        response.status_code = status.HTTP_200_OK
-        logger.info(
-            f"Document plus -> endpoint called on document status {document.status}"
-        )
+        # If document is still in processing, let the client know
+        if document.get("status") in ["Pending", "Processing"]:
+            if source.html_root_element:
+                logger.info(
+                    f"Document {source.document_id} is being processed with html_root_element"
+                )
+                background_tasks.add_task(regenerate_document, source.document_id)
+            response.status_code = status.HTTP_206_PARTIAL_CONTENT
+            return document
+        else:
+            response.status_code = status.HTTP_200_OK
+            return document
 
-        return document.to_public()
-    else:
-        response.status_code = status.HTTP_404_NOT_FOUND
-        return document.to_public()
+    except ValueError as e:
+        logger.error(e)
+        raise HTTPException(status_code=404, detail=f"{e}")
 
 
 @app.get("/document/{id}", tags=["Document"])
@@ -887,26 +893,20 @@ async def get_document_chat(id: str, response: Response) -> List[Chat_Message]:
         user_id = getter.get_source_by_document_id(id).user_id
         chat_handler = ChatHandler(user_id=user_id, document_id=id)
         chat_messages = chat_handler.get_initial_chat_history(document_id=id)
-
-        """
-        chat_ready_message = BroadcastMessage(
-                    user_id=str(_source.user_id),
-                    message_type=WebSocketMessageType.CHAT_READY.value,
-                    data=[msg.to_dict() for msg in chat_messages],
-                    document_id=str(_doc.id)
-                )
-        """
-        if chat_messages is not None:
-            chat_messages = [msg.to_dict() for msg in chat_messages]
-
-            response.status_code = status.HTTP_200_OK
-            return chat_messages
-        else:
-            response.status_code = status.HTTP_204_NO_CONTENT
-            return None
     except Exception as e:
         logger.error(e)
-        raise HTTPException(status_code=404, detail=e)
+        response.status_code = status.HTTP_404_NOT_FOUND
+        return None
+    
+    if chat_messages is not None:
+        chat_messages = [msg.to_dict() for msg in chat_messages]
+
+        response.status_code = status.HTTP_200_OK
+        return chat_messages
+    else:
+        response.status_code = status.HTTP_204_NO_CONTENT
+        return None
+   
 
 @app.get("/document/{id}/explain", tags=["Document"])
 async def get_document_explain(id: str, response: Response):
@@ -922,28 +922,28 @@ async def get_document_explain(id: str, response: Response):
         raise HTTPException(status_code=404, detail=e)
 
 
-@app.get("/document/from_chat/{id}", tags=["Document"], response_model=DocumentPublic)
+@app.get("/document/from_chat/{id}", tags=["Document"], response_model=dict)
 async def get_document_from_chat(id: str, response: Response):
     """
-    Create a DocumentPublic object from chat history for a document
+    Create a document dictionary from chat history for a document
     
     This endpoint extracts information from chat messages with different event types:
-    - SUMMARY event type is used for DocumentPublic.is_about
-    - ENTITIES event type is used for DocumentPublic.entities_and_concepts
-    - CONTENT_TITLE event type is used for DocumentPublic.title
-    - CONTENT_TYPE event type is used for DocumentPublic.source_type
+    - SUMMARY event type is used for document["is_about"]
+    - ENTITIES event type is used for document["entities_and_concepts"]
+    - CONTENT_TITLE event type is used for document["title"]
+    - CONTENT_TYPE event type is used for document["source_type"]
     
     Args:
         id: The document ID
         
     Returns:
-        A DocumentPublic object with data extracted from the chat history
+        A document dictionary with data extracted from the chat history
     """
     try:
         # Create a ChatHandler instance
         chat_handler = ChatHandler(document_id=id)
         
-        # Get DocumentPublic from chat history
+        # Get document dict from chat history
         document = chat_handler.get_document_from_chat_history()
         
         if document is None:
@@ -960,28 +960,28 @@ async def get_document_from_chat(id: str, response: Response):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.put("/document/{id}/update_from_chat", tags=["Document"], response_model=DocumentPublic)
+@app.put("/document/{id}/update_from_chat", tags=["Document"], response_model=dict)
 async def update_document_from_chat(id: str, response: Response):
     """
-    Create a DocumentPublic object from chat history
+    Create a document dictionary from chat history
     
     This endpoint extracts information from chat messages with different event types:
-    - SUMMARY event type is used for DocumentPublic.is_about
-    - ENTITIES event type is used for DocumentPublic.entities_and_concepts
-    - CONTENT_TITLE event type is used for DocumentPublic.title
-    - CONTENT_TYPE event type is used for DocumentPublic.source_type
+    - SUMMARY event type is used for document["is_about"]
+    - ENTITIES event type is used for document["entities_and_concepts"]
+    - CONTENT_TITLE event type is used for document["title"]
+    - CONTENT_TYPE event type is used for document["source_type"]
     
     Args:
         id: The document ID
         
     Returns:
-        A DocumentPublic object with data extracted from the chat history
+        A document dictionary with data extracted from the chat history
     """
     try:
         # Create a ChatHandler instance
         chat_handler = ChatHandler(document_id=id)
         
-        # Get DocumentPublic from chat history
+        # Get document dict from chat history
         document = chat_handler.get_document_from_chat_history()
         
         if document is None:
@@ -1301,19 +1301,6 @@ def chat_event_listener(event):
     logger.info(f"Event listner called with event: {event}")
 
 
-@app.get(
-    "/study_collection/{id}/related_documents",
-    tags=[Groups.STUDY_COLLECTION],
-    response_model=List[DocumentPublic],
-    status_code=200,
-)
-async def get_collection_related_documents(id: str):
-    try:
-        documents = collection_handler.find_related_docs_public(id)
-        return documents
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=404, detail="Documents not found")
 
 
 @app.get(
@@ -1333,19 +1320,6 @@ async def get_study_collection(id: str):
         )
 
 
-@app.get(
-    "/study_collection/{id}/candidate_documents",
-    tags=[Groups.STUDY_COLLECTION],
-    response_model=List[DocumentPublic],
-    status_code=200,
-)
-async def get_collection_candidate_documents(id: str):
-    try:
-        documents = collection_handler.get_list_of_candidates_docs(id)
-        return documents
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=404, detail="Documents not found")
 
 
 @app.delete("/study_collection/{id}", tags=[Groups.STUDY_COLLECTION], status_code=204)

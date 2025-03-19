@@ -1,6 +1,6 @@
 import json
 import asyncio
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Dict
 from pydantic import BaseModel
 import logging
 
@@ -9,8 +9,9 @@ import app.getters as getters
 from google.genai.types import GenerateContentConfig
 
 from app.app_logic import insert_or_update_chat_history
-from app.models import Chat_Message, DocumentPublic, EventName, BroadcastMessage, WebSocketMessageType, EntityPublic
-from app.response_models import Answer, ContentType, Summary, Topic, Type, Types, ChatMessagePublic, Graph, Graphs
+from app.models import Chat_Message, Document, EventName, BroadcastMessage, WebSocketMessageType, EntityPublic
+from app.response_models import Answer, ContentType, PageContent, Summary, Topic, Type, Types, ChatMessagePublic, Graph, Graphs, Status, SuggestedQuestions  
+from app.document_public_factory import chat_messages_to_document_dict
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -52,14 +53,14 @@ class ChatHandler:
                 self._client.set_chat_history(chat_history)
     
     
-    def _process_chat_step(self, _the_ask_prompt: str, 
-                           _support_prompt: str, 
+    def _process_chat_step(self, _user_prompt: str, 
+                           _ai_prompt: str, 
                            _response_model: BaseModel, 
                            _asked_by: str = "system", 
                            _chat_type: str = "document", 
-                           _event_name: str = EventName.INIT_DOC_CHAT.value):
+                           _event_name: str = EventName.INIT_DOC_CHAT.value) -> Chat_Message:
         try:
-            response = self._client.send_message(prompt = _the_ask_prompt + " " + _support_prompt, response_model = _response_model)
+            response = self._client.send_message(prompt = _user_prompt + " " + _ai_prompt, response_model = _response_model)
             
             if type(response) == str:
                 ## Try to parse the answer as a json
@@ -69,42 +70,82 @@ class ChatHandler:
                         chat_id = self._doc.id,
                         chat_type = _chat_type,
                         user_id = self._user_id, 
-                        prompt = _the_ask_prompt,
+                        user_prompt = _user_prompt,
+                        ai_prompt = _ai_prompt,
                         asked_by = _asked_by,
                         response = json.dumps(response),
                         event_name = _event_name
                     )
                     message = insert_or_update_chat_history(message)
                     
-                    return response
+                    return message
                 except Exception as e:  
                     logger.error(f"Error parsing answer: {str(e)}")
                     return None
             
             
-            if response.status in ["good", "complete"]:
+            if response.status == Status.SUCCESS.value or response.status == Status.SUCCESS:
                 message = Chat_Message(
                     chat_id = self._doc.id,
                     chat_type = _chat_type,
                     user_id = self._user_id, 
-                    prompt = _the_ask_prompt,
+                    user_prompt = _user_prompt,
+                    ai_prompt = _ai_prompt,
                     asked_by = _asked_by,
                     response = response.model_dump_json(),
                     event_name = _event_name
                 )
                 message = insert_or_update_chat_history(message)
                 
-                return response
+                return message
             else:
                 logger.error(f"Error in _process_chat_step: {response.status}")
-                return response
+                # Create an error message
+                error_response = {
+                    "answer_for_chat": f"Error: {response.status}",
+                    "short_answer_for_computer": f"Error: {response.status}",
+                    "citations": [],
+                    "status": "error"
+                }
+                
+                message = Chat_Message(
+                    chat_id = self._doc.id,
+                    chat_type = _chat_type,
+                    user_id = self._user_id, 
+                    user_prompt = _user_prompt,
+                    ai_prompt = _ai_prompt,
+                    asked_by = _asked_by,
+                    response = json.dumps(error_response),
+                    event_name = EventName.ERROR.value
+                )
+                message = insert_or_update_chat_history(message)
+                return message
             
         except Exception as e:
-            logger.error(f"Error in _process_chat_step: {str(e)}")
-            return None
+            logger.error(f"Error in _process_chat_step: {str(e)}. User prompt: {_user_prompt}.")
+            # Create an error message
+            error_response = {
+                "answer_for_chat": f"Error: {str(e)}",
+                "short_answer_for_computer": f"Error: {str(e)}",
+                "citations": [],
+                "status": "error"
+            }
+            
+            message = Chat_Message(
+                chat_id = self._doc.id,
+                chat_type = _chat_type,
+                user_id = self._user_id, 
+                user_prompt = _user_prompt,
+                ai_prompt = _ai_prompt,
+                asked_by = _asked_by,
+                response = json.dumps(error_response),
+                event_name = EventName.ERROR.value
+            )
+            message = insert_or_update_chat_history(message)
+            return message
     
     
-    def start_analyze(self):
+    def start_analyze(self, doc: Document):
         
         ## If the chat is already initiated, send event that the chat is already initiated
         if self.chat_status(self._doc.id):
@@ -145,16 +186,16 @@ class ChatHandler:
         
         ## Send the initial chat message
         if EventName.INIT_DOC_CHAT.value not in event_names:
-            content_response = self._process_chat_step(
-                _the_ask_prompt = "This is the content we are going to analyze: ",
-                _support_prompt = self._source.html_root_element[:400000],
-                _response_model = None,
+            content_message = self._process_chat_step(
+                _user_prompt = "This is the content we are going to analyze: ",
+                _ai_prompt = self._source.html_root_element[:400000],
+                _response_model = PageContent,
                 _asked_by = "system",
                 _chat_type = "document",
                 _event_name = EventName.INIT_DOC_CHAT.value
             )
         
-            if content_response is None:
+            if content_message is None:
                 logger.error("Error in content response")
                 asyncio.run(self._event_listener(BroadcastMessage(
                     user_id=self._user_id,
@@ -162,56 +203,57 @@ class ChatHandler:
                     data=f"Error in content response",
                     document_id=self._doc.id
                 )))
-                return
-        
-
-
+            else:
+                try:
+                    # Parse the response JSON to get the content data
+                    content_response = json.loads(content_message.response)
+                    doc.title = content_response.get("title", "Untitled")
+                except Exception as e:
+                    logger.error(f"Error in content response: {str(e)}")
+                    asyncio.run(self._event_listener(BroadcastMessage(
+                        user_id=self._user_id,
+                        message_type=WebSocketMessageType.ERROR.value,
+                        data=f"Error in content response: {str(e)}",
+                        document_id=self._doc.id
+                    )))
+                
+                
+        ## Send progress percentage
         asyncio.run(self._event_listener(BroadcastMessage(
             user_id=self._user_id,
             message_type=WebSocketMessageType.PROGRESS_PERCENTAGE.value,
-            data=10,
+            data=30,
             document_id=self._doc.id
         )))
 
-        if EventName.CONTENT_TITLE.value not in event_names:
-            content_title = self._process_chat_step(
-                _the_ask_prompt = "Identify the title of the content",
-                _support_prompt = "",
-                _response_model = Answer,
-                _asked_by = "system",
-                _chat_type = "document",
-            _event_name = EventName.CONTENT_TITLE.value
-            )
-        
-            logger.info(f"Content title: {content_title.short_answer_for_computer}")
-        
-        content_title_str = content_title.short_answer_for_computer if content_title.short_answer_for_computer else None
-        
-
-
-        asyncio.run(self._event_listener(BroadcastMessage(
-            user_id=self._user_id,
-            message_type=WebSocketMessageType.PROGRESS_PERCENTAGE.value,
-            data=20,
-            document_id=self._doc.id
-        )))
+       
 
         if EventName.CONTENT_TYPE.value not in event_names:
-            content_type_answer = self._process_chat_step(
-                _the_ask_prompt = "Categorize the type of the content. ",
-                _support_prompt = """Is it news article, blog post, product description, etc. 
+            content_type_message = self._process_chat_step(
+                _user_prompt = "Categorize the type of the content. ",
+                _ai_prompt = """Is it news article, blog post, product description, etc. 
                 Use the following content types as a reference: """ + str(content_types),
-            _response_model = ContentType,
-            _asked_by = "system",
-            _chat_type = "document",
-            _event_name = EventName.CONTENT_TYPE.value
+                _response_model = ContentType,
+                _asked_by = "system",
+                _chat_type = "document",
+                _event_name = EventName.CONTENT_TYPE.value
             )
+            
+            # Parse the response JSON to get the content type
+            content_type_data = json.loads(content_type_message.response)
+            doc.content_type = content_type_data.get("content_type", "content")
+        else:
+            # Find the content type message in chat history
+            content_type_message = next((msg for msg in chat_history if msg.event_name == EventName.CONTENT_TYPE.value), None)
+            if content_type_message:
+                content_type_data = json.loads(content_type_message.response)
+                doc.content_type = content_type_data.get("content_type", "content")
+            else:
+                doc.content_type = "content"
         
-        content_type_str = content_type_answer.content_type if content_type_answer.content_type else "content"
+    
         
-        content_name = content_title_str if content_title_str else content_type_str
         
-
 
         asyncio.run(self._event_listener(BroadcastMessage(
             user_id=self._user_id,
@@ -220,85 +262,137 @@ class ChatHandler:
             document_id=self._doc.id
         )))
 
-        if EventName.SUMMARY.value not in event_names:
-            summary_response = self._process_chat_step(
-                _the_ask_prompt = f"Summaries the main idea in the \"{content_name}\" and create a short overview in bullet points that is easy to understand",
-                _support_prompt = "",
-            _response_model = Summary,
-            _asked_by = "system",
-            _chat_type = "document",
-            _event_name = EventName.SUMMARY.value
-            )
-            logger.info(f"Summary: {summary_response.summary_for_chat}")
-            
+        content_name = doc.title if doc.title else doc.content_type
         
         if len(bias_categorization) > 0:
             if EventName.BIAS_CATEGORIZATION.value not in event_names:
-                self._process_chat_step(
-                    _the_ask_prompt = f"Identify the level of bias in the {content_name}. ",
-                    _support_prompt = """Use the following bias categorization to identify the level of bias: """ + json.dumps(bias_categorization),
+                bias_message = self._process_chat_step(
+                    _user_prompt = f"Identify the level of bias in the {content_name}. ",
+                    _ai_prompt = """Use the following bias categorization to identify the level of bias: """ + json.dumps(bias_categorization),
                     _response_model = Answer,
                     _asked_by = "system",
                     _chat_type = "document",
-                _event_name = EventName.BIAS_CATEGORIZATION.value
-            )
-            
-        ## Check chat status and send event if chat is ready
-        if self.chat_status(self._doc.id):
-            chat_messages = self.generate_explain_message()
-
-            chat_messages = [msg.to_dict() for msg in chat_messages]
-
-            asyncio.run(self._event_listener(BroadcastMessage(
-                user_id=self._user_id,
-                message_type=WebSocketMessageType.CHAT_READY.value,
-                data=chat_messages,
-                document_id=self._doc.id
-            )))
+                    _event_name = EventName.BIAS_CATEGORIZATION.value
+                )
+                
+                # Parse the response JSON to get the bias data
+                bias_data = json.loads(bias_message.response)
+                bias_answer = bias_data.get("answer_for_chat", "No bias information available")
         else:
+            bias_answer = "No bias information available"
+        
+        if EventName.SUMMARY.value not in event_names:
+            
+            ai_prompt  = f"""
+                You are a helpful assistant that explains the content of a document to the user.
+                I want you to take the following chat history and write a message to the user that explains the content.
+                Your response should include a short explanation of the content, 
+                that include what the content is about (max four sentences), and what is the bias / motivation of the author
+                and key concepts or ideas in the content.
+                
+                The bias is: {bias_answer}
+                """
+            
+            summary_message = self._process_chat_step(
+                _user_prompt = "Explain the content of the document",
+                _ai_prompt = ai_prompt,
+                _response_model = Answer,
+                _asked_by = "system",
+                _chat_type = "document",
+                _event_name = EventName.SUMMARY.value
+            )
+             
+             
+            if summary_message is None:
+                logger.error("Error in summary response")
+                asyncio.run(self._event_listener(BroadcastMessage(
+                    user_id=self._user_id,
+                    message_type=WebSocketMessageType.ERROR.value,
+                    data=f"Error in summary response",
+                    document_id=self._doc.id
+                )))
+            else:
+                # Parse the response JSON to get the summary data
+                summary_data = json.loads(summary_message.response)
+                summary_answer = summary_data.get("answer_for_chat", "No summary available")
+                
+                logger.info(f"Summary: {summary_answer}")
+                asyncio.run(self._event_listener(BroadcastMessage(
+                    user_id=self._user_id,
+                    message_type=WebSocketMessageType.CHAT_READY.value,
+                    data=[summary_message.to_dict()],
+                    document_id=self._doc.id
+                )))
+        
+        suggested_questions = self.generate_suggested_chat_questions()
+        
+        # Broadcast the suggested questions to the client
+        if suggested_questions:
             asyncio.run(self._event_listener(BroadcastMessage(
                 user_id=self._user_id,
-                message_type=WebSocketMessageType.CHAT_NOT_READY.value,
-                data="Chat is not ready",
+                message_type=WebSocketMessageType.SUGGESTED_QUESTIONS.value,
+                data=suggested_questions,
                 document_id=self._doc.id
             )))
         
+        
+        
+        if EventName.BULLETS_POINTS.value not in event_names:
+            bullets_message = self._process_chat_step(
+                _user_prompt = f"Summaries the main idea in the \"{content_name}\" and create a short overview in bullet points that is easy to understand",
+                _ai_prompt = "",
+                _response_model = Summary,
+                _asked_by = "system",
+                _chat_type = "document",
+                _event_name = EventName.BULLETS_POINTS.value
+            )
+            
+            # Parse the response JSON to get the bullet points data
+            bullets_data = json.loads(bullets_message.response)
+            bullets_summary = bullets_data.get("summary_for_chat", "No bullet points available")
+            logger.info(f"Summary: {bullets_summary}")
+    
+    
+        
         if EventName.ENTITIES.value not in event_names:
             self._process_chat_step(
-                _the_ask_prompt = f"Identify the entities in the {content_name}",
-                _support_prompt = """Use the following schema.org entities as a reference: """ + str(entity_types),
+                _user_prompt = f"Identify the entities in the {content_name}",
+                _ai_prompt = """Use the following schema.org entities as a reference: """ + str(entity_types),
                 _response_model = Types,
                 _asked_by = "system",
                 _chat_type = "document",
-            _event_name = EventName.ENTITIES.value
+                _event_name = EventName.ENTITIES.value
             )
     
     def generate_explain_message(self) -> list[Chat_Message]:
         chat_history = getters.get_chat_history(self._doc.id)
         
         ## Get the summary
-        system_messages = [{'role': 'system', 'prompt': message.prompt, 'response': message.response} for message in chat_history if message.event_name in [EventName.SUMMARY.value, EventName.CONTENT_TITLE.value, EventName.CONTENT_TYPE.value, EventName.BIAS_CATEGORIZATION.value]]
+        system_messages = [{'role': 'system', 'prompt': message.user_prompt, 'response': message.response} for message in chat_history if message.event_name in [EventName.SUMMARY.value, EventName.CONTENT_TITLE.value, EventName.CONTENT_TYPE.value, EventName.BIAS_CATEGORIZATION.value]]
 
 
         ## prompt asking to write a message to the user that write a message to the user that explains the content using the chat history
         prompt  = f"""
         You are a helpful assistant that explains the content of a document to the user.
         I want you to take the following chat history and write a message to the user that explains the content.
-        Your response should have two parts:
-        - A short explanation of the content, that include what the content is about (max four sentences), and what is the bias / motivation of the author
-        - Bullet points of the most important points in the content
-
-        Format the answer_for_chat in the response using HTML tags: <b> for bold, <br> for new line and <ul> and </ul> for the bullet points.
+        Your response should include a short explanation of the content, 
+        that include what the content is about (max four sentences), and what is the bias / motivation of the author
+        and key concepts or ideas in the content.
+        
         The chat history is: {system_messages}
         """
         response = self._client.send_message(prompt = prompt, response_model = Answer)
+        
+        # Convert the response to JSON string if it's not already
+        response_json = response.model_dump_json() if hasattr(response, "model_dump_json") else json.dumps(response)
         
         chat_message = Chat_Message(
             chat_id = self._doc.id,
             chat_type = "document",
             user_id = self._user_id,
-            prompt = "Explain the content of the document",
-            response = response.model_dump_json(),
+            user_prompt = "Explain the content of the document",
+            ai_prompt = prompt,
+            response = response_json,
             asked_by = "system",
             event_name = EventName.EXPLAIN_CONTENT.value 
         )
@@ -325,14 +419,18 @@ class ChatHandler:
             _prompt = f"{question}\n\nFormat the answer_for_chat in the response using HTML tags: <b> for bold, <br> for new line and <ul> and </ul> for the bullet points."
             response = self._client.send_message(prompt=_prompt, response_model=Answer)
             
+            # Convert the response to JSON string if it's not already
+            response_json = response.model_dump_json() if hasattr(response, "model_dump_json") else json.dumps(response)
+            
             # Store the conversation in the database
             message = Chat_Message(
                 chat_id=str(self._context_id),
                 chat_type=self._context_type,
                 user_id=self._user_id,
-                prompt=_prompt,
+                user_prompt=question,
+                ai_prompt=_prompt,
                 asked_by="user",
-                response=response.model_dump_json() if hasattr(response, "model_dump_json") else json.dumps(response),
+                response=response_json,
                 event_name=EventName.MANUAL_MESSAGE.value
             )
             message = insert_or_update_chat_history(message)
@@ -353,7 +451,8 @@ class ChatHandler:
                 chat_id=str(self._context_id),
                 chat_type=self._context_type,
                 user_id=self._user_id,
-                prompt=_prompt,
+                user_prompt=question,
+                ai_prompt=_prompt,
                 asked_by="user",
                 response=json.dumps(error_response),
                 event_name=EventName.ERROR.value
@@ -413,6 +512,108 @@ class ChatHandler:
 
         return initial_chat_history
     
+    def get_document_from_chat_history(self) -> Dict:
+        """
+        Create a document dictionary from chat history
+        
+        This method extracts information from chat messages with different event types:
+        - SUMMARY event type is used for document["is_about"]
+        - ENTITIES event type is used for document["entities_and_concepts"]
+        - CONTENT_TITLE event type is used for document["title"]
+        - CONTENT_TYPE event type is used for document["source_type"]
+        
+        Returns:
+            A dictionary with document data extracted from the chat history
+        """
+        try:
+            # Get chat history for document
+            chat_history = getters.get_chat_history(self._context_id)
+            
+            if not chat_history:
+                logger.warning(f"No chat history found for document {self._context_id}")
+                return None
+            
+            # Create an initial document dictionary
+            document = {
+                "id": str(self._context_id),
+                "title": "Document from Chat",
+                "status": "Done"
+            }
+            
+            # Process chat messages to build document dictionary
+            return chat_messages_to_document_dict(chat_history, document)
+            
+        except Exception as e:
+            logger.error(f"Error in get_document_from_chat_history: {str(e)}")
+            return None
+
+    def generate_suggested_chat_questions(self) -> List[str]:
+        """
+        Generate suggested questions for the user based on the document content and chat history.
+        Uses the existing chat context and _process_chat_step to generate questions.
+        
+        Returns:
+            List[str]: A list of suggested questions
+        """
+        try:
+            user_prompt = "Generate interesting questions about this document"
+            ai_prompt = """
+            Based on the document content and our previous conversation, 
+            generate 5 interesting questions that would help the user better understand:
+            1. The main arguments or points
+            2. The implications or impact
+            3. The context or background
+            4. Specific details that might be interesting
+            5. Relationships to broader topics or themes
+            
+            Keep the questions short and concise, and not more than 15 words each.
+            
+            Return your response in this format:
+            {
+                "questions": ["Question 1?", "Question 2?", "Question 3?", "Question 4?", "Question 5?"],
+                "status": "Success"
+            }
+            """
+            
+            # Use _process_chat_step to generate questions
+            message = self._process_chat_step(
+                _user_prompt=user_prompt,
+                _ai_prompt=ai_prompt,
+                _response_model=SuggestedQuestions,
+                _asked_by="system",
+                _chat_type="document",
+                _event_name=EventName.SUGGESTED_QUESTIONS.value
+            )
+            
+            if not message:
+                logger.error("Failed to generate questions")
+                return []
+            
+            # Extract questions from the response
+            try:
+                # Parse the response JSON
+                response_data = message.response
+                if isinstance(response_data, str):
+                    response_data = json.loads(response_data)
+                
+                # Get questions directly from the questions field
+                questions = response_data.get('questions', [])
+                
+                # Ensure we have a list of strings
+                if not isinstance(questions, list):
+                    questions = []
+                questions = [str(q) for q in questions if isinstance(q, (str, int, float))]
+                
+                return questions
+                
+            except json.JSONDecodeError:
+                logger.error("Failed to parse questions response")
+                return []
+            
+        except Exception as e:
+            logger.error(f"Error generating suggested questions: {str(e)}")
+            return []
+            
 
 
 

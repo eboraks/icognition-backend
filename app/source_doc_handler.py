@@ -119,7 +119,6 @@ class SourceDocHandler:
         doc.title = page.title
         doc.url = page.clean_url
         doc.source_type = source_type
-        doc.original_text = page.full_text
         doc.authors = ", ".join(page.authors) if page.authors else None
         doc.metadata_keywords = ", ".join(page.keywords) if page.keywords else None
         doc.locale = page.locale
@@ -127,8 +126,7 @@ class SourceDocHandler:
         doc.image_url = page.image_url
         doc.site_name = page.site_name
         doc.metadata_description = page.metadata_description
-        doc.html_elements = json.loads(page.html_elements)
-
+        
         session.add(doc)
         session.commit()
         session.refresh(doc)

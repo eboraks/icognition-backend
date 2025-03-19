@@ -1,24 +1,54 @@
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 import json
 import logging
 
 # Set up logger
 logger = logging.getLogger(__name__)
 
+
+from enum import Enum
+
+class Status(Enum):
+    ERROR = "Error"
+    SUCCESS = "Success"
+
+
 class Answer(BaseModel):
     answer_for_chat: str
     short_answer_for_computer: str
     text_used_for_answer: list[str]
-    status: str
+    status: Status
     
     def __str__(self):
         return self.short_answer_for_computer
+
+
+class SuggestedQuestions(BaseModel):
+    questions: list[str]
+    status: Status
+    
+    def __str__(self):
+        return json.dumps(self.questions)
+
+
+class PageContent(BaseModel):
+    text: str
+    author: str = None
+    title: str = None
+    url: str = None
+    tags: list[str] = None
+    published_date: str = None
+    status: Status
+    
+    def __str__(self):
+        return self.text
+
     
     
 class ContentType(BaseModel):
     content_type: str
-    status: str
+    status: Status
     
     def __str__(self):
         return self.content_type
@@ -42,20 +72,20 @@ class Graph(BaseModel):
     subject: str
     predicate: str
     object: str
-    status: str
+    status: Status
     
     def __str__(self):
         return f"{self.subject} {self.predicate} {self.object}"
 
 class Graphs(BaseModel):
     graphs: list[Graph]
-    status: str
+    status: Status
 
 class Type(BaseModel):
     type: str
     name: str
     description: str
-    status: str
+    status: Status
     def __str__(self):
         return f"{self.type} {self.name} {self.description}"
 
@@ -72,18 +102,18 @@ class ChatMessagePublic(BaseModel):
     answer: str
     created_at: str
 
-def chat_messages_to_document_public(chat_messages, document):
+def chat_messages_to_document(chat_messages, document):
     """
-    Convert chat messages with different event types into a DocumentPublic object
+    Convert chat messages with different event types into a Document object
     
     Args:
         chat_messages: List of Chat_Message objects
-        document: DocumentPublic object to update
+        document: Document object to update
         
     Returns:
-        A DocumentPublic object with data extracted from the chat messages
+        A Document object with data extracted from the chat messages
     """
-    from app.models import EventName, EntityPublic
+    from app.models import EventName, Entity
     
     if not chat_messages:
         return None
@@ -119,7 +149,7 @@ def chat_messages_to_document_public(chat_messages, document):
                 entities = []
                 
                 for entity_type in types_data.types:
-                    entity = EntityPublic(
+                    entity = Entity(
                         id=f"{chat_messages[0].chat_id}_{entity_type.name}",  # Create a unique ID
                         name=entity_type.name,
                         description=entity_type.description,

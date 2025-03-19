@@ -301,24 +301,23 @@ class Document(SQLModel, table=True):
     title: str = Field(default=None, nullable=True)
     url: str = Field(default=None, nullable=True)
     source_type: str = Field(default=None, nullable=True)
-    original_text: str = Field(default=None, nullable=True)
-    html_elements: List[Dict] = Field(default=[], sa_column=Column(JSON))
+    content_type: str = Field(default=None, nullable=True)
     authors: str = Field(default=None, nullable=True)
     metadata_keywords: str = Field(default=None, nullable=True)
     metadata_description: str = Field(default=None, nullable=True)
     locale: str = Field(default=None, nullable=True)
     image_url: str = Field(default=None, nullable=True)
     site_name: str = Field(default=None, nullable=True)
-    ai_short_summary: str = Field(default=None, nullable=True)
     ai_is_about: str = Field(default=None, nullable=True)
     ai_bullet_points: List[str] = Field(default=[], sa_column=Column(JSON))
     ai_citations: List[Dict] = Field(default=[], sa_column=Column(JSON))
-    raw_answer: str = Field(default=None, nullable=True)
     publication_date: datetime = Field(default=None, nullable=True)
     update_at: datetime = Field(default_factory=datetime.now, nullable=True)
     status: str = Field(default="Pending", nullable=True)
     llm_service_meta: Optional[Dict] = Field(default={}, sa_column=Column(JSONB))
-    ai_summary_vector: List[float] = Field(sa_column=Column(Vector(768)))
+    
+    # Remove original_text, html_elements, and raw_answer as they're stored elsewhere
+    # These fields will be migrated out later
 
     ## Many to Many relationships between documents and entities
     entities: list["Entity"] = Relationship(
@@ -329,35 +328,71 @@ class Document(SQLModel, table=True):
         back_populates="documents", link_model=SubTopic_Document_Link
     )
     
-    def to_public(self, cosine_similarity: float = None) -> "DocumentPublic":
+    def to_dict(self, cosine_similarity: float = None) -> dict:
+        """Convert Document to a JSON-serializable dictionary for API responses
+        
+        This replaces the old to_public() method and returns a dict that can be directly
+        serialized to JSON rather than creating a separate Document object.
+        
+        Args:
+            cosine_similarity (float, optional): Cosine similarity score if available
 
-        if type(self.html_elements) == str:
-            html_elements = json.loads(self.html_elements)
-        else:
-            html_elements = self.html_elements
-
-        return DocumentPublic(
-            id=str(self.id),
-            title=self.title,
-            url=self.url,
-            source_type="web" if self.source_type is None else self.source_type,
-            authors=self.authors.split(",") if self.authors else None,
-            tldr=self.ai_bullet_points,
-            publicationDate=self.publication_date,
-            llmServiceMeta=self.llm_service_meta,
-            status=self.status,
-            updateAt=self.update_at,
-            oneSentenceSummary=self.ai_short_summary,
-            summary_citations=[
-                DocumentCitation(document_id=str(self.id), verbatims=self.ai_citations)
-            ],
-            is_about=self.ai_is_about,
-            entities_and_concepts=[ent.to_public() for ent in self.entities],
-            cosine_similarity=cosine_similarity,
-            image_url=self.image_url,
-            site_name=self.site_name,
-            html_elements=remove_none_header_elements(html_elements),
-        )
+        Returns:
+            dict: Document as a dictionary for API responses
+        """
+        # Get related source to retrieve html_elements if needed
+        html_elements = []
+        
+        try:
+            # Use this approach to get html_elements without explicitly loading source
+            # This is a placeholder - you'll need to implement the actual retrieval logic
+            from app.getters import get_source_by_document_id
+            source = get_source_by_document_id(str(self.id))
+            if source and hasattr(source, 'html_elements'):
+                if type(source.html_elements) == str:
+                    html_elements = json.loads(source.html_elements)
+                else:
+                    html_elements = source.html_elements
+        except Exception:
+            # Fail silently if we can't get html_elements
+            pass
+            
+        return {
+            "id": str(self.id),
+            "title": self.title,
+            "url": self.url,
+            "source_type": "web" if self.source_type is None else self.source_type,
+            "authors": self.authors.split(",") if self.authors else None,
+            "tldr": self.ai_bullet_points,
+            "publicationDate": self.publication_date.isoformat() if self.publication_date else None,
+            "llmServiceMeta": self.llm_service_meta,
+            "status": self.status,
+            "updateAt": self.update_at.isoformat() if self.update_at else None,
+            "oneSentenceSummary": self.ai_short_summary,
+            "summary_citations": [
+                {"document_id": str(self.id), "verbatims": self.ai_citations}
+            ] if self.ai_citations else [],
+            "is_about": self.ai_is_about,
+            "entities_and_concepts": [ent.to_public() for ent in self.entities],
+            "cosine_similarity": cosine_similarity,
+            "image_url": self.image_url,
+            "site_name": self.site_name,
+            "html_elements": remove_none_header_elements(html_elements) if html_elements else [],
+        }
+    
+    def to_response_model(self, cosine_similarity: float = None) -> dict:
+        """
+        Convenience method that returns the document as a dictionary
+        suitable for API responses. This is used to maintain compatibility
+        with existing API endpoints expecting Document.
+        
+        Args:
+            cosine_similarity (float, optional): Cosine similarity score if available
+            
+        Returns:
+            dict: Document formatted for API responses
+        """
+        return self.to_dict(cosine_similarity)
 
     def to_embeddings(self) -> list["Embedding"]:
         """
@@ -783,28 +818,6 @@ Why I used Pydantic instead of SQLModel? Good question, in my testing I was not 
 """
 
 
-class DocumentPublic(BaseModel):
-    id: Optional[str]
-    title: Optional[str]
-    source_type: Optional[str] = None
-    url: Optional[str] = None
-    authors: Optional[List[str]] = None
-    publicationDate: Optional[datetime] = None
-    llmServiceMeta: Optional[Dict] = None
-    status: Optional[str] = None
-    updateAt: Optional[datetime] = None
-    oneSentenceSummary: Optional[str] = None
-    summary_citations: Optional[List[DocumentCitation]] = None
-    is_about: Optional[str] = None
-    tldr: Optional[List[str]] = None
-    entities_and_concepts: Optional[List[EntityPublic]] = None
-    usage: Optional[str] = None
-    cosine_similarity: Optional[float] = None
-    image_url: Optional[str] = None
-    site_name: Optional[str] = None
-    html_elements: Optional[List[dict]] = None
-
-
 class StudyCollectionPublic(SQLModel, table=False):
     """
     Represents a study collection with its ID, name, description, and user ID.
@@ -817,7 +830,7 @@ class StudyCollectionPublic(SQLModel, table=False):
     user_id: str = Field(nullable=False)
     documents_ids: Optional[List[str]] = Field(default=[])
     status: Optional[str] = Field(default=None)
-    related_docs: Optional[List[DocumentPublic]] = Field(default=[])
+    related_docs: Optional[List[dict]] = Field(default=[])
     tasks: Optional[list[StudyTaskPublic]] = Field(default=[])
     created_at: Optional[datetime] = Field(default=None)
 
@@ -830,7 +843,7 @@ class Answer(BaseModel):
 
 
 class SearchResults(BaseModel):
-    documents_display: Optional[List[DocumentPublic]]
+    documents_display: Optional[List[dict]]
     rag_answer: Optional[RagAnswerPublic]
     failure: Optional[str] = None
 
@@ -868,7 +881,8 @@ class Chat_Message(SQLModel, table=True):
     chat_id: uuid_pkg.UUID = Field(nullable=False)
     chat_type: str = Field(nullable=False)
     user_id: str = Field(nullable=False)
-    prompt: str = Field(nullable=False)
+    user_prompt: str = Field(nullable=False)
+    ai_prompt: str = Field(nullable=False)
     event_name: str = Field(nullable=False)
     response: Dict = Field(sa_column=Column(JSON), default={})
     
@@ -881,7 +895,8 @@ class Chat_Message(SQLModel, table=True):
             "chat_id": str(self.chat_id),
             "chat_type": self.chat_type,
             "user_id": self.user_id,
-            "prompt": self.prompt,
+            "user_prompt": self.user_prompt,
+            "ai_prompt": self.ai_prompt,
             "event_name": self.event_name,
             "response": self.response
         }
@@ -896,9 +911,11 @@ class EventName(Enum):
     BIAS_CATEGORIZATION = "bias_categorization"
     CHAT_ALREADY_INITIATED = "chat_already_initiated"
     CONTENT_TITLE = "content_title"
+    BULLETS_POINTS = "bullets_points"
     SUMMARY = "summary"
     MANUAL_MESSAGE = "manual_message"
     EXPLAIN_CONTENT = "explain_content"
+    SUGGESTED_QUESTIONS = "suggested_questions"
     
 class WebSocketMessageType(Enum):
     """Enum for WebSocket message types used in broadcasts"""
@@ -910,6 +927,7 @@ class WebSocketMessageType(Enum):
     PROGRESS_PERCENTAGE = "progress_percentage"
     DOC_QANDA = "doc_qanda"
     ERROR = "error"
+    SUGGESTED_QUESTIONS = "suggested-questions"
     
 class BroadcastMessage:
     """
@@ -960,8 +978,20 @@ class BroadcastMessage:
         if self.collection_id:
             message["collection_id"] = str(self.collection_id)
         
-        # Add data
-        message["data"] = self.data
+        # Handle data that might already be a JSON string
+        data = self.data
+        if isinstance(data, str):
+            try:
+                # Check if it's already a valid JSON string
+                json.loads(data)
+                # If it is, parse it to avoid double serialization
+                message["data"] = json.loads(data)
+            except json.JSONDecodeError:
+                # Not a JSON string, use it as is
+                message["data"] = data
+        else:
+            # Not a string, use as is
+            message["data"] = data
         
         return json.dumps(message)
     

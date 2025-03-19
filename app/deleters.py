@@ -6,7 +6,6 @@ from app.models import (
     Source,
     Document,
     Document_Entity_Link,
-    DocumentPublic,
     Entity,
     Question_Answer,
     SubTopic,
