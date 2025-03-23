@@ -6,7 +6,7 @@ import logging
 
 from app.gemini_chat_client import ChatClient
 import app.getters as getters
-from google.genai.types import GenerateContentConfig
+
 
 from app.app_logic import insert_or_update_chat_history
 from app.models import Chat_Message, Document, EventName, BroadcastMessage, WebSocketMessageType, EntityPublic
@@ -58,7 +58,8 @@ class ChatHandler:
                            _response_model: BaseModel, 
                            _asked_by: str = "system", 
                            _chat_type: str = "document", 
-                           _event_name: str = EventName.INIT_DOC_CHAT.value) -> Chat_Message:
+                           _event_name: str = EventName.INIT_DOC_CHAT.value, 
+                           _save_to_db: bool = True) -> Chat_Message:
         try:
             response = self._client.send_message(prompt = _user_prompt + " " + _ai_prompt, response_model = _response_model)
             
@@ -76,7 +77,8 @@ class ChatHandler:
                         response = json.dumps(response),
                         event_name = _event_name
                     )
-                    message = insert_or_update_chat_history(message)
+                    if _save_to_db:
+                        message = insert_or_update_chat_history(message)
                     
                     return message
                 except Exception as e:  
@@ -147,17 +149,21 @@ class ChatHandler:
     
     def start_analyze(self, doc: Document):
         
-        ## If the chat is already initiated, send event that the chat is already initiated
+        ## If the chat is already initiated, retrieve summary and suggested questions braodcast them to client
         if self.chat_status(self._doc.id):
-            event_data = {
-                "name": EventName.CHAT_ALREADY_INITIATED.value,
-                "doc_id": str(self._doc.id),
-                "ask": "The chat is already initiated",
-                "response": "The chat is already initiated"
-            }
-            self._event_listener(event_data)
-            return
+            
+            summary_messages = getters.get_chat_messages(user_id = self._user_id, 
+                                                       document_id = doc.id)
+
+            asyncio.run(self._event_listener(BroadcastMessage(
+                user_id=self._user_id,
+                message_type= WebSocketMessageType.CHAT_READY.value,
+                document_id= str(self._doc.id),
+                data=[chat.to_dict() for chat in summary_messages]
+            )))
+            return True
         
+        ## TODO, I need to improve the logic inf case we have summary and suggested questoin, but missing other type like entities
 
         ## Get the chat history and if it exists, send event that the chat is already initiated
         chat_history = getters.get_chat_history(self._doc.id)
@@ -282,26 +288,7 @@ class ChatHandler:
             bias_answer = "No bias information available"
         
         if EventName.SUMMARY.value not in event_names:
-            
-            ai_prompt  = f"""
-                You are a helpful assistant that explains the content of a document to the user.
-                I want you to take the following chat history and write a message to the user that explains the content.
-                Your response should include a short explanation of the content, 
-                that include what the content is about (max four sentences), and what is the bias / motivation of the author
-                and key concepts or ideas in the content.
-                
-                The bias is: {bias_answer}
-                """
-            
-            summary_message = self._process_chat_step(
-                _user_prompt = "Explain the content of the document",
-                _ai_prompt = ai_prompt,
-                _response_model = Answer,
-                _asked_by = "system",
-                _chat_type = "document",
-                _event_name = EventName.SUMMARY.value
-            )
-             
+            summary_message = self.generate_initial_summary(bias_answer)
              
             if summary_message is None:
                 logger.error("Error in summary response")
@@ -312,10 +299,8 @@ class ChatHandler:
                     document_id=self._doc.id
                 )))
             else:
-                # Parse the response JSON to get the summary data
-                summary_data = json.loads(summary_message.response)
-                summary_answer = summary_data.get("answer_for_chat", "No summary available")
-                
+                data = json.loads(summary_message.response)
+                summary_answer = data.get("answer_for_chat", "No summary available")
                 logger.info(f"Summary: {summary_answer}")
                 asyncio.run(self._event_listener(BroadcastMessage(
                     user_id=self._user_id,
@@ -324,16 +309,17 @@ class ChatHandler:
                     document_id=self._doc.id
                 )))
         
-        suggested_questions = self.generate_suggested_chat_questions()
-        
-        # Broadcast the suggested questions to the client
-        if suggested_questions:
-            asyncio.run(self._event_listener(BroadcastMessage(
-                user_id=self._user_id,
-                message_type=WebSocketMessageType.SUGGESTED_QUESTIONS.value,
-                data=suggested_questions,
-                document_id=self._doc.id
-            )))
+        if EventName.SUGGESTED_QUESTIONS.value not in event_names:
+            suggested_questions = self.generate_suggested_chat_questions()
+            
+            # Broadcast the suggested questions to the client
+            if suggested_questions:
+                asyncio.run(self._event_listener(BroadcastMessage(
+                    user_id=self._user_id,
+                    message_type=WebSocketMessageType.SUGGESTED_QUESTIONS.value,
+                    data=suggested_questions,
+                    document_id=self._doc.id
+                )))
         
         
         
@@ -364,43 +350,37 @@ class ChatHandler:
                 _event_name = EventName.ENTITIES.value
             )
     
-    def generate_explain_message(self) -> list[Chat_Message]:
-        chat_history = getters.get_chat_history(self._doc.id)
-        
-        ## Get the summary
-        system_messages = [{'role': 'system', 'prompt': message.user_prompt, 'response': message.response} for message in chat_history if message.event_name in [EventName.SUMMARY.value, EventName.CONTENT_TITLE.value, EventName.CONTENT_TYPE.value, EventName.BIAS_CATEGORIZATION.value]]
-
-
-        ## prompt asking to write a message to the user that write a message to the user that explains the content using the chat history
-        prompt  = f"""
-        You are a helpful assistant that explains the content of a document to the user.
-        I want you to take the following chat history and write a message to the user that explains the content.
-        Your response should include a short explanation of the content, 
-        that include what the content is about (max four sentences), and what is the bias / motivation of the author
-        and key concepts or ideas in the content.
-        
-        The chat history is: {system_messages}
+    def generate_initial_summary(self, bias_answer: str) -> Chat_Message:
         """
-        response = self._client.send_message(prompt = prompt, response_model = Answer)
+        Generate an initial summary of the document content
         
-        # Convert the response to JSON string if it's not already
-        response_json = response.model_dump_json() if hasattr(response, "model_dump_json") else json.dumps(response)
+        Args:
+            bias_answer: Information about the document's bias
+            
+        Returns:
+            A Chat_Message object containing the summary
+        """
+        ai_prompt = f"""You are a helpful assistant that explains the content of a document to the user.
+            I want you to take the following chat history and write a message to the user that explains the content.
+            Your response should include a short explanation of the content, 
+            that include what the content is about (max four sentences), and what is the bias / motivation of the author
+            and key concepts or ideas in the content.
+            
+            The bias is: {bias_answer}
+            """
         
-        chat_message = Chat_Message(
-            chat_id = self._doc.id,
-            chat_type = "document",
-            user_id = self._user_id,
-            user_prompt = "Explain the content of the document",
-            ai_prompt = prompt,
-            response = response_json,
-            asked_by = "system",
-            event_name = EventName.EXPLAIN_CONTENT.value 
+        summary_message = self._process_chat_step(
+            _user_prompt = "Explain the content of the document",
+            _ai_prompt = ai_prompt,
+            _response_model = Answer,
+            _asked_by = "system",
+            _chat_type = "document",
+            _event_name = EventName.SUMMARY.value
         )
-        insert_or_update_chat_history(chat_message)
-
-        return [chat_message]
         
+        return summary_message
 
+    
 
     async def ask_question(self, question: str) -> Chat_Message:
         """
@@ -481,7 +461,7 @@ class ChatHandler:
         if len(event_names) == 0:
             return False
 
-        enum_values = ['init_doc_chat', 'content_type', 'content_title', 'summary']
+        enum_values = [EventName.SUMMARY.value, EventName.SUGGESTED_QUESTIONS.value]
 
         for enum_value in enum_values:
             if enum_value not in event_names:
@@ -559,7 +539,9 @@ class ChatHandler:
             user_prompt = "Generate interesting questions about this document"
             ai_prompt = """
             Based on the document content and our previous conversation, 
-            generate 5 interesting questions that would help the user better understand:
+            generate 5 interesting questions that would help the user better understand the content. 
+            Make sure the content have answer to the questions.
+            Make sure the questions are not in the chat history.
             1. The main arguments or points
             2. The implications or impact
             3. The context or background
@@ -582,7 +564,8 @@ class ChatHandler:
                 _response_model=SuggestedQuestions,
                 _asked_by="system",
                 _chat_type="document",
-                _event_name=EventName.SUGGESTED_QUESTIONS.value
+                _event_name=EventName.SUGGESTED_QUESTIONS.value,
+                _save_to_db=False
             )
             
             if not message:

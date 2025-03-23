@@ -724,3 +724,37 @@ def get_chat_history(chat_id: str) -> list[Chat_Message]:
     with Session(engine) as session:
         chat_history = session.scalars(select(Chat_Message).where(Chat_Message.chat_id == chat_id)).all()
     return chat_history
+
+
+def get_chat_messages(user_id: str, document_id: str, event_name: str = None) -> list[Chat_Message]:
+    """
+    Get chat messages for a specific user and document, optionally filtered by event_name
+    
+    Args:
+        user_id: The user ID
+        document_id: The document ID
+        event_name: Optional event name to filter messages (e.g., EventName.SUMMARY.value)
+        
+    Returns:
+        A list of Chat_Message objects matching the criteria, ordered by created_at in descending order
+    """
+    with Session(engine) as session:
+        # Start with base query for user and document
+        query = select(Chat_Message).where(
+            and_(
+                Chat_Message.user_id == user_id,
+                Chat_Message.chat_id == document_id
+            )
+        )
+        
+        # Add event_name filter if provided
+        if event_name:
+            query = query.where(Chat_Message.event_name == event_name)
+            
+        # Order by creation date (newest first)
+        query = query.order_by(Chat_Message.created_at.desc())
+            
+        # Execute the query and get the results
+        chat_messages = session.scalars(query).all()
+        
+    return chat_messages

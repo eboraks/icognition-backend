@@ -390,26 +390,11 @@ async def create_bookmark(
             
             _doc = getter.get_document_by_source_id(_source.id)
             
-            if ChatHandler.chat_status(_doc.id):
-                logger.info(f"Chat is complete for {page.clean_url}")
-                chat_handler = ChatHandler(document_id = _doc.id, user_id = _source.user_id, event_listener = manager.broadcast_message)
-                chat_messages = chat_handler.generate_explain_message()
-                
-                # Create a chat ready message
-                chat_ready_message = BroadcastMessage(
-                    user_id=str(_source.user_id),
-                    message_type=WebSocketMessageType.CHAT_READY.value,
-                    data=[msg.to_dict() for msg in chat_messages],
-                    document_id=str(_doc.id)
-                )
-                
-                # Broadcast the message
-                await manager.broadcast_message(chat_ready_message)
-                return _source
-            else:
-                chat_handler = ChatHandler(document_id = _doc.id, user_id = _source.user_id, event_listener = manager.broadcast_message)
-                background_tasks.add_task(chat_handler.start_analyze, _doc)
-                return _source
+            ## Chat handler will initate the chat and boradcast it to the client
+            ## If chat already exists in the DB, the hanlder will broadcast the existing chat
+            chat_handler = ChatHandler(document_id = _doc.id, user_id = _source.user_id, event_listener = manager.broadcast_message)
+            background_tasks.add_task(chat_handler.start_analyze, _doc)
+            return _source
             
         
     except Exception as e:
