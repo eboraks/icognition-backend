@@ -43,22 +43,55 @@ def delete_chat_message(chat_message_id: int) -> None:
         session.commit()
 
 
-def delete_source_and_associate_records(source_id) -> None:
+def delete_source_and_associate_records(id: str) -> None:
     """
-    This function deletes a bookmark and all associated records from the database.
-    This function was create for testing purposes.
+    Delete a source/bookmark and all associated records from the database.
+    This function can handle both source_id and document_id as input.
+    
+    Args:
+        id: Either a source_id or document_id
     """
     try:
-        doc = getter.get_document_by_source_id(source_id)
-        delete_document_and_associate_records(doc.id)
-    except Exception as e:
-        logging.error(f"Error deleting document and associated records: {e}")
+        # First determine if the id is a source_id or document_id
+        with Session(engine) as session:
+            # Try to find a source with this id
+            source = session.scalar(select(Source).where(Source.id == id))
+            if source:
+                # If found, it's a source_id
+                source_id = id
+                document_id = source.document_id
+            else:
+                # If not found, assume it's a document_id
+                document_id = id
+                source = session.scalar(select(Source).where(Source.document_id == document_id))
+                source_id = source.id if source else None
 
-    logging.info(f"Deleting bookmark {source_id} and associated records")
-    with Session(engine) as session:
-        session.execute(delete(Source).where(Source.id == source_id))
-        session.commit()
-        logging.info(f"Bookmark {source_id} and associated records deleted")
+        if not source_id and not document_id:
+            logging.error(f"No source or document found with id {id}")
+            return
+
+        # Delete chat messages first
+        with Session(engine) as session:
+            session.execute(
+                delete(Chat_Message).where(Chat_Message.chat_id == document_id)
+            )
+            session.commit()
+            logging.info(f"Chat messages deleted for document {document_id}")
+
+        # Delete document and its associated records
+        if document_id:
+            delete_document_and_associate_records(document_id)
+
+        # Delete source if it exists
+        if source_id:
+            with Session(engine) as session:
+                session.execute(delete(Source).where(Source.id == source_id))
+                session.commit()
+                logging.info(f"Source {source_id} deleted")
+
+    except Exception as e:
+        logging.error(f"Error in delete_source_and_associate_records: {str(e)}")
+        raise e
 
 
 def reset_document_for_testing(document_id) -> None:

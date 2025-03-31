@@ -291,7 +291,7 @@ def get_paragraphs(soup: BeautifulSoup) -> list[str]:
 def get_elements(soup: BeautifulSoup) -> list[dict]:
     header_pattern = re.compile(r"h\d")
     elements = []
-    for element in soup.find_all(["p", "h1", "h2", "h3"]):
+    for element in soup.find_all(["p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "ul", "ol"]):
         ## Collect only paragraph and headers with enough content
         if element.name == "p" and len(element.text.split(" ")) > 8:
             elements.append({'element': element.name, 'text': element.text})

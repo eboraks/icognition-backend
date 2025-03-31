@@ -252,6 +252,23 @@ def create_source_bookmark(page: Page, user_id: str) -> Source:
         return bookmark
 
     doc = source_doc_handler.create_document_from_page(page)
+    
+    ## Update the document with the source text in HTML
+    doc.source_text_in_html = page.html_elements 
+    if page.publish_date:
+        doc.publication_date = page.publish_date
+    if page.title:
+        doc.title = page.title
+    if page.authors:
+        doc.authors = page.authors
+    if page.metadata_description:
+        doc.metadata_description = page.metadata_description
+    if page.locale:
+        doc.locale = page.locale
+    if page.image_url:
+        doc.image_url = page.image_url
+    if page.site_name:
+        doc.site_name = page.site_name
 
     bookmark = Source()
     bookmark.url = page.clean_url
@@ -260,6 +277,7 @@ def create_source_bookmark(page: Page, user_id: str) -> Source:
     bookmark.user_id = user_id
 
     session.add(bookmark)
+    session.add(doc)
     session.commit()
     session.refresh(bookmark)
     logging.info(f"Bookmark was created with id {bookmark.id}")

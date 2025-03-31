@@ -197,7 +197,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, source: str):
     try:
         while True:
             data = await websocket.receive_text()
-            logger.info(f"Websocket received message {data}")
+            #logger.info(f"Websocket received message {data}")
             await manager.broadcast(message=data, user_id=user_id)
     except WebSocketDisconnect as e:
         logger.error(f"Websocket Exception for {session_id}. Error: {str(e)}")
@@ -875,13 +875,16 @@ async def get_document_questions_answers(id: str, response: Response):
 @app.get("/document/{id}/chat", tags=["Document"])
 async def get_document_chat(id: str, response: Response) -> List[Chat_Message]:
     try:
-        user_id = getter.get_source_by_document_id(id).user_id
+        source = getter.get_source_by_document_id(id)
+        if source is None:
+            raise HTTPException(status_code=404, detail="Document or source not found")
+        user_id = source.user_id
         chat_handler = ChatHandler(user_id=user_id, document_id=id)
         chat_messages = chat_handler.get_initial_chat_history(document_id=id)
     except Exception as e:
         logger.error(e)
         response.status_code = status.HTTP_404_NOT_FOUND
-        return None
+        return []
     
     if chat_messages is not None:
         chat_messages = [msg.to_dict() for msg in chat_messages]
@@ -890,7 +893,7 @@ async def get_document_chat(id: str, response: Response) -> List[Chat_Message]:
         return chat_messages
     else:
         response.status_code = status.HTTP_204_NO_CONTENT
-        return None
+        return []
    
 
 @app.get("/document/{id}/explain", tags=["Document"])
@@ -998,6 +1001,13 @@ async def get_bookmark_keysentences(id: int, response: Response):
 
 @app.delete("/bookmark/{id}", tags=["Bookmark"], status_code=204)
 async def delete_bookmark(id: str) -> None:
+    """
+    Delete a bookmark and all associated records.
+    This endpoint can handle both source_id and document_id.
+    
+    Args:
+        id: Either a source_id or document_id
+    """
     logger.info(f"Delete bookmark and associated records for id: {id}")
     deleters.delete_source_and_associate_records(id)
 
@@ -1048,7 +1058,9 @@ async def get_user_subtopics_node(user_id: str):
 async def get_user_filter_nodes(user_id: str):
     try:
         start_time = time.time()
-        nodes = getter.get_filter_nodes_by_user_id(user_id)
+        ## TODO: uncomment this when we have filter nodes
+        ##nodes = getter.get_filter_nodes_by_user_id(user_id)
+        nodes = []
         logger.info(f"Time to get filter nodes: {(time.time() - start_time):.2f}")
         return nodes
     except Exception as e:

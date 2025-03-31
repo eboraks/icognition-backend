@@ -10,8 +10,8 @@ import app.getters as getters
 
 from app.app_logic import insert_or_update_chat_history
 from app.models import Chat_Message, Document, EventName, BroadcastMessage, WebSocketMessageType, EntityPublic
-from app.response_models import Answer, ContentType, PageContent, Summary, Topic, Type, Types, ChatMessagePublic, Graph, Graphs, Status, SuggestedQuestions  
-from app.document_public_factory import chat_messages_to_document_dict
+from app.response_models import Answer, ContentType, PageContent, Summary, Topic, Type, Types, ChatMessagePublic, Graph, Graphs, Status, SuggestedQuestions, get_model_class
+import app.app_logic as  app_logic
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -28,7 +28,10 @@ class ChatHandler:
         # Load context data
         if self._context_type == "document" and document_id:
             self._doc = getters.get_document_by_id(document_id)
-            self._source = getters.get_source_by_document_id(document_id)
+            source = getters.get_source_by_document_id(document_id)
+            if source is None:
+                raise ValueError("Document or source not found")
+            self._source = source
         elif self._context_type == "collection" and collection_id:
             self._doc = getters.get_study_collection_by_id(collection_id)
         
@@ -53,6 +56,13 @@ class ChatHandler:
                 self._client.set_chat_history(chat_history)
     
     
+    def _get_model_from_name(self, model_name: str) -> Optional[BaseModel]:
+        """Get a model instance from its name"""
+        model_class = get_model_class(model_name)
+        if model_class:
+            return model_class()
+        return None
+
     def _process_chat_step(self, _user_prompt: str, 
                            _ai_prompt: str, 
                            _response_model: BaseModel, 
@@ -75,6 +85,7 @@ class ChatHandler:
                         ai_prompt = _ai_prompt,
                         asked_by = _asked_by,
                         response = json.dumps(response),
+                        response_model = _response_model.__class__.__name__,
                         event_name = _event_name
                     )
                     if _save_to_db:
@@ -85,7 +96,6 @@ class ChatHandler:
                     logger.error(f"Error parsing answer: {str(e)}")
                     return None
             
-            
             if response.status == Status.SUCCESS.value or response.status == Status.SUCCESS:
                 message = Chat_Message(
                     chat_id = self._doc.id,
@@ -95,6 +105,7 @@ class ChatHandler:
                     ai_prompt = _ai_prompt,
                     asked_by = _asked_by,
                     response = response.model_dump_json(),
+                    response_model = _response_model.__class__.__name__,
                     event_name = _event_name
                 )
                 message = insert_or_update_chat_history(message)
@@ -118,6 +129,7 @@ class ChatHandler:
                     ai_prompt = _ai_prompt,
                     asked_by = _asked_by,
                     response = json.dumps(error_response),
+                    response_model = _response_model.__class__.__name__,
                     event_name = EventName.ERROR.value
                 )
                 message = insert_or_update_chat_history(message)
@@ -141,6 +153,7 @@ class ChatHandler:
                 ai_prompt = _ai_prompt,
                 asked_by = _asked_by,
                 response = json.dumps(error_response),
+                response_model = _response_model.__class__.__name__,
                 event_name = EventName.ERROR.value
             )
             message = insert_or_update_chat_history(message)
@@ -168,7 +181,7 @@ class ChatHandler:
         ## Get the chat history and if it exists, send event that the chat is already initiated
         chat_history = getters.get_chat_history(self._doc.id)
         event_names = [message.event_name for message in chat_history]
-
+        
         ## Get the content types and entity types
         content_types = getters.get_content_types()
         entity_types = getters.get_entity_types()
@@ -190,11 +203,16 @@ class ChatHandler:
             document_id=self._doc.id
         )))
         
+        sourcs_contect = doc.source_text_in_html if doc.source_text_in_html else self._source.html_root_element[:400000]
+        
         ## Send the initial chat message
         if EventName.INIT_DOC_CHAT.value not in event_names:
             content_message = self._process_chat_step(
-                _user_prompt = "This is the content we are going to analyze: ",
-                _ai_prompt = self._source.html_root_element[:400000],
+                _user_prompt = """Here is a page from the web. Please extract the title, publication date, and a detailed summary of the page. 
+                Format the summary in simple HTML with headers, paragraphs, lists, etc. 
+                Here is the page:
+                """,
+                _ai_prompt = sourcs_contect,
                 _response_model = PageContent,
                 _asked_by = "system",
                 _chat_type = "document",
@@ -213,7 +231,10 @@ class ChatHandler:
                 try:
                     # Parse the response JSON to get the content data
                     content_response = json.loads(content_message.response)
-                    doc.title = content_response.get("title", "Untitled")
+                    if doc.title is None:
+                        doc.title = content_response.get("title", "Untitled")
+                    if doc.publication_date is None:
+                        doc.publication_date = content_response.get("published_date", None)
                 except Exception as e:
                     logger.error(f"Error in content response: {str(e)}")
                     asyncio.run(self._event_listener(BroadcastMessage(
@@ -301,7 +322,8 @@ class ChatHandler:
             else:
                 data = json.loads(summary_message.response)
                 summary_answer = data.get("answer_for_chat", "No summary available")
-                logger.info(f"Summary: {summary_answer}")
+                doc.ai_is_about = summary_answer
+                logger.info(f"Summary: {summary_answer[:100]}")
                 asyncio.run(self._event_listener(BroadcastMessage(
                     user_id=self._user_id,
                     message_type=WebSocketMessageType.CHAT_READY.value,
@@ -335,13 +357,14 @@ class ChatHandler:
             
             # Parse the response JSON to get the bullet points data
             bullets_data = json.loads(bullets_message.response)
-            bullets_summary = bullets_data.get("summary_for_chat", "No bullet points available")
+            bullets_summary = bullets_data.get("important_bullet_points", ["No bullet points available"])
+            doc.ai_bullet_points = bullets_summary
             logger.info(f"Summary: {bullets_summary}")
     
     
         
         if EventName.ENTITIES.value not in event_names:
-            self._process_chat_step(
+            entities_message = self._process_chat_step(
                 _user_prompt = f"Identify the entities in the {content_name}",
                 _ai_prompt = """Use the following schema.org entities as a reference: """ + str(entity_types),
                 _response_model = Types,
@@ -349,6 +372,18 @@ class ChatHandler:
                 _chat_type = "document",
                 _event_name = EventName.ENTITIES.value
             )
+            
+            # Parse the response JSON to get the entities data
+            if entities_message is not None:
+                entities_data = json.loads(entities_message.response)
+                entities_answer = entities_data.get("types", ["No entities available"])
+                logger.info(f"Entities: {entities_answer}")
+                # Store the entities list directly as a list of dicts, no need for json.dumps()
+                # since types_and_concepts is already a JSONB column that accepts lists/dicts
+                doc.types_and_concepts = entities_answer
+                
+        ## Save the document in the database
+        app_logic.update_document(doc)
     
     def generate_initial_summary(self, bias_answer: str) -> Chat_Message:
         """
@@ -521,7 +556,7 @@ class ChatHandler:
             }
             
             # Process chat messages to build document dictionary
-            return chat_messages_to_document_dict(chat_history, document)
+            return  (chat_history, document)
             
         except Exception as e:
             logger.error(f"Error in get_document_from_chat_history: {str(e)}")

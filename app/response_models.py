@@ -1,19 +1,30 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Type
 import json
 import logging
 
 # Set up logger
 logger = logging.getLogger(__name__)
 
-
 from enum import Enum
+
+# Model registry to map model names to their classes
+MODEL_REGISTRY: Dict[str, Type[BaseModel]] = {}
+
+def register_model(model_class: Type[BaseModel]) -> Type[BaseModel]:
+    """Register a model class in the registry"""
+    MODEL_REGISTRY[model_class.__name__] = model_class
+    return model_class
+
+def get_model_class(model_name: str) -> Optional[Type[BaseModel]]:
+    """Get a model class by its name"""
+    return MODEL_REGISTRY.get(model_name)
 
 class Status(Enum):
     ERROR = "Error"
     SUCCESS = "Success"
 
-
+@register_model
 class Answer(BaseModel):
     answer_for_chat: str
     short_answer_for_computer: str
@@ -23,7 +34,7 @@ class Answer(BaseModel):
     def __str__(self):
         return self.short_answer_for_computer
 
-
+@register_model
 class SuggestedQuestions(BaseModel):
     questions: list[str]
     status: Status
@@ -31,9 +42,9 @@ class SuggestedQuestions(BaseModel):
     def __str__(self):
         return json.dumps(self.questions)
 
-
+@register_model
 class PageContent(BaseModel):
-    text: str
+    detailed_summary: str
     author: str = None
     title: str = None
     url: str = None
@@ -45,14 +56,15 @@ class PageContent(BaseModel):
         return self.text
 
     
-    
+@register_model
 class ContentType(BaseModel):
     content_type: str
     status: Status
     
     def __str__(self):
         return self.content_type
-    
+
+@register_model
 class Summary(BaseModel):
     summary_for_chat: str
     important_bullet_points: list[str]
@@ -61,13 +73,14 @@ class Summary(BaseModel):
     def __str__(self):
         return self.summary_for_chat
 
-
+@register_model
 class Topic(BaseModel):
     topics: list[str]
     status: str
     def __str__(self):
         return str(self.topics)
     
+@register_model
 class Graph(BaseModel):
     subject: str
     predicate: str
@@ -77,10 +90,12 @@ class Graph(BaseModel):
     def __str__(self):
         return f"{self.subject} {self.predicate} {self.object}"
 
+@register_model
 class Graphs(BaseModel):
     graphs: list[Graph]
     status: Status
 
+@register_model
 class Type(BaseModel):
     type: str
     name: str
@@ -89,12 +104,14 @@ class Type(BaseModel):
     def __str__(self):
         return f"{self.type} {self.name} {self.description}"
 
+@register_model
 class Types(BaseModel):
     types: list[Type]
     status: str
     def __str__(self):
         return str(self.types)
 
+@register_model
 class ChatMessagePublic(BaseModel):
     id: str
     chat_id: str

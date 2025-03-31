@@ -308,6 +308,7 @@ class Document(SQLModel, table=True):
     locale: str = Field(default=None, nullable=True)
     image_url: str = Field(default=None, nullable=True)
     site_name: str = Field(default=None, nullable=True)
+    source_text_in_html: str = Field(default=None, nullable=True)
     ai_is_about: str = Field(default=None, nullable=True)
     ai_bullet_points: List[str] = Field(default=[], sa_column=Column(JSON))
     ai_citations: List[Dict] = Field(default=[], sa_column=Column(JSON))
@@ -315,6 +316,7 @@ class Document(SQLModel, table=True):
     update_at: datetime = Field(default_factory=datetime.now, nullable=True)
     status: str = Field(default="Pending", nullable=True)
     llm_service_meta: Optional[Dict] = Field(default={}, sa_column=Column(JSONB))
+    types_and_concepts: Optional[List[Dict]] = Field(default=[], sa_column=Column(JSONB))
     
     # Remove original_text, html_elements, and raw_answer as they're stored elsewhere
     # These fields will be migrated out later
@@ -884,10 +886,17 @@ class Chat_Message(SQLModel, table=True):
     user_prompt: str = Field(nullable=False)
     ai_prompt: str = Field(nullable=False)
     event_name: str = Field(nullable=False)
-    response: Dict = Field(sa_column=Column(JSON), default={})
+    response: str = Field(sa_column=Column(JSON), default="{}")  # Store as JSON string
+    response_model: str = Field(nullable=True)  # Store the model name as a string
     
     def to_dict(self) -> dict:
         """Convert Chat_Message to a JSON-serializable dictionary"""
+        try:
+            # Parse the response JSON string if it's a string
+            response_data = json.loads(self.response) if isinstance(self.response, str) else self.response
+        except json.JSONDecodeError:
+            response_data = {}
+            
         return {
             "id": str(self.id),
             "created_at": self.created_at.isoformat(),
@@ -898,7 +907,7 @@ class Chat_Message(SQLModel, table=True):
             "user_prompt": self.user_prompt,
             "ai_prompt": self.ai_prompt,
             "event_name": self.event_name,
-            "response": self.response
+            "response": response_data
         }
 
 
