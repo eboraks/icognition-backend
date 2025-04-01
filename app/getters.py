@@ -1,5 +1,4 @@
 import time
-from app.document_public_factory import chat_messages_to_document_dict
 from app.db_connector import get_engine
 from app.models import (
     Chat_Message,
@@ -7,13 +6,7 @@ from app.models import (
     Document,
     Document_Entity_Link,
     Entity,
-    Question_Answer,
-    SubTopic,
-    SubTopic_Document_Link,
-    SubTopic_Embedding_Link,
     Embedding,
-    SubTopic_Entity_Link,
-    SubTopicDisplay,
     TreeNode,
     Content_Type,
     Entity_Type,
@@ -57,20 +50,6 @@ def get_document_public_by_id(document_id: str) -> dict:
         return doc.to_dict()
 
 
-def get_document_public_from_chat_by_user_id(user_id: str) -> list[dict]:
-    with Session(engine) as session:
-        chat_ids = session.scalars(select(Chat_Message.chat_id).where(Chat_Message.user_id == user_id)).unique().all()
-
-        results = []
-        for chat_id in chat_ids:
-            chat_history = session.scalars(select(Chat_Message).where(Chat_Message.chat_id == chat_id)).unique().all()
-
-            if len(chat_history) > 0:
-                doc_dict = {"id": str(chat_id), "title": "Placeholder"}
-                doc_dict = chat_messages_to_document_dict(chat_history, doc_dict)
-                results.append(doc_dict)
-
-    return results
 
 
 def get_document_by_id(document_id: str) -> Document:
@@ -148,7 +127,6 @@ def get_documents_public_by_user_id(
         docs = (
             session.scalars(
                 select(Document)
-                .options(joinedload(Document.entities))
                 .join(Source, Source.document_id == Document.id)
                 .where(
                     and_(Source.user_id == user_id, Document.status == document_status)
@@ -161,7 +139,7 @@ def get_documents_public_by_user_id(
 
     for doc in docs:
         try:
-            results.append(doc.to_dict())
+            results.append(doc.model_dump())
         except Exception as e:
             logger.error(f"Error getting document {doc.id} public by user id: {e}")
 
@@ -458,99 +436,8 @@ def get_documenets_by_entity_id(entity_id: int) -> list[Document]:
     return documents
 
 
-def get_subtopics_display(user_id: str) -> list[SubTopicDisplay]:
-
-    results = []
-    with Session(engine) as session:
-
-        stmt = (
-            select(SubTopic)
-            .join(SubTopic_Entity_Link, SubTopic_Entity_Link.subtopic_id == SubTopic.id)
-            .join(
-                SubTopic_Document_Link,
-                SubTopic_Document_Link.subtopic_id == SubTopic.id,
-            )
-            .where(SubTopic.user_id == user_id)
-        )
-
-        subtopics_touples = session.scalars(stmt).unique().fetchall()
-
-        ## TODO: Get a list of subtopics display
-        for subt in subtopics_touples:
-            results.append(subt.to_display())
-
-    results.sort(key=lambda x: x.number_of_docs, reverse=True)
-    return results
 
 
-def get_subtopics(user_id: str) -> list[SubTopic]:
-    """Method that retrieves subtopics from the database.
-
-    Args:
-        user_id (str): The user ID.
-
-    Returns:
-        list[SubTopic]: A list of subtopics.
-    """
-    subtopics = []
-    with Session(engine) as session:
-        stmt = select(SubTopic).where(SubTopic.user_id == user_id)
-        subtopics = session.scalars(stmt).unique().all()
-    return subtopics
-
-
-def get_subtopics_nodes_by_user(user_id: str) -> list[TreeNode]:
-    ## Get subtopic by user
-    with Session(engine) as session:
-        subtopics = (
-            session.scalars(
-                select(SubTopic)
-                .join(
-                    SubTopic_Document_Link,
-                    SubTopic_Document_Link.subtopic_id == SubTopic.id,
-                )
-                .where(
-                    and_(
-                        SubTopic.user_id == user_id,
-                        SubTopic_Document_Link.document_id != None,
-                    )
-                )
-            )
-            .unique()
-            .all()
-        )
-
-        nodes = []
-        for subtopic in subtopics:
-            nodes.append(subtopic.to_node())
-
-        nodes.sort(key=lambda x: x.doc_count, reverse=True)
-
-    return nodes
-
-
-def get_document_subtopics(document_id: str) -> list[SubTopicDisplay]:
-
-    results = []
-    with Session(engine) as session:
-        query = text(
-            """SELECT s.id, s.name, s.description, 
-                        COUNT(DISTINCT sdl.document_id) AS number_of_docs, 
-                        json_agg(DISTINCT sdl.document_id)
-                        FROM subtopic s
-                        JOIN subtopic_document_link  sdl ON sdl.subtopic_id = s.id
-                        WHERE sdl.document_id = '{DOC_ID}'
-                    GROUP BY s.id, s.name, s.description
-                    ORDER BY count(distinct sdl.document_id) DESC""".format(
-                DOC_ID=document_id
-            )
-        )
-
-        subtopics_touples = session.execute(query).fetchall()
-        for touple in subtopics_touples:
-            results.append(SubTopicDisplay.from_touple(touple))
-
-    return results
 
 
 def get_document_embeddings(document_id: int) -> list[Embedding]:
@@ -609,32 +496,24 @@ def calculate_number_of_docs_thredhold(user_id: str) -> int:
         return round(docs_count / 50)
 
 
-def get_entities_tree_nodes_by_user_id(user_id: str) -> list[TreeNode]:
+def  get_entities_tree_nodes_by_user_id(user_id: str) -> list[TreeNode]:
 
     min_num_docs = calculate_number_of_docs_thredhold(user_id)
     results = []
     stmt = text(
-        """SELECT tb.type, tb.docs_count, tb.ents_names, tb.ents_ids, tb.docs_ids
-            FROM (SELECT ta.type, 
-                    json_agg(distinct ta.name) as ents_names, 
-                    json_agg(distinct ta.entity_id) as ents_ids, 
-                    count(distinct ta.document_id) as docs_count,
-                    json_agg(distinct ta.document_id) as docs_ids
-                FROM (SELECT LOWER(e.type) as type, e.name, d.title, e.id as entity_id, d.id as document_id,
-                    MAX(e.description_vector <-> d.ai_summary_vector) AS similarity
-                    FROM (SELECT e.*
-                        FROM public.entity e
-                        JOIN public.document_entity_link l ON l.entity_id = e.id
-                        JOIN public.entity_user_link ul ON ul.entity_id = e.id
-                        WHERE ul.user_id = :user_id
-                        GROUP BY 1
-                        HAVING count(distinct l.document_id) >= :min_num_docs) as e
-                    JOIN public.document_entity_link l ON l.entity_id = e.id
-                    JOIN public.document d ON d.id = l.document_id
-                        AND (e.description_vector <-> d.ai_summary_vector) < 1.0
-                    GROUP BY 1, 2, 3, 4, 5) ta
-                GROUP BY 1 ) as tb"""
-    )
+        """SELECT ta.type, 
+            json_agg(distinct ta.name) as ents_names, 
+            json_agg(distinct ta.entity_id) as ents_ids, 
+            count(distinct ta.document_id) as docs_count,
+            json_agg(distinct ta.document_id) as docs_ids
+        FROM (SELECT LOWER(e.type) as type, e.name as name, e.description,  e.id as entity_id, l.document_id as document_id
+            FROM public.entity e
+            JOIN public.document_entity_link l ON l.entity_id = e.id
+            JOIN public.entity_user_link ul ON ul.entity_id = e.id
+            WHERE ul.user_id = :user_id
+            GROUP BY 1, 2, 3, 4, 5
+            HAVING count(distinct l.document_id) >= :min_num_docs) AS ta
+        GROUP BY 1""")
 
     try:
         with Session(engine) as session:
@@ -670,7 +549,7 @@ def get_entities_tree_nodes_by_user_id(user_id: str) -> list[TreeNode]:
                 for ent in entities:
                     ent_node = ent.to_node()
 
-                    if ent_node.doc_count > min_num_docs:
+                    if ent_node.doc_count >= min_num_docs:
                         top_node.children.append(ent_node)
 
                 """ for e_name in t.ents_names:
@@ -687,16 +566,10 @@ def get_entities_tree_nodes_by_user_id(user_id: str) -> list[TreeNode]:
     except Exception as e:
         logger.error(f"Error getting entities tree nodes by user id: {e}")
 
-    return results
+    return sorted(results, key=lambda x: x.label, reverse=True)
 
 
-def get_filter_nodes_by_user_id(user_id: str) -> list[TreeNode]:
 
-    filter_nodes = get_entities_tree_nodes_by_user_id(user_id)
-
-    filter_nodes.sort(key=lambda x: x.doc_count, reverse=True)
-
-    return filter_nodes
 
 
 def get_content_types() -> list[Content_Type]:

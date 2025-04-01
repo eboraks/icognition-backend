@@ -9,9 +9,10 @@ import app.getters as getters
 
 
 from app.app_logic import insert_or_update_chat_history
-from app.models import Chat_Message, Document, EventName, BroadcastMessage, WebSocketMessageType, EntityPublic
-from app.response_models import Answer, ContentType, PageContent, Summary, Topic, Type, Types, ChatMessagePublic, Graph, Graphs, Status, SuggestedQuestions, get_model_class
+from app.models import Chat_Message, Document, EventName, BroadcastMessage, WebSocketMessageType
+from app.response_models import Answer, ContentType, PageContent, Summary,  Status, SuggestedQuestions, get_model_class, ExtractedEntity, Entities
 import app.app_logic as  app_logic
+from app.entity_handler import insert_entities
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -203,16 +204,15 @@ class ChatHandler:
             document_id=self._doc.id
         )))
         
-        sourcs_contect = doc.source_text_in_html if doc.source_text_in_html else self._source.html_root_element[:400000]
         
         ## Send the initial chat message
         if EventName.INIT_DOC_CHAT.value not in event_names:
             content_message = self._process_chat_step(
-                _user_prompt = """Here is a page from the web. Please extract the title, publication date, and a detailed summary of the page. 
-                Format the summary in simple HTML with headers, paragraphs, lists, etc. 
+                _user_prompt = """Here is a page from the web. Please extract the title, 
+                publication date, authoers and other information. 
                 Here is the page:
                 """,
-                _ai_prompt = sourcs_contect,
+                _ai_prompt = self._source.html_root_element[:400000],
                 _response_model = PageContent,
                 _asked_by = "system",
                 _chat_type = "document",
@@ -235,6 +235,8 @@ class ChatHandler:
                         doc.title = content_response.get("title", "Untitled")
                     if doc.publication_date is None:
                         doc.publication_date = content_response.get("published_date", None)
+                    if doc.authors is None:
+                        doc.authors = content_response.get("authors", None)
                 except Exception as e:
                     logger.error(f"Error in content response: {str(e)}")
                     asyncio.run(self._event_listener(BroadcastMessage(
@@ -331,6 +333,7 @@ class ChatHandler:
                     document_id=self._doc.id
                 )))
         
+        
         if EventName.SUGGESTED_QUESTIONS.value not in event_names:
             suggested_questions = self.generate_suggested_chat_questions()
             
@@ -367,7 +370,7 @@ class ChatHandler:
             entities_message = self._process_chat_step(
                 _user_prompt = f"Identify the entities in the {content_name}",
                 _ai_prompt = """Use the following schema.org entities as a reference: """ + str(entity_types),
-                _response_model = Types,
+                _response_model = Entities,
                 _asked_by = "system",
                 _chat_type = "document",
                 _event_name = EventName.ENTITIES.value
@@ -376,11 +379,33 @@ class ChatHandler:
             # Parse the response JSON to get the entities data
             if entities_message is not None:
                 entities_data = json.loads(entities_message.response)
-                entities_answer = entities_data.get("types", ["No entities available"])
+                entities_answer = entities_data.get("entities", ["No entities available"])
                 logger.info(f"Entities: {entities_answer}")
                 # Store the entities list directly as a list of dicts, no need for json.dumps()
                 # since types_and_concepts is already a JSONB column that accepts lists/dicts
                 doc.types_and_concepts = entities_answer
+                
+                ## Insert the entities into the database
+                asyncio.run(insert_entities(self._user_id, entities_answer, self._doc.id))
+        
+        
+        if len(doc.source_text_in_html) == 0:
+            source_text = self._process_chat_step(
+                _user_prompt = """Extract the text from the page and format it in simple HTML with headers, paragraphs, lists, etc.
+                No div, span, or other html tags. The text should be in the same order as it is in the page. 
+                The reason for this is that we want to keep the original structure of the page, and display it to the user 
+                in the same way as it is in the page.
+                Here is the page: """,
+                _ai_prompt = self._source.html_root_element[:400000],
+                _response_model = Answer,
+                _asked_by = "system",
+                _chat_type = "document",
+                _event_name = EventName.SOURCE_TEXT.value
+            )
+            if source_text is not None:
+                answer_data = json.loads(source_text.response)
+                doc.source_text_in_html = answer_data.get("answer_for_chat", "")
+        
                 
         ## Save the document in the database
         app_logic.update_document(doc)

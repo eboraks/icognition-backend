@@ -50,130 +50,9 @@ class Topic(SQLModel, table=True):
     name: str = Field(nullable=False)
     description: str | None = Field(default=None)
     embedding: list[float] | None = Field(sa_column=Column(Vector(768)))
-    subtopics: list["SubTopic"] = Relationship(back_populates="topic")
 
 
-class SubTopic_Embedding_Link(SQLModel, table=True):
-    """
-    Represents a link between a subtopic and an embedding.
-    """
 
-    subtopic_id: Optional[int] = Field(
-        default=None, foreign_key="subtopic.id", primary_key=True
-    )
-    embedding_id: Optional[int] = Field(
-        default=None, foreign_key="embedding.id", primary_key=True
-    )
-    notes: Optional[str] = Field(default=None)
-
-
-class SubTopic_Document_Link(SQLModel, table=True):
-    """
-    Represents a link between a subtopic and an document.
-    """
-
-    subtopic_id: Optional[int] = Field(
-        default=None, foreign_key="subtopic.id", primary_key=True
-    )
-    document_id: Optional[uuid_pkg.UUID] = Field(
-        default=None, foreign_key="document.id", primary_key=True
-    )
-
-
-class SubTopic_Entity_Link(SQLModel, table=True):
-    """
-    Represents a link between a subtopic and an document.
-    """
-
-    subtopic_id: Optional[int] = Field(
-        default=None, foreign_key="subtopic.id", primary_key=True
-    )
-    entity_id: Optional[uuid_pkg.UUID] = Field(
-        default=None, foreign_key="entity.id", primary_key=True
-    )
-
-
-class SubTopicDisplay(BaseModel):
-    id: Optional[int]
-    name: Optional[str]
-    description: Optional[str]
-    number_of_docs: Optional[int]
-    docs_ids: Optional[List[int]]
-    ents_ids: Optional[List[int]]
-    key_words: Optional[str]
-
-
-class SubTopic(SQLModel, table=True):
-    """
-    Represents a subtopic with its ID, name, description, and parent topic ID.
-    """
-
-    id: int = Field(default=None, primary_key=True)
-    user_id: str | None = Field(nullable=False)
-    name: str = Field(nullable=False)
-    name_update_at: datetime = Field(default=datetime.now(), nullable=True)
-    vector: List[float] | None = Field(sa_column=Column(Vector(768)))
-    description: str | None = Field(default=None, nullable=True)
-    key_words: str | None = Field(default=None)
-    topic_id: int | None = Field(default=None, foreign_key="topic.id")
-    topic: Topic = Relationship(back_populates="subtopics")
-    update_at: datetime = Field(default_factory=datetime.now, nullable=True)
-    embeddings: list["Embedding"] = Relationship(
-        back_populates="subtopics",
-        link_model=SubTopic_Embedding_Link,
-        sa_relationship_kwargs={"cascade": "delete"},
-    )
-    documents: list["Document"] = Relationship(
-        back_populates="subtopics",
-        link_model=SubTopic_Document_Link,
-        sa_relationship_kwargs={"cascade": "delete"},
-    )
-    entities: list["Entity"] = Relationship(
-        back_populates="subtopics",
-        link_model=SubTopic_Entity_Link,
-        sa_relationship_kwargs={"cascade": "delete"},
-    )
-
-    def entities_agg_string(self):
-        # Create string with each entity nanme, type and description
-        results = ""
-        for emb in self.embeddings:
-            results += f"{emb.text}\n"
-        return results
-
-    def to_node(self):
-
-        _docs_ids = [doc.id for doc in self.documents]
-        for entity in self.entities:
-            _docs_ids.extend([doc.id for doc in entity.documents])
-
-        _docs_ids = list(set(_docs_ids))
-        return TreeNode(
-            key=self.id,
-            doc_count=len(_docs_ids),
-            label=f"{self.name.title()} ({len(_docs_ids)})",
-            data=self.description,
-            doc_ids=_docs_ids,
-            children=[],
-        )
-
-    def to_display(self) -> "SubTopicDisplay":
-
-        ## Get all the documents ids from the subtopic and its entities
-        _docs_ids = [doc.id for doc in self.documents]
-        for entity in self.entities:
-            _docs_ids.extend([doc.id for doc in entity.documents])
-
-        _docs_ids = list(set(_docs_ids))
-        return SubTopicDisplay(
-            id=self.id,
-            name=self.name,
-            description=self.description,
-            number_of_docs=len(_docs_ids),
-            docs_ids=_docs_ids,
-            ents_ids=[ent.id for ent in self.entities],
-            key_words=self.key_words,
-        )
 
 
 class Document_Entity_Link(SQLModel, table=True):
@@ -184,11 +63,9 @@ class Document_Entity_Link(SQLModel, table=True):
     document_id: Optional[uuid_pkg.UUID] = Field(
         default=None, foreign_key="document.id", primary_key=True
     )
-    entity_id: Optional[uuid_pkg.UUID] = Field(
+    entity_id: Optional[str] = Field(
         default=None, foreign_key="entity.id", primary_key=True
     )
-    verbatim_text: Optional[str] = Field(default=None)
-    description: Optional[str] = Field(default=None)
 
 
 class Entity_User_Link(SQLModel, table=True):
@@ -196,7 +73,7 @@ class Entity_User_Link(SQLModel, table=True):
     Represents a link between a document and an entity.
     """
 
-    entity_id: Optional[uuid_pkg.UUID] = Field(
+    entity_id: Optional[str] = Field(
         default=None, foreign_key="entity.id", primary_key=True
     )
     user_id: Optional[str] = Field(
@@ -204,51 +81,34 @@ class Entity_User_Link(SQLModel, table=True):
     )
 
 
-class EntityPublic(BaseModel):
-    id: Optional[str]
-    name: Optional[str]
-    verbatim_text: Optional[str] = None
-    description: Optional[str] = None
-    source: Optional[str] = None
-    type: Optional[str] = None
-
 
 class Entity(SQLModel, table=True):
     """
     Represents an entity with its ID, document ID, name, description, source, type, Wikidata ID, and score.
     """
-
-    id: uuid_pkg.UUID = Field(default_factory=uuid_pkg.uuid4, primary_key=True)
-    version: int = Field(default=1, nullable=True)
-    name: str = Field(default=None, nullable=True)
+    id: str =  Field(primary_key=True)
+    name: str = Field(nullable=False)
     normalized_label: str = Field(default=None, nullable=True)
-    name_vector: List[float] | None = Field(sa_column=Column(Vector(768)))
     verbatim_text: str = Field(default=None, nullable=True)
     description: str = Field(default=None, nullable=True)
-    description_vector: List[float] | None = Field(sa_column=Column(Vector(768)))
-    descriptions_bank: Optional[str] = Field(default=None)
     source: str = Field(default=None, nullable=True)
-    type: str = Field(default=None, nullable=True)
+    type: str = Field(nullable=False)
     wikidata_id: str = Field(default=None, nullable=True)
-    score: Optional[float] = Field(default=None, nullable=True)
     update_at: datetime = Field(default=datetime.now(), nullable=True)
     aliases: List[dict] = Field(default=[], sa_column=Column(JSONB))
-    instance_of: Optional[Dict] = Field(default={}, sa_column=Column(JSONB))
-
+    
     ## Many to Many relationships between entities documents
     documents: list["Document"] = Relationship(
         back_populates="entities", link_model=Document_Entity_Link
     )
-    subtopics: list["SubTopic"] = Relationship(
-        back_populates="entities", link_model=SubTopic_Entity_Link
-    )
+  
     users: list["User"] = Relationship(
         back_populates="entities", link_model=Entity_User_Link
     )
 
     def to_node(self):
         return TreeNode(
-            key=str(self.id),
+            key=(self.name + self.type).replace(" ", "").lower(),
             label=f"{self.name} ({len(self.documents)})",
             data=self.description,
             doc_count=len(self.documents),
@@ -256,15 +116,7 @@ class Entity(SQLModel, table=True):
             children=[],
         )
 
-    def to_public(self) -> "EntityPublic":
-        return EntityPublic(
-            id=str(self.id),
-            name=self.name,
-            description=self.description,
-            source=self.source,
-            type=self.type,
-        )
-
+    
     def to_embeddings(self) -> list["Embedding"]:
         """
         Converts the model instance to a list of Embeddings objects.
@@ -326,61 +178,8 @@ class Document(SQLModel, table=True):
         back_populates="documents", link_model=Document_Entity_Link
     )
     qans: list["Question_Answer"] = Relationship(back_populates="document")
-    subtopics: list["SubTopic"] = Relationship(
-        back_populates="documents", link_model=SubTopic_Document_Link
-    )
     
-    def to_dict(self, cosine_similarity: float = None) -> dict:
-        """Convert Document to a JSON-serializable dictionary for API responses
-        
-        This replaces the old to_public() method and returns a dict that can be directly
-        serialized to JSON rather than creating a separate Document object.
-        
-        Args:
-            cosine_similarity (float, optional): Cosine similarity score if available
-
-        Returns:
-            dict: Document as a dictionary for API responses
-        """
-        # Get related source to retrieve html_elements if needed
-        html_elements = []
-        
-        try:
-            # Use this approach to get html_elements without explicitly loading source
-            # This is a placeholder - you'll need to implement the actual retrieval logic
-            from app.getters import get_source_by_document_id
-            source = get_source_by_document_id(str(self.id))
-            if source and hasattr(source, 'html_elements'):
-                if type(source.html_elements) == str:
-                    html_elements = json.loads(source.html_elements)
-                else:
-                    html_elements = source.html_elements
-        except Exception:
-            # Fail silently if we can't get html_elements
-            pass
-            
-        return {
-            "id": str(self.id),
-            "title": self.title,
-            "url": self.url,
-            "source_type": "web" if self.source_type is None else self.source_type,
-            "authors": self.authors.split(",") if self.authors else None,
-            "tldr": self.ai_bullet_points,
-            "publicationDate": self.publication_date.isoformat() if self.publication_date else None,
-            "llmServiceMeta": self.llm_service_meta,
-            "status": self.status,
-            "updateAt": self.update_at.isoformat() if self.update_at else None,
-            "oneSentenceSummary": self.ai_short_summary,
-            "summary_citations": [
-                {"document_id": str(self.id), "verbatims": self.ai_citations}
-            ] if self.ai_citations else [],
-            "is_about": self.ai_is_about,
-            "entities_and_concepts": [ent.to_public() for ent in self.entities],
-            "cosine_similarity": cosine_similarity,
-            "image_url": self.image_url,
-            "site_name": self.site_name,
-            "html_elements": remove_none_header_elements(html_elements) if html_elements else [],
-        }
+    
     
     def to_response_model(self, cosine_similarity: float = None) -> dict:
         """
@@ -782,11 +581,7 @@ class Embedding(SQLModel, table=True):
     source_id: uuid_pkg.UUID = Field(default=None, nullable=False)
     vector: List[float] = Field(sa_column=Column(Vector(768)))
     update_at: datetime = Field(default_factory=datetime.now, nullable=True)
-    subtopics: list["SubTopic"] = Relationship(
-        back_populates="embeddings",
-        link_model=SubTopic_Embedding_Link,
-        sa_relationship_kwargs={"cascade": "delete"},
-    )
+    
 
     def get_documnet_id(self):
         if self.source_type == "document":
@@ -925,6 +720,7 @@ class EventName(Enum):
     MANUAL_MESSAGE = "manual_message"
     EXPLAIN_CONTENT = "explain_content"
     SUGGESTED_QUESTIONS = "suggested_questions"
+    SOURCE_TEXT = "source_text"
     
 class WebSocketMessageType(Enum):
     """Enum for WebSocket message types used in broadcasts"""

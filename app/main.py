@@ -1,6 +1,6 @@
 from app.log import get_logger
 from app.chat_handler import ChatHandler
-from app.response_models import Answer, ContentType, Summary, Topic, Type, Types, ChatMessagePublic, chat_messages_to_document
+from app.response_models import Answer, ContentType, Summary, Topic, ChatMessagePublic
 logger = get_logger(__name__)
 
 
@@ -11,8 +11,8 @@ from fastapi import (
     FastAPI,
     HTTPException,
     BackgroundTasks,
-    status,
     Response,
+    status, 
     UploadFile,
     File,
     Form,
@@ -35,7 +35,6 @@ from app.models import (
     HTTPError,
     SearchPayload,
     SearchResults,
-    SubTopicDisplay,
     TreeNode,
     StudyCollectionPublic,
     StudyTaskPublic,
@@ -60,6 +59,9 @@ from contextlib import asynccontextmanager
 
 
 search = SearchHandler()
+
+
+
 
 
 class Groups(Enum):
@@ -188,6 +190,11 @@ async def broadcastProgress(doc_id: str, user_id: str, increment: int):
         logger.error(f"Error in broadcastProgress: {str(e)}")
         pass
 
+
+@app.get("/populate_entities", tags=["Document"], status_code=200)
+async def populate_entities():
+    await entity_handler.populate_entities()
+    return {"Message": "Entities populated"}
 
 @app.websocket("/ws/{user_id}/{source}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str, source: str):
@@ -728,7 +735,7 @@ async def get_bookmarks_by_user_id(payload: PagePayload):
 )
 async def get_documents_plus_by_user_id(user_id: str):
 
-    results = getter.get_document_public_from_chat_by_user_id(user_id)
+    results = getter.get_documents_public_by_user_id(user_id)
     
     if results is None:
         raise HTTPException(status_code=404, detail="Documents not found")
@@ -1019,34 +1026,8 @@ async def delete_document(id: str) -> None:
     deleters.delete_document_and_associate_records(id)
 
 
-@app.get(
-    "/subtopics/{user_id}",
-    tags=["Subtopics"],
-    response_model=List[SubTopicDisplay],
-    status_code=200,
-)
-async def get_user_subtopics(user_id: str):
-    try:
-        subtopics = getter.get_subtopics_display(user_id=user_id)
-        return subtopics
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=404, detail="Subtopics not found")
 
 
-@app.get(
-    "/subtopics_node/{user_id}",
-    tags=["Subtopics"],
-    response_model=List[TreeNode],
-    status_code=200,
-)
-async def get_user_subtopics_node(user_id: str):
-    try:
-        subtopics_nodes = getter.get_subtopics_nodes_by_user(user_id)
-        return subtopics_nodes
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=404, detail="Subtopics not found")
 
 
 @app.get(
@@ -1058,9 +1039,7 @@ async def get_user_subtopics_node(user_id: str):
 async def get_user_filter_nodes(user_id: str):
     try:
         start_time = time.time()
-        ## TODO: uncomment this when we have filter nodes
-        ##nodes = getter.get_filter_nodes_by_user_id(user_id)
-        nodes = []
+        nodes = getter.get_entities_tree_nodes_by_user_id(user_id)
         logger.info(f"Time to get filter nodes: {(time.time() - start_time):.2f}")
         return nodes
     except Exception as e:

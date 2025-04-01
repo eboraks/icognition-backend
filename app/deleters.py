@@ -8,12 +8,7 @@ from app.models import (
     Document_Entity_Link,
     Entity,
     Question_Answer,
-    SubTopic,
-    SubTopic_Document_Link,
-    SubTopic_Embedding_Link,
     Embedding,
-    SubTopic_Entity_Link,
-    SubTopicDisplay,
     TreeNode,
 )
 from sqlalchemy.orm import Session
@@ -196,13 +191,7 @@ def delete_document_associate_records(document_id: str) -> None:
     """
     logging.info(f"Deleting document {document_id} and associated records")
     with Session(engine) as session:
-        delete_subt_links = session.scalars(
-            select(SubTopic_Document_Link).where(
-                SubTopic_Document_Link.document_id == document_id
-            )
-        ).all()
-        for link in delete_subt_links:
-            session.delete(link)
+        
 
         session.flush()
         delete_doc_ent_links = session.scalars(
