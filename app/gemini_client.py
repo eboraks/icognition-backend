@@ -33,8 +33,7 @@ class GeminiClient:
                     top_p=0.8,
                     top_k=40,
                     response_mime_type="application/json",
-                    response_schema=response_model.model_json_schema(),
-                    citationMetadata=True
+                    response_schema=response_model.model_json_schema()
                 )
             )
             

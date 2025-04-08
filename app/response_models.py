@@ -81,7 +81,7 @@ class Topic(BaseModel):
     
 @register_model
 class InitialSummary(BaseModel):
-    summary_for_chat: str
+    answer_for_chat: str
     content_type: str
     key_concepts_and_arguments: list[str]
     citations_from_source: list[str]

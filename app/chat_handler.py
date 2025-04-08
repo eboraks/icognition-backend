@@ -180,9 +180,12 @@ class ChatHandler:
         ## TODO, I need to improve the logic inf case we have summary and suggested questoin, but missing other type like entities
 
         ## Get the chat history and if it exists, send event that the chat is already initiated
-        chat_history = getters.get_chat_history(self._doc.id)
-        event_names = [message.event_name for message in chat_history]
-        
+        if doc.status == "Done":
+            chat_history = getters.get_chat_history(self._doc.id)
+            event_names = [message.event_name for message in chat_history]
+        else:
+            event_names = []
+            
         ## Get the content types and entity types
         content_types = getters.get_content_types()
         entity_types = getters.get_entity_types()
@@ -256,90 +259,43 @@ class ChatHandler:
         )))
 
         ## Generate the opening message
-        response = self.generate_opening_message(bias_categorization, doc.content_type)
-        if response is not None:
-            opening_message = InitialSummary.model_validate_json(response.response)
-            doc.ai_is_about = opening_message.summary_for_chat
-            key_concepts_and_arguments = opening_message.key_concepts_and_arguments
-            doc.content_type = opening_message.content_type
-            
-            
-
-        if EventName.CONTENT_TYPE.value not in event_names:
-            content_type_message = self._process_chat_step(
-                _user_prompt = "Categorize the type of the content. ",
-                _ai_prompt = """Is it news article, blog post, product description, etc. 
-                Use the following content types as a reference: """ + str(content_types),
-                _response_model = ContentType,
-                _asked_by = "system",
-                _chat_type = "document",
-                _event_name = EventName.CONTENT_TYPE.value
-            )
-            
-            # Parse the response JSON to get the content type
-            content_type_data = json.loads(content_type_message.response)
-            doc.content_type = content_type_data.get("content_type", "content")
-        else:
-            # Find the content type message in chat history
-            content_type_message = next((msg for msg in chat_history if msg.event_name == EventName.CONTENT_TYPE.value), None)
-            if content_type_message:
-                content_type_data = json.loads(content_type_message.response)
-                doc.content_type = content_type_data.get("content_type", "content")
-            else:
-                doc.content_type = "content"
-        
-    
-        
-        
-
-        asyncio.run(self._event_listener(BroadcastMessage(
-            user_id=self._user_id,
-            message_type=WebSocketMessageType.PROGRESS_PERCENTAGE.value,
-            data=20,
-            document_id=self._doc.id
-        )))
-
-        content_name = doc.title if doc.title else doc.content_type
-        
-        if len(bias_categorization) > 0:
-            if EventName.BIAS_CATEGORIZATION.value not in event_names:
-                bias_message = self._process_chat_step(
-                    _user_prompt = f"Identify the level of bias in the {content_name}. ",
-                    _ai_prompt = """Use the following bias categorization to identify the level of bias: """ + json.dumps(bias_categorization),
-                    _response_model = Answer,
-                    _asked_by = "system",
-                    _chat_type = "document",
-                    _event_name = EventName.BIAS_CATEGORIZATION.value
-                )
+        if EventName.OPENING_MESSAGE.value not in event_names:
+            try:
+                response = self.generate_opening_message(bias_categorization, doc.content_type)
+                if response is not None:
+                    opening_message = InitialSummary.model_validate_json(response.response)
+                    doc.ai_is_about = opening_message.answer_for_chat
+                    doc.types_and_concepts = opening_message.key_concepts_and_arguments
+                    doc.content_type = opening_message.content_type
+                    doc.ai_citations = opening_message.citations_from_source
+                    
+                    ## Send the opening message to the client
+                    asyncio.run(self._event_listener(BroadcastMessage(
+                        user_id=self._user_id,
+                        message_type=WebSocketMessageType.CHAT_READY.value,
+                        data=[response.to_dict()],
+                        document_id=self._doc.id
+                    )))
                 
-                # Parse the response JSON to get the bias data
-                bias_data = json.loads(bias_message.response)
-                bias_answer = bias_data.get("answer_for_chat", "No bias information available")
-        else:
-            bias_answer = "No bias information available"
-    
-        if EventName.SUMMARY.value not in event_names:
-            summary_message = self.generate_initial_summary(bias_answer)
-             
-            if summary_message is None:
-                logger.error("Error in summary response")
+                else:
+                    logger.error("Error in opening message")
+                    asyncio.run(self._event_listener(BroadcastMessage(
+                        user_id=self._user_id,
+                        message_type=WebSocketMessageType.ERROR.value,
+                        data=f"Error in opening message",
+                        document_id=self._doc.id
+                    )))
+            except Exception as e:
+                logger.error(f"Error generating opening message: {str(e)}")
                 asyncio.run(self._event_listener(BroadcastMessage(
                     user_id=self._user_id,
                     message_type=WebSocketMessageType.ERROR.value,
-                    data=f"Error in summary response",
+                    data=f"Error generating opening message: {str(e)}",
                     document_id=self._doc.id
                 )))
-            else:
-                data = json.loads(summary_message.response)
-                summary_answer = data.get("answer_for_chat", "No summary available")
-                doc.ai_is_about = summary_answer
-                logger.info(f"Summary: {summary_answer[:100]}")
-                asyncio.run(self._event_listener(BroadcastMessage(
-                    user_id=self._user_id,
-                    message_type=WebSocketMessageType.CHAT_READY.value,
-                    data=[summary_message.to_dict()],
-                    document_id=self._doc.id
-                )))
+
+    
+        content_name = doc.title if doc.title else doc.content_type
         
         
         if EventName.SUGGESTED_QUESTIONS.value not in event_names:
@@ -425,13 +381,14 @@ class ChatHandler:
         """
         Generate an opening message for the document
         """
-        user_prompt = f"""You are a helpful assistant that explains the content of a document to the user.
-            Your response in the field summary_for_chat should include a short summary that explains the content, 
-            that include a note about the bias / motivation of the author.
-            Also include key concepts or ideas in the content, and the main arguments or points, 
-            and suggest questions that the user can ask to get more information.
+        user_prompt = f"""What this document is about?
         """
-        ai_prompt = f"""Here is the content: {self._source.html_root_element[:400000]}
+        ai_prompt = f"""You are a helpful assistant that explains the content of a document to the user.
+            Your response in the field answer_for_chat should include a short summary that explains the content, 
+            that include a note about the bias / motivation of the author.
+            Also include key concepts or ideas in the content, and the main arguments or points.
+            
+            Here is the content: {self._source.html_root_element[:400000]}
             Categorize the content in the following categories: {content_type}
             Bias categorization: {bias_categorization}
         """
