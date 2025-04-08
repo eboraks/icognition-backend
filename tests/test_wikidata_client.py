@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import patch, Mock, AsyncMock
-from app.wikidata_client import WikidataClient
-from app.models import WikidataSearchResult, Entity
+from app.wikidata_client import WikidataClient, WikidataSearchResult
+from app.models import Entity
 from app.db_connector import get_engine
 from sqlalchemy import select
 from sqlalchemy.orm import Session

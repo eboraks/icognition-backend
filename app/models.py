@@ -39,26 +39,12 @@ class TreeNode(BaseModel):
     children: Optional[list["TreeNode"]] = None
 
 
-"""
-The SQLModel class is used to define the database schema (when table=True) or to define FastApi payload and response models (when table=False).    
-"""
-
-
-class Topic(SQLModel, table=True):
-    id: int | None = Field(default=None, primary_key=True)
-    user_id: str | None = Field(default=None)
-    name: str = Field(nullable=False)
-    description: str | None = Field(default=None)
-    embedding: list[float] | None = Field(sa_column=Column(Vector(768)))
-
-
-
-
 
 class Document_Entity_Link(SQLModel, table=True):
     """
     Represents a link between a document and an entity.
     """
+    __table_args__ = {'extend_existing': True}
 
     document_id: Optional[uuid_pkg.UUID] = Field(
         default=None, foreign_key="document.id", primary_key=True
@@ -86,6 +72,7 @@ class Entity(SQLModel, table=True):
     """
     Represents an entity with its ID, document ID, name, description, source, type, Wikidata ID, and score.
     """
+
     id: str =  Field(primary_key=True)
     name: str = Field(nullable=False)
     normalized_label: str = Field(default=None, nullable=True)
@@ -94,8 +81,13 @@ class Entity(SQLModel, table=True):
     source: str = Field(default=None, nullable=True)
     type: str = Field(nullable=False)
     wikidata_id: str = Field(default=None, nullable=True)
+    wikidata_label: str = Field(default=None, nullable=True)
+    wikidata_description: str = Field(default=None, nullable=True)
+    wikidata_pageviews: int = Field(default=None, nullable=True)
+    wikidata_instance_of: List[str] = Field(default=[], sa_column=Column(ARRAY(String)))
     update_at: datetime = Field(default=datetime.now(), nullable=True)
     aliases: List[dict] = Field(default=[], sa_column=Column(JSONB))
+    description_vector: List[float] = Field(default=[], sa_column=Column(Vector(3072), nullable=True))
     
     ## Many to Many relationships between entities documents
     documents: list["Document"] = Relationship(
@@ -645,15 +637,6 @@ class SearchResults(BaseModel):
     failure: Optional[str] = None
 
 
-class WikidataSearchResult(BaseModel):
-    id: str
-    label: str
-    description: Optional[str] = "No description"
-    aliases: List[str] = []
-    sitelinks: List[str] = []
-    instance_of: List[str] = []
-    
-    
 class Content_Type(SQLModel, table=True):
     id: int = Field(default=None, primary_key=True)
     name: str = Field(nullable=False)
@@ -721,6 +704,7 @@ class EventName(Enum):
     EXPLAIN_CONTENT = "explain_content"
     SUGGESTED_QUESTIONS = "suggested_questions"
     SOURCE_TEXT = "source_text"
+    OPENING_MESSAGE = "opening_message"
     
 class WebSocketMessageType(Enum):
     """Enum for WebSocket message types used in broadcasts"""

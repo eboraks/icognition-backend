@@ -10,7 +10,7 @@ import app.getters as getters
 
 from app.app_logic import insert_or_update_chat_history
 from app.models import Chat_Message, Document, EventName, BroadcastMessage, WebSocketMessageType
-from app.response_models import Answer, ContentType, PageContent, Summary,  Status, SuggestedQuestions, get_model_class, ExtractedEntity, Entities
+from app.response_models import Answer, ContentType, InitialSummary, PageContent, Summary,  Status, SuggestedQuestions, get_model_class, ExtractedEntity, Entities
 import app.app_logic as  app_logic
 from app.entity_handler import insert_entities
 
@@ -255,7 +255,15 @@ class ChatHandler:
             document_id=self._doc.id
         )))
 
-       
+        ## Generate the opening message
+        response = self.generate_opening_message(bias_categorization, doc.content_type)
+        if response is not None:
+            opening_message = InitialSummary.model_validate_json(response.response)
+            doc.ai_is_about = opening_message.summary_for_chat
+            key_concepts_and_arguments = opening_message.key_concepts_and_arguments
+            doc.content_type = opening_message.content_type
+            
+            
 
         if EventName.CONTENT_TYPE.value not in event_names:
             content_type_message = self._process_chat_step(
@@ -309,7 +317,7 @@ class ChatHandler:
                 bias_answer = bias_data.get("answer_for_chat", "No bias information available")
         else:
             bias_answer = "No bias information available"
-        
+    
         if EventName.SUMMARY.value not in event_names:
             summary_message = self.generate_initial_summary(bias_answer)
              
@@ -337,6 +345,7 @@ class ChatHandler:
         if EventName.SUGGESTED_QUESTIONS.value not in event_names:
             suggested_questions = self.generate_suggested_chat_questions()
             
+            logger.info(f"Suggested questions: {suggested_questions}")
             # Broadcast the suggested questions to the client
             if suggested_questions:
                 asyncio.run(self._event_listener(BroadcastMessage(
@@ -385,8 +394,10 @@ class ChatHandler:
                 # since types_and_concepts is already a JSONB column that accepts lists/dicts
                 doc.types_and_concepts = entities_answer
                 
+                extracted_entities = [ExtractedEntity(**entity) for entity in entities_answer]
+                
                 ## Insert the entities into the database
-                asyncio.run(insert_entities(self._user_id, entities_answer, self._doc.id))
+                asyncio.run(insert_entities(self._user_id, extracted_entities, self._doc.id))
         
         
         if len(doc.source_text_in_html) == 0:
@@ -409,6 +420,30 @@ class ChatHandler:
                 
         ## Save the document in the database
         app_logic.update_document(doc)
+    
+    def generate_opening_message(self, bias_categorization: str, content_type: str) -> Chat_Message:
+        """
+        Generate an opening message for the document
+        """
+        user_prompt = f"""You are a helpful assistant that explains the content of a document to the user.
+            Your response in the field summary_for_chat should include a short summary that explains the content, 
+            that include a note about the bias / motivation of the author.
+            Also include key concepts or ideas in the content, and the main arguments or points, 
+            and suggest questions that the user can ask to get more information.
+        """
+        ai_prompt = f"""Here is the content: {self._source.html_root_element[:400000]}
+            Categorize the content in the following categories: {content_type}
+            Bias categorization: {bias_categorization}
+        """
+        response = self._process_chat_step(
+            _user_prompt = user_prompt,
+            _ai_prompt = ai_prompt,
+            _response_model = InitialSummary,
+            _asked_by = "system",
+            _chat_type = "document",
+            _event_name = EventName.OPENING_MESSAGE.value
+        )
+        return response
     
     def generate_initial_summary(self, bias_answer: str) -> Chat_Message:
         """

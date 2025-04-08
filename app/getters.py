@@ -93,7 +93,6 @@ def get_document_by_source_id(source_id) -> Document:
         .where(Source.id == source_id)
     )
     session.add_all(doc.entities)
-    session.add_all(doc.subtopics)
     session.close()
     return doc
 

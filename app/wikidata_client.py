@@ -1,10 +1,20 @@
 import aiohttp
 import asyncio
 import logging
-from app.models import WikidataSearchResult
+from typing import Optional, List
+from pydantic import BaseModel
 
 
 logging.basicConfig(level=logging.INFO)
+
+
+class WikidataSearchResult(BaseModel):
+    id: str
+    label: str
+    description: Optional[str] = "No description"
+    aliases: List[str] = []
+    sitelinks: List[str] = []
+    instance_of: List[str] = []
 
 
 class WikidataClient:

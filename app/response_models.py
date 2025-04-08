@@ -80,19 +80,15 @@ class Topic(BaseModel):
         return str(self.topics)
     
 @register_model
-class Graph(BaseModel):
-    subject: str
-    predicate: str
-    object: str
+class InitialSummary(BaseModel):
+    summary_for_chat: str
+    content_type: str
+    key_concepts_and_arguments: list[str]
+    citations_from_source: list[str]
     status: Status
     
     def __str__(self):
-        return f"{self.subject} {self.predicate} {self.object}"
-
-@register_model
-class Graphs(BaseModel):
-    graphs: list[Graph]
-    status: Status
+        return self.summary
 
 @register_model
 class ExtractedEntity(BaseModel):
@@ -117,4 +113,12 @@ class ChatMessagePublic(BaseModel):
     question: str
     answer: str
     created_at: str
+
+@register_model
+class MatchResult(BaseModel):
+    best_match_index: int
+    match_confidence: float
+    reasoning: str
+    def __str__(self):
+        return f"Match index: {self.best_match_index}, confidence: {self.match_confidence}"
 
