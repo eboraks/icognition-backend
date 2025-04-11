@@ -513,7 +513,7 @@ class ChatHandler:
         if len(event_names) == 0:
             return False
 
-        enum_values = [EventName.SUMMARY.value, EventName.SUGGESTED_QUESTIONS.value]
+        enum_values = [EventName.OPENING_MESSAGE.value, EventName.SUGGESTED_QUESTIONS.value]
 
         for enum_value in enum_values:
             if enum_value not in event_names:

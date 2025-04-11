@@ -571,7 +571,7 @@ class Embedding(SQLModel, table=True):
     search_vector: List[int] = Field(sa_column=Column(TSVECTOR))
     source_type: str = Field(default=None, nullable=False)
     source_id: uuid_pkg.UUID = Field(default=None, nullable=False)
-    vector: List[float] = Field(sa_column=Column(Vector(768)))
+    vector: List[float] = Field(sa_column=Column(Vector(3072)))
     update_at: datetime = Field(default_factory=datetime.now, nullable=True)
     
 
