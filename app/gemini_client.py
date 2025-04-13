@@ -79,13 +79,16 @@ class GeminiClient:
             )
 
     async def generate_embedding(self, content: str, title: str = None, task_type: str = "SEMANTIC_SIMILARITY", 
-                               model_name: str = os.getenv("GEMINI_EMBEDDING_MODEL")):
+                               model_name: str = os.getenv("GEMINI_EMBEDDING_MODEL"), output_dimensionality: int = 0):
         """Generate embeddings for given content"""
         try:
             # Configure embedding request
+            if output_dimensionality == 0:
+                output_dimensionality = 3072
+                
             config = {
                 "task_type": task_type,
-                "output_dimensionality": 3072  # Ensure consistent output size
+                "outputDimensionality": output_dimensionality 
             }
             if title:
                 config["title"] = title

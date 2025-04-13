@@ -375,7 +375,11 @@ class ChatHandler:
         
                 
         ## Save the document in the database
-        app_logic.update_document(doc)
+        try:
+            doc.status = "Done"
+            app_logic.update_document(doc)
+        except Exception as e:
+            logger.error(f"Error updating document: {str(e)}")
     
     def generate_opening_message(self, bias_categorization: str, content_type: str) -> Chat_Message:
         """

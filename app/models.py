@@ -161,6 +161,7 @@ class Document(SQLModel, table=True):
     status: str = Field(default="Pending", nullable=True)
     llm_service_meta: Optional[Dict] = Field(default={}, sa_column=Column(JSONB))
     types_and_concepts: Optional[List[Dict]] = Field(default=[], sa_column=Column(JSONB))
+    cosine_similarity: float = Field(default=0.0, nullable=True)
     
     # Remove original_text, html_elements, and raw_answer as they're stored elsewhere
     # These fields will be migrated out later
@@ -171,21 +172,23 @@ class Document(SQLModel, table=True):
     )
     qans: list["Question_Answer"] = Relationship(back_populates="document")
     
-    
-    
-    def to_response_model(self, cosine_similarity: float = None) -> dict:
-        """
-        Convenience method that returns the document as a dictionary
-        suitable for API responses. This is used to maintain compatibility
-        with existing API endpoints expecting Document.
-        
-        Args:
-            cosine_similarity (float, optional): Cosine similarity score if available
+    def to_display(self) -> dict:
+        return {
+            "id": str(self.id),
+            "title": self.title,
+            "url": self.url,
+            "source_type": self.source_type,
+            "content_type": self.content_type,
+            "authors": self.authors,
+            "publication_date": self.publication_date,
+            "site_name": self.site_name,
+            "cosine_similarity": self.cosine_similarity,
+            "ai_is_about": self.ai_is_about,
+            "ai_bullet_points": self.ai_bullet_points,
             
-        Returns:
-            dict: Document formatted for API responses
-        """
-        return self.to_dict(cosine_similarity)
+        }
+    
+    
 
     def to_embeddings(self) -> list["Embedding"]:
         """
@@ -237,6 +240,50 @@ class Document(SQLModel, table=True):
             )
 
         return results
+
+    def get_source_text_as_string(self) -> str:
+        """
+        Converts the source_text_in_html dictionary into a formatted string.
+        Each element is processed according to its type (h1-h6, p, etc.) and
+        formatted appropriately.
+
+        Returns:
+            str: A formatted string representation of the HTML content
+        """
+        if not self.source_text_in_html:
+            return ""
+            
+        try:
+            # Parse the JSON string if it's a string
+            elements = json.loads(self.source_text_in_html) if isinstance(self.source_text_in_html, str) else self.source_text_in_html
+            
+            result = []
+            for element in elements:
+                if not isinstance(element, dict) or 'element' not in element or 'text' not in element:
+                    continue
+                    
+                element_type = element['element'].lower()
+                text = element['text'].strip()
+                
+                if not text:
+                    continue
+                    
+                # Format based on element type
+                if element_type.startswith('h') and len(element_type) == 2 and element_type[1] in '123456':
+                    # Headers get a newline before and after
+                    result.append(f"\n{text}\n")
+                elif element_type == 'p':
+                    # Paragraphs get a newline after
+                    result.append(f"{text}\n")
+                else:
+                    # Other elements just get added as is
+                    result.append(text)
+                    
+            return ' '.join(result).strip()
+            
+        except (json.JSONDecodeError, TypeError) as e:
+            logging.error(f"Error processing source_text_in_html for document {self.id}: {e}")
+            return ""
 
     async def generate_vector(self, geminiClient: GeminiClient):
 
@@ -571,7 +618,7 @@ class Embedding(SQLModel, table=True):
     search_vector: List[int] = Field(sa_column=Column(TSVECTOR))
     source_type: str = Field(default=None, nullable=False)
     source_id: uuid_pkg.UUID = Field(default=None, nullable=False)
-    vector: List[float] = Field(sa_column=Column(Vector(3072)))
+    vector: List[float] = Field(sa_column=Column(Vector(768)))
     update_at: datetime = Field(default_factory=datetime.now, nullable=True)
     
 
@@ -597,7 +644,7 @@ index = Index(
     Embedding.vector,
     postgresql_using="hnsw",
     postgresql_with={"m": 16, "ef_construction": 64},
-    postgresql_ops={"vector": "vector_cosine_ops"},
+    postgresql_ops={"vector": "vector_cosine_ops"}
 )
 
 

@@ -138,7 +138,7 @@ def get_documents_public_by_user_id(
 
     for doc in docs:
         try:
-            results.append(doc.model_dump())
+            results.append(doc.to_display())
         except Exception as e:
             logger.error(f"Error getting document {doc.id} public by user id: {e}")
 

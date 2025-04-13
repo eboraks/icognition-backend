@@ -51,41 +51,21 @@ class SearchHandler:
 
         """
         if not query:
-            docs = getter.get_documents_public_by_user_id(user_id)
-            return SearchResults(documents_display=docs, rag_answer=None)
-
-        is_question = re.match(self._question_regex, query, re.IGNORECASE)
-
-        if is_question:
-            if query == "what a test?":
-                rag_results = await self.test_rag_workflow()
-            else:
-                matched_docs = await self.search_embeddings(
-                    user_id=user_id, search_term=query, threshold=0.5, max_results=3
-                )
-                _docs = [getter.get_document_by_id(doc.id) for doc in matched_docs]
-                rag_results = await self.rag_workflow(docs=_docs, search_term=query)
-
-            if type(rag_results) == str:
-                return SearchResults(
-                    documents_display=[], rag_answer=None, failure=rag_results
-                )
-
-            docs = []
-            for doc_id in rag_results.documents_used:
-                docs.append(getter.get_document_public_by_id(doc_id))
-
-            return SearchResults(documents_display=docs, rag_answer=rag_results)
-
-        else:
-            docs = await self.search_aggregator(
-                user_id=user_id, search_term=query, threshold=0.5, max_results=10
-            )
-            ##docs = [getter.get_document_by_id(doc.id) for doc in matched_docs]
-            return SearchResults(
-                documents_display=docs,
-                rag_answer=None,
-            )
+            return getter.get_documents_public_by_user_id(user_id)
+             
+        
+        _docs = await self.search_aggregator(
+            user_id=user_id, search_term=query, threshold=0.5, max_results=10
+        )
+        docs = []
+        for doc in _docs:
+            try:
+                docs.append(doc.to_display())
+            except Exception as e:
+                logging.error(f"Error dumping document: {e}")
+                logging.error(f"Document: {doc}")
+                continue
+        return docs
 
     async def test_rag_workflow(self) -> RagAnswerPublic:
 
@@ -178,7 +158,8 @@ class SearchHandler:
         """
         logging.info(f"Generate embeddings for term {search_term}")
         embedded_term = await gemini_client.generate_embedding(
-            search_term
+            search_term,
+            output_dimensionality=768
         )  ## Generate embeddings for search term
         logging.info(
             f"Embeddings for term {search_term} are length is {len(embedded_term)}"
@@ -313,5 +294,5 @@ class SearchHandler:
 
         ## Limit the results to max_results
         results = results[:max_results]
-
+        logging.info(f"Converted {len(matched_docs)} matched documents to {len(results)} documents")
         return results

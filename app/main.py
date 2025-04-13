@@ -56,10 +56,11 @@ from app.background_task_manager import task_manager
 import os.path
 from app.chat_session_manager import chat_session_manager
 from contextlib import asynccontextmanager
+import app.embedding_handler as embedding_handler
 
 
 search = SearchHandler()
-
+embedding_handler = embedding_handler.EmbeddingHandler()
 
 
 
@@ -396,11 +397,16 @@ async def create_bookmark(
             app_logic.merge_record(_source)
             
             _doc = getter.get_document_by_source_id(_source.id)
+             
             
             ## Chat handler will initate the chat and boradcast it to the client
             ## If chat already exists in the DB, the hanlder will broadcast the existing chat
             chat_handler = ChatHandler(document_id = _doc.id, user_id = _source.user_id, event_listener = manager.broadcast_message)
             background_tasks.add_task(chat_handler.start_analyze, _doc)
+            
+            
+            ## Find documents without embeddings
+            background_tasks.add_task(embedding_handler._find_documents_without_embeddings, _source.user_id)
             return _source
             
         
@@ -1048,7 +1054,7 @@ async def get_user_filter_nodes(user_id: str):
 
 
 @app.post(
-    "/search", tags=["Library Search"], status_code=200, response_model=SearchResults
+    "/search", tags=["Library Search"], status_code=200, response_model=list[dict]
 )
 async def search_documents(search_payload: SearchPayload, response: Response):
     logger.info(f"Search documents with query: {search_payload.query}")
@@ -1058,19 +1064,8 @@ async def search_documents(search_payload: SearchPayload, response: Response):
     except Exception as e:
         logger.error(e)
         raise HTTPException(status_code=404, detail="Search failed")
-
-    if results.failure:
-        return results
-
-    if results.rag_answer:
-        response.headers["icognitoin-answer-type"] = "RAGAnswer"
-        return results
-    else:
-        if len(results.documents_display) == 0:
-            raise HTTPException(status_code=404, detail="No results found")
-
-        response.headers["icognitoin-answer-type"] = "DocumentDisplay"
-        return results
+    
+    return results
 
 
 @app.get(
