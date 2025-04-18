@@ -13,6 +13,7 @@ from app.models import Chat_Message, Document, EventName, BroadcastMessage, WebS
 from app.response_models import Answer, ContentType, InitialSummary, PageContent, Summary,  Status, SuggestedQuestions, get_model_class, ExtractedEntity, Entities
 import app.app_logic as  app_logic
 from app.entity_handler import insert_entities
+from app.chat_session_manager import chat_session_manager
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -36,19 +37,15 @@ class ChatHandler:
         elif self._context_type == "collection" and collection_id:
             self._doc = getters.get_study_collection_by_id(collection_id)
         
-        # Initialize chat client
-        system_instruction = None
-        try:
-            with open("app/chat_workflows/chat_system_instructions.txt", "r") as f:
-                system_instruction = f.read()
-        except Exception as e:
-            logger.error(f"Error loading system instruction: {str(e)}")
-            system_instruction = "You are a helpful assistant."
-        
-        self._client = ChatClient(
-            response_model=Answer, 
-            system_instruction=system_instruction
+        # Initialize chat session
+        self._session = chat_session_manager.get_or_create_session(
+            user_id=self._user_id,
+            context_id=self._context_id,
+            context_type=self._context_type
         )
+        
+        # Initialize chat client with session's chat client
+        self._client = self._session.chat_client
         
         # Set chat history if available
         if self._context_id:

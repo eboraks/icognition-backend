@@ -5,7 +5,7 @@ import logging
 from unittest.mock import Mock, patch, mock_open
 from pydantic import BaseModel
 from app.models import Chat_Message, Document, EventName, Source
-from app.chat_handler import ChatHandler
+from extension_chat_handler import ChatHandler
 from app.response_models import Status, Answer
 from app.gemini_chat_client import ChatClient
 from sqlalchemy.orm import Session

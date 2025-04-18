@@ -1,5 +1,5 @@
 from app.log import get_logger
-from app.chat_handler import ChatHandler
+from app.extension_chat_handler import ChatHandler
 from app.response_models import Answer, ContentType, Summary, Topic, ChatMessagePublic
 logger = get_logger(__name__)
 
@@ -41,7 +41,7 @@ from app.models import (
     WebSocketMessageType,
     BroadcastMessage,
 )
-import app.study_collection_handler as collection_handler
+from app.collection_manager import collections_manager
 from app.source_doc_handler import SourceDocHandler
 import app.question_answer_handler as question_answer_handler
 import json, aiofiles
@@ -52,7 +52,6 @@ import app.deleters as deleters
 import app.entity_handler as entity_handler
 from app.search_handler import SearchHandler
 from app.user_handler import UserHandler
-from app.background_task_manager import task_manager
 import os.path
 from app.chat_session_manager import chat_session_manager
 from contextlib import asynccontextmanager
@@ -61,7 +60,6 @@ import app.embedding_handler as embedding_handler
 
 search = SearchHandler()
 embedding_handler = embedding_handler.EmbeddingHandler()
-
 
 
 
@@ -1118,277 +1116,9 @@ async def get_icon(icon_name: str):
     return FileResponse(f"./app/assets/images/{icon_name}.png")
 
 
-## Study collection endpoints
-@app.get(
-    "/study_collections/{user_id}",
-    tags=[Groups.STUDY_COLLECTION],
-    response_model=List[StudyCollectionPublic],
-    status_code=200,
-)
-async def get_study_collections(user_id: str):
-    try:
-        collections = collection_handler.get_study_collections_public(user_id)
-        return collections
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=404, detail="Study collections not found")
-
-
-@app.get(
-    "/user_study_collections/{user_id}",
-    tags=[Groups.STUDY_COLLECTION],
-    response_model=List[StudyCollectionPublic],
-    status_code=200,
-)
-async def get_user_study_collections(user_id: str):
-    try:
-        collections = collection_handler.get_study_collections_public(user_id)
-        return collections
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=404, detail="Study collections not found")
-
-
-@app.post(
-    "/study_collection",
-    tags=[Groups.STUDY_COLLECTION],
-    response_model=StudyCollectionPublic,
-    status_code=200,
-)
-async def create_study_collection(
-    collection: StudyCollectionPublic, background_tasks: BackgroundTasks
-):
-    try:
-        collection = await collection_handler.create_study_collection(
-            name=collection.name,
-            objective=collection.description,
-            user_id=collection.user_id,
-            documents_ids=collection.documents_ids,
-            tasks=collection.tasks,
-        )
-
-        background_tasks.add_task(
-            collection_handler.generate_collection_response,
-            collection_id=collection.id,
-            listener=chat_event_listener,
-        )
-        return collection
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=500, detail="Study collection creation failed")
-
-
-@app.put(
-    "/study_collection",
-    tags=[Groups.STUDY_COLLECTION],
-    response_model=StudyCollectionPublic,
-    status_code=200,
-)
-async def update_study_collection(collection: StudyCollectionPublic):
-    try:
-        collection = await collection_handler.update_study_collection(collection)
-        return collection
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=500, detail="Study collection update failed")
-
-
-@app.put(
-    "/study_collection/{collection_id}/documents",
-    tags=[Groups.STUDY_COLLECTION],
-    status_code=200,
-)
-async def update_study_collection_documents(
-    collection_id: str, document_ids: List[str]
-):
-    try:
-        collection = collection_handler.get_study_collection_by_id(collection_id)
-        if collection is None:
-            raise HTTPException(status_code=404, detail="Study collection not found")
-
-        for document_id in document_ids:
-            document = getter.get_document_by_id(document_id)
-            if document is None:
-                raise HTTPException(
-                    status_code=404, detail=f"Document with id {document_id} not found"
-                )
-            collection_handler.link_collection_document(collection_id, document_id)
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=500, detail="Study collection update failed")
-
-
-@app.delete(
-    "/study_collection/{id}/documents",
-    tags=[Groups.STUDY_COLLECTION],
-    status_code=204,
-)
-async def delete_study_collection_document(
-    collection_id: str, documents_ids: List[str]
-):
-    try:
-        collection = collection_handler.get_study_collection_by_id(collection_id)
-        document = getter.get_document_by_id(document_id)
-        if collection is None:
-            raise HTTPException(status_code=404, detail="Study collection not found")
-
-        for document_id in documents_ids:
-            document = getter.get_document_by_id(document_id)
-            if document is None:
-                raise HTTPException(status_code=404, detail="Document not found")
-            collection_handler.unlink_collection_document(collection_id, document_id)
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=500, detail="Study collection update failed")
-
-
-@app.get(
-    "/generate_study_collection/{collection_id}",
-    tags=[Groups.STUDY_COLLECTION],
-    response_model=StudyCollectionPublic,
-    status_code=200,
-)
-async def generate_study_collection(
-    collection_id: str, background_tasks: BackgroundTasks
-):
-    try:
-        collection = collection_handler.get_study_collection_by_id(collection_id)
-
-        if collection is None:
-            raise HTTPException(status_code=404, detail="Study collection not found")
-
-        background_tasks.add_task(
-            collection_handler.generate_collection_response,
-            collection_id=collection.id,
-            listener=chat_event_listener,
-        )
-        return collection
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=500, detail="Study collection creation failed")
-
-
 def chat_event_listener(event):
     logger.info(f"Event listner called with event: {event}")
 
-
-
-
-@app.get(
-    "/study_collection/{id}",
-    tags=[Groups.STUDY_COLLECTION],
-    response_model=StudyCollectionPublic,
-    status_code=200,
-)
-async def get_study_collection(id: str):
-    try:
-        collection = collection_handler.get_study_collection_by_id(id)
-        return collection
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(
-            status_code=404, detail=f"Study collection not found. Error {str(e)}"
-        )
-
-
-
-
-@app.delete("/study_collection/{id}", tags=[Groups.STUDY_COLLECTION], status_code=204)
-async def delete_study_collection(id: str):
-    try:
-        collection_handler.delete_study_collection(id)
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=500, detail="Study collection deletion failed")
-
-
-@app.post(
-    "/study_task",
-    tags=[Groups.STUDY_COLLECTION],
-    response_model=StudyTaskPublic,
-    status_code=200,
-)
-async def create_study_task(task: StudyTaskPublic):
-    try:
-        task = collection_handler.create_study_task(
-            collection_id=task.collection_id, description=task.description
-        )
-        task = collection_handler.create_study_task(
-            collection_id=task.collection_id, description=task.description
-        )
-        return task
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=500, detail="Study task creation failed")
-
-
-@app.put(
-    "/study_task",
-    tags=[Groups.STUDY_COLLECTION],
-    response_model=StudyTaskPublic,
-    status_code=200,
-)
-async def update_study_task(task: StudyTaskPublic):
-    try:
-        task = await collection_handler.update_study_task(task)
-
-        if task is None:
-            raise HTTPException(status_code=404, detail="Error updating study task")
-        else:
-            return task
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=500, detail="Study task update failed")
-
-
-@app.post(
-    "/study_tasks",
-    tags=[Groups.STUDY_COLLECTION],
-    response_model=List[StudyTaskPublic],
-    status_code=200,
-)
-async def create_study_tasks(tasks: List[StudyTaskPublic]):
-    try:
-        created_tasks = []
-        for task in tasks:
-            created_tasks.append(
-                collection_handler.create_study_task(
-                    collection_id=task.collection_id, description=task.description
-                ))
-        return created_tasks
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=500, detail="Study task creation failed")
-
-
-@app.get(
-    "/study_collection_tasks/{collection_id}",
-    tags=[Groups.STUDY_COLLECTION],
-    response_model=List[StudyTaskPublic],
-    status_code=200,
-)
-async def get_study_tasks(collection_id: str):
-    try:
-        tasks = collection_handler.get_study_tasks(collection_id)
-        return tasks
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=404, detail="Study tasks not found")
-
-
-@app.get(
-    "/study_collection/{collection_id}/related_entities",
-    tags=[Groups.STUDY_COLLECTION],
-    response_model=List[TreeNode],
-    status_code=200,
-)
-async def get_collection_entities(collection_id: str):
-    try:
-        entities = collection_handler.get_collection_entities(collection_id)
-        return entities
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(status_code=404, detail="Entities not found")
 
 
 
@@ -1453,20 +1183,30 @@ async def create_source_upload_file(
 )
 async def ask_question(payload: QuestionPlayload):
     try:
-        if payload.collection_id is None and payload.document_id is None:
+        if payload.question is None:
+            raise HTTPException(status_code=400, detail="Question is required")
+        
+        
+        if payload.document_id is None and payload.collection_id is None and len(payload.documents_ids) == 0:
+            
+                
+        
+            
             raise HTTPException(
                 status_code=400, detail="Collection ID or Document ID are required"
             )
 
-        if payload.question is None:
-            raise HTTPException(status_code=400, detail="Question is required")
-
-        # Extract user_id from the payload or use a default
-        user_id = getter.get_source_by_document_id(payload.document_id).user_id
+        
+       
         
         if payload.document_id is not None:
             # Use the ChatInitiationHandler to ask the question
             # Get or create a chat session
+            user_id = getter.get_source_by_document_id(payload.document_id).user_id
+            
+            if user_id is None:
+                raise HTTPException(status_code=400, detail="User ID is required")
+            
             chat_handler = ChatHandler(document_id = payload.document_id, user_id = user_id, event_listener = manager.broadcast_message)
             
             response = await chat_handler.ask_question(payload.question)
@@ -1484,23 +1224,47 @@ async def ask_question(payload: QuestionPlayload):
             
             return response
             
-        elif payload.collection_id is not None:
+        elif len(payload.documents_ids) > 0:
             # Use the ChatInitiationHandler to ask the question
-            chat_handler = ChatHandler(collection_id = payload.collection_id, user_id = user_id, event_listener = manager.broadcast_message)
-            response = await chat_handler.ask_question(payload.question)
+             # Extract user_id from the payload or use a default
+            user_id = payload.user_id
             
-            # Create a chat message
-            broadcast_message = BroadcastMessage(
+            if user_id is None:
+                raise HTTPException(status_code=400, detail="User ID is required")
+            
+            collection = collections_manager.create_or_get_collection(payload.documents_ids, user_id)
+            
+            return Chat_Message(
+                chat_id="some_id",
+                chat_type="collection",
                 user_id=user_id,
-                message_type=WebSocketMessageType.CHAT_MESSAGE.value,
-                data=response.model_dump_json(),
-                collection_id=str(payload.collection_id)
+                user_prompt=payload.question,
+                ai_prompt="",
+                asked_by="user",
+                response=json.dumps({
+                    "answer_for_chat": "Hello from service",
+                    "short_answer_for_computer": "Hello from service",
+                    "citations": [],
+                    "status": "success"
+                }),
+                response_model="Answer",
+                event_name="MANUAL_MESSAGE"
             )
-            
-            # Broadcast the message
-            await manager.broadcast_message(broadcast_message)
-            
-            return response
+        else:
+            return Chat_Message(
+                chat_id="some_id",
+                chat_type="document",
+                user_id=user_id,
+                user_prompt=payload.question,
+                ai_prompt="",
+                asked_by="user",
+                response=json.dumps({
+                    "answer_for_chat": "Hello from service",
+                    "short_answer_for_computer": "Hello from service",
+                    "citations": [],
+                    "status": "ERROR"
+                }),
+            )
 
     except Exception as e:
         logger.error(f"Error in ask_question: {str(e)}")

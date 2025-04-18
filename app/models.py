@@ -368,6 +368,17 @@ class Question_Answer(SQLModel, table=True):
         )
 
 
+
+class Collection(SQLModel, table=False):
+    id: str = Field(primary_key=True)
+    name: Optional[str] = Field(default=None, nullable=True)
+    description: Optional[str] = Field(default=None, nullable=True)
+    user_id: str = Field(nullable=False)
+    status: str = Field(default="PENDING", nullable=True)
+    created_at: datetime = Field(default_factory=datetime.now, nullable=True)
+    documents_ids: List[str] = Field(default=[], sa_column=Column(ARRAY(String)))
+
+
 class Study_Collection(SQLModel, table=True):
     """
     Represents a study collection with its ID, name, description, and user ID.
@@ -538,6 +549,8 @@ class QuestionPlayload(SQLModel, table=False):
     question: Optional[str] = Field(default=None)
     document_id: Optional[uuid_pkg.UUID] = Field(default=None)
     collection_id: Optional[uuid_pkg.UUID] = Field(default=None)
+    documents_ids: Optional[List[uuid_pkg.UUID]] = Field(default=None)
+    user_id: Optional[str] = Field(default=None)
 
 
 class HTTPError(SQLModel, table=False):
