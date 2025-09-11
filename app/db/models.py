@@ -203,5 +203,44 @@ class Document(SQLModel, table=True):
     document_metadata: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
 
 
+class Entity(SQLModel, table=True):
+    """Entity model for extracted entities from documents"""
+    
+    __tablename__ = "entities"
+    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(index=True, max_length=255)
+    type: str = Field(index=True, max_length=50)  # Person, Product, Company, Location, Event, Technology, Topic
+    description: Optional[str] = Field(default=None, sa_column=Column(Text))
+    wikidata_id: Optional[str] = Field(default=None, index=True, max_length=50)
+    wikidata_label: Optional[str] = Field(default=None, max_length=255)
+    wikidata_description: Optional[str] = Field(default=None, sa_column=Column(Text))
+    aliases: Optional[List[str]] = Field(default=None, sa_column=Column(ARRAY(Text)))
+    vector: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(768)))
+    user_id: int = Field(foreign_key="users.id", index=True)
+    created_at: Optional[datetime] = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), server_default=func.now())
+    )
+    updated_at: Optional[datetime] = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    )
+
+
+class EntityDocument(SQLModel, table=True):
+    """Many-to-many relationship between entities and documents"""
+    
+    __tablename__ = "entity_documents"
+    
+    entity_id: int = Field(foreign_key="entities.id", primary_key=True)
+    document_id: int = Field(foreign_key="documents.id", primary_key=True)
+    relevance: float = Field(default=0.0)
+    created_at: Optional[datetime] = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), server_default=func.now())
+    )
+
+
 # Export all models for Alembic
-__all__ = ["BaseModel", "VectorField", "TestDocument", "TestEntity", "User", "Bookmark", "Document"]
+__all__ = ["BaseModel", "VectorField", "TestDocument", "TestEntity", "User", "Bookmark", "Document", "Entity", "EntityDocument"]

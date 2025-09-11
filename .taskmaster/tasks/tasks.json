@@ -370,8 +370,65 @@
           4,
           5
         ],
-        "status": "pending",
-        "subtasks": []
+        "status": "done",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Design and Implement Background Task Workflow",
+            "description": "Set up the FastAPI background task system to process bookmarked content asynchronously, ensuring tasks are triggered and managed without blocking API responses.",
+            "dependencies": [],
+            "details": "Utilize FastAPI's BackgroundTasks to run content analysis after API requests, allowing for non-blocking processing of documents. Ensure the workflow supports asynchronous execution and can be extended for future scalability.",
+            "status": "done",
+            "testStrategy": "Test background task execution with sample documents and verify that tasks run asynchronously without blocking API responses."
+          },
+          {
+            "id": 2,
+            "title": "Implement Document Status Tracking and Error Handling",
+            "description": "Develop mechanisms to track and update the status of each document (Pending, Processing, Done, Failure) throughout the analysis pipeline, and implement robust error handling and logging.",
+            "dependencies": [
+              "6.1"
+            ],
+            "details": "Update document status at each stage of processing. Log errors and update status to 'failed' on exceptions. Ensure status transitions are atomic and reliable.",
+            "status": "done",
+            "testStrategy": "Verify status updates throughout the processing pipeline and validate error handling for failed processing scenarios."
+          },
+          {
+            "id": 3,
+            "title": "Integrate Gemini AI for Bullet Point Generation",
+            "description": "Connect the background task system to Google Gemini AI to generate up to 6 key bullet points from document content, and parse the AI response for storage.",
+            "dependencies": [
+              "6.1"
+            ],
+            "details": "Send document content to Gemini AI with a prompt for bullet point extraction. Parse and validate the returned bullet points before updating the document analysis results.",
+            "status": "done",
+            "testStrategy": "Test bullet point generation with various content types and validate the accuracy and format of the generated bullet points."
+          },
+          {
+            "id": 4,
+            "title": "Create and Expose API Endpoint for Content Analysis Trigger",
+            "description": "Develop an API endpoint that allows clients to trigger content analysis for a specific document, initiating the background processing workflow.",
+            "dependencies": [
+              "6.1",
+              "6.2",
+              "6.3"
+            ],
+            "details": "Implement a POST endpoint that accepts document and user identifiers, adds the analysis task to the background queue, and returns an immediate response.",
+            "status": "done",
+            "testStrategy": "Test the API endpoint to ensure it triggers background analysis and returns appropriate responses for valid and invalid requests."
+          },
+          {
+            "id": 5,
+            "title": "Design Database Models for Analysis Results and Task Management",
+            "description": "Create or update database models to store analysis results, bullet points, and task status, supporting efficient retrieval and updates.",
+            "dependencies": [
+              "6.2",
+              "6.3"
+            ],
+            "details": "Define schema for storing bullet points, document status, and error logs. Ensure models support concurrent updates and retrievals for analysis results.",
+            "status": "done",
+            "testStrategy": "Verify database updates for analysis results, test concurrent processing of multiple documents, and ensure data integrity under load."
+          }
+        ]
       },
       {
         "id": 7,
@@ -384,8 +441,68 @@
           4,
           5
         ],
-        "status": "pending",
-        "subtasks": []
+        "status": "done",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Design and Implement Entity Extraction Logic Using Gemini AI",
+            "description": "Develop the core logic to extract entities from document content using Google Gemini AI, ensuring each entity includes name, type, and description as specified.",
+            "dependencies": [],
+            "details": "Define a clear prompt for Gemini AI to extract entities, specifying required fields and expected output format. Implement the extraction function and parsing logic to convert Gemini AI responses into structured entity objects.",
+            "status": "done",
+            "testStrategy": "Test extraction accuracy with diverse document samples, verifying correct identification and classification of entities."
+          },
+          {
+            "id": 2,
+            "title": "Integrate Wikidata for Entity Validation and Enrichment",
+            "description": "Connect to Wikidata to validate extracted entities and enrich them with additional metadata such as Wikidata IDs and aliases.",
+            "dependencies": [
+              "7.1"
+            ],
+            "details": "Implement API calls to Wikidata for entity lookup and enrichment. Update entity objects with validated information and supplementary attributes from Wikidata.",
+            "status": "done",
+            "testStrategy": "Verify enrichment by cross-checking entity data with Wikidata and ensuring correct mapping of IDs and aliases."
+          },
+          {
+            "id": 3,
+            "title": "Implement Entity Matching and Deduplication",
+            "description": "Develop logic to match newly extracted entities against existing ones to prevent duplicates in the database.",
+            "dependencies": [
+              "7.1",
+              "7.2"
+            ],
+            "details": "Create matching algorithms based on entity name, type, and enriched metadata. Ensure deduplication before persisting entities.",
+            "status": "done",
+            "testStrategy": "Test with overlapping and similar entities to confirm deduplication works and no duplicates are stored."
+          },
+          {
+            "id": 4,
+            "title": "Generate and Store Vector Embeddings for Entities",
+            "description": "Produce vector embeddings for each entity using Gemini AI or a compatible embedding service, and store them for downstream retrieval and similarity search.",
+            "dependencies": [
+              "7.1",
+              "7.2",
+              "7.3"
+            ],
+            "details": "Integrate embedding generation into the entity processing pipeline. Store embeddings in the database alongside entity records.",
+            "status": "done",
+            "testStrategy": "Validate embedding generation for a sample set of entities and test retrieval accuracy using vector similarity queries."
+          },
+          {
+            "id": 5,
+            "title": "Implement Background Task Orchestration and Error Handling",
+            "description": "Create a robust background task to orchestrate entity extraction, enrichment, matching, embedding, and relationship management, with comprehensive error handling and logging.",
+            "dependencies": [
+              "7.1",
+              "7.2",
+              "7.3",
+              "7.4"
+            ],
+            "details": "Set up a background worker to process documents asynchronously, manage entity-document relationships, and log errors for failed extractions or enrichments.",
+            "status": "done",
+            "testStrategy": "Simulate failures and edge cases to ensure errors are logged and handled gracefully, and verify end-to-end processing of entity extraction tasks."
+          }
+        ]
       },
       {
         "id": 8,
@@ -766,7 +883,7 @@
     ],
     "metadata": {
       "created": "2025-09-07T16:45:27.534Z",
-      "updated": "2025-09-10T01:11:18.289Z",
+      "updated": "2025-09-11T01:49:19.795Z",
       "description": "Tasks for master context"
     }
   }

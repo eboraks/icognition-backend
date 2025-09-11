@@ -1,505 +1,424 @@
 """
-Content Analysis Service for AI-powered document analysis
+Content Analysis Service for generating bullet points and analyzing document content
 """
 
 import asyncio
 import json
-from typing import Dict, Any, List, Optional, Union
+import re
+from typing import Optional, Dict, Any, List
 from datetime import datetime
-from dataclasses import dataclass
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, and_
 
-from app.services.gemini_service import GeminiService, GeminiModel, get_gemini_service
-from app.services.prompt_utils import generate_prompt, PromptType, create_analysis_prompt
+from app.db.models import Document, User
+from app.services.base_service import UserIsolatedService
+from app.services.gemini_service import get_gemini_service, GeminiModel
+from app.services.user_service import UserService
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
-@dataclass
-class ContentAnalysisResult:
-    """Result of content analysis"""
-    summary: Optional[str] = None
-    key_points: Optional[List[str]] = None
-    entities: Optional[List[Dict[str, Any]]] = None
-    topics: Optional[List[str]] = None
-    sentiment: Optional[Dict[str, Any]] = None
-    language: Optional[str] = None
-    quality_score: Optional[float] = None
-    bullet_points: Optional[List[str]] = None
-    metadata: Optional[Dict[str, Any]] = None
-    analysis_timestamp: Optional[datetime] = None
-    model_used: Optional[str] = None
-    success: bool = False
-    error: Optional[str] = None
+class ContentAnalysisService(UserIsolatedService[Document]):
+    """Service for analyzing document content and generating bullet points"""
 
+    def __init__(self, session: AsyncSession):
+        super().__init__(Document)
+        self.session = session
+        self.gemini_service = get_gemini_service()
 
-@dataclass
-class EntityExtractionResult:
-    """Result of entity extraction"""
-    entities: List[Dict[str, Any]]
-    total_count: int
-    categories: Dict[str, int]
-    confidence_scores: List[float]
-    analysis_timestamp: datetime
-    model_used: str
-    success: bool
-    error: Optional[str] = None
-
-
-class ContentAnalysisService:
-    """
-    Service for AI-powered content analysis using Gemini models
-    """
-    
-    def __init__(self, gemini_service: Optional[GeminiService] = None):
-        """
-        Initialize the content analysis service
-        
-        Args:
-            gemini_service: Gemini service instance. If None, uses global instance
-        """
-        self.gemini_service = gemini_service or get_gemini_service()
-        logger.info("ContentAnalysisService initialized")
-    
     async def analyze_document_content(
         self,
-        content: str,
-        analysis_types: Optional[List[str]] = None,
-        model: GeminiModel = GeminiModel.FLASH,
-        include_metadata: bool = True
-    ) -> ContentAnalysisResult:
+        firebase_uid: str,
+        document_id: int,
+        analysis_type: str = "bullet_points"
+    ) -> Optional[Document]:
         """
-        Perform comprehensive content analysis
+        Analyze document content and generate bullet points
+        
+        Args:
+            firebase_uid: Firebase UID of the user
+            document_id: ID of the document to analyze
+            analysis_type: Type of analysis to perform (default: "bullet_points")
+            
+        Returns:
+            Updated document with analysis results, or None if not found
+        """
+        try:
+            # Get the document
+            document = await self.get_document_by_id(firebase_uid, document_id)
+            if not document:
+                logger.error(f"Document {document_id} not found for user {firebase_uid}")
+                return None
+
+            # Check if document has content to analyze
+            if not document.content or not document.content.strip():
+                logger.warning(f"Document {document_id} has no content to analyze")
+                await self._update_document_status(firebase_uid, document_id, "analysis_failed", {
+                    'analysis_error': 'Document has no content to analyze'
+                })
+                return document
+
+            # Update status to processing
+            await self._update_document_status(firebase_uid, document_id, "analyzing")
+
+            # Perform analysis based on type
+            if analysis_type == "bullet_points":
+                analysis_result = await self._generate_bullet_points(document.content)
+            else:
+                analysis_result = await self._perform_general_analysis(document.content, analysis_type)
+
+            # Update document with analysis results
+            await self._update_document_analysis(firebase_uid, document_id, analysis_result)
+
+            # Update status to completed
+            await self._update_document_status(firebase_uid, document_id, "analyzed")
+
+            logger.info(f"Successfully analyzed document {document_id}")
+            return await self.get_document_by_id(firebase_uid, document_id)
+
+        except Exception as e:
+            logger.error(f"Error analyzing document {document_id}: {str(e)}")
+            await self._update_document_status(firebase_uid, document_id, "analysis_failed", {
+                'analysis_error': str(e)
+            })
+            return None
+
+    async def _generate_bullet_points(self, content: str) -> Dict[str, Any]:
+        """
+        Generate bullet points from document content using Gemini AI
         
         Args:
             content: Document content to analyze
-            analysis_types: List of analysis types to perform
-            model: Gemini model to use
-            include_metadata: Whether to include metadata in results
             
         Returns:
-            ContentAnalysisResult with analysis data
+            Dictionary containing bullet points and metadata
         """
-        if not content or not content.strip():
-            return ContentAnalysisResult(
-                success=False,
-                error="Content cannot be empty",
-                analysis_timestamp=datetime.now()
-            )
-        
         try:
-            # Default analysis types if not specified
-            if analysis_types is None:
-                analysis_types = [
-                    "summary", "key_points", "entities", 
-                    "topics", "sentiment", "language"
+            # Create a focused prompt for bullet point generation
+            prompt = f"""Analyze the following content and extract the most important key points. 
+            Return exactly 6 bullet points that capture the main ideas, facts, or insights.
+            Each bullet point should be concise but informative.
+            Format your response as a JSON object with a "bullet_points" array.
+            
+            Content:
+            {content[:4000]}  # Limit content to avoid token limits
+            """
+
+            # Generate content using Gemini
+            result = await self.gemini_service.generate_content(
+                prompt=prompt,
+                model=GeminiModel.FLASH,
+                retry_count=2
+            )
+
+            if not result.get('success'):
+                raise Exception(f"Gemini API call failed: {result}")
+
+            # Parse the response
+            bullet_points = self._parse_bullet_points_response(result['content'])
+            
+            return {
+                'analysis_type': 'bullet_points',
+                'bullet_points': bullet_points,
+                'generated_at': datetime.now().isoformat(),
+                'model_used': result.get('model', 'unknown'),
+                'content_length': len(content),
+                'success': True
+            }
+
+        except Exception as e:
+            logger.error(f"Error generating bullet points: {str(e)}")
+            return {
+                'analysis_type': 'bullet_points',
+                'bullet_points': [],
+                'generated_at': datetime.now().isoformat(),
+                'error': str(e),
+                'success': False
+            }
+
+    async def _perform_general_analysis(self, content: str, analysis_type: str) -> Dict[str, Any]:
+        """
+        Perform general content analysis using Gemini AI
+        
+        Args:
+            content: Document content to analyze
+            analysis_type: Type of analysis to perform
+            
+        Returns:
+            Dictionary containing analysis results
+        """
+        try:
+            # Use the existing analyze_content method from GeminiService
+            result = await self.gemini_service.analyze_content(
+                content=content[:4000],  # Limit content to avoid token limits
+                analysis_type=analysis_type,
+                model=GeminiModel.FLASH
+            )
+
+            return {
+                'analysis_type': analysis_type,
+                'result': result.get('content', ''),
+                'parsed_result': result.get('parsed_content', ''),
+                'generated_at': datetime.now().isoformat(),
+                'model_used': result.get('model', 'unknown'),
+                'content_length': len(content),
+                'success': True
+            }
+
+        except Exception as e:
+            logger.error(f"Error performing {analysis_type} analysis: {str(e)}")
+            return {
+                'analysis_type': analysis_type,
+                'result': '',
+                'generated_at': datetime.now().isoformat(),
+                'error': str(e),
+                'success': False
+            }
+
+    def _parse_bullet_points_response(self, response: str) -> List[str]:
+        """
+        Parse bullet points from Gemini response
+        
+        Args:
+            response: Raw response from Gemini
+            
+        Returns:
+            List of bullet points
+        """
+        try:
+            # Try to parse as JSON first
+            try:
+                parsed = json.loads(response)
+                if isinstance(parsed, dict) and 'bullet_points' in parsed:
+                    return parsed['bullet_points']
+                elif isinstance(parsed, list):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+
+            # Fallback: extract bullet points from text
+            bullet_points = []
+            
+            # Look for various bullet point patterns
+            patterns = [
+                r'•\s*(.+?)(?=\n|$)',  # • bullet points
+                r'-\s*(.+?)(?=\n|$)',   # - bullet points
+                r'\*\s*(.+?)(?=\n|$)',  # * bullet points
+                r'\d+\.\s*(.+?)(?=\n|$)',  # numbered lists
+            ]
+            
+            for pattern in patterns:
+                matches = re.findall(pattern, response, re.MULTILINE)
+                if matches:
+                    bullet_points.extend([match.strip() for match in matches])
+                    break
+            
+            # If no patterns found, split by lines and clean up
+            if not bullet_points:
+                lines = response.split('\n')
+                bullet_points = [
+                    line.strip() 
+                    for line in lines 
+                    if line.strip() and len(line.strip()) > 10  # Filter out very short lines
                 ]
             
-            logger.info(f"Starting content analysis with types: {analysis_types}")
+            # Limit to 6 bullet points and clean up
+            bullet_points = bullet_points[:6]
+            bullet_points = [
+                point.strip() 
+                for point in bullet_points 
+                if point.strip() and len(point.strip()) > 5
+            ]
             
-            # Convert analysis types to PromptType enums
-            prompt_types = []
-            type_mapping = {
-                'summary': PromptType.CONTENT_SUMMARY,
-                'key_points': PromptType.KEY_POINTS,
-                'entities': PromptType.ENTITY_EXTRACTION,
-                'topics': PromptType.TOPIC_CATEGORIZATION,
-                'sentiment': PromptType.SENTIMENT_ANALYSIS,
-                'language': PromptType.LANGUAGE_DETECTION,
-                'validation': PromptType.CONTENT_VALIDATION,
-                'bullet_points': PromptType.BULLET_POINTS
-            }
+            return bullet_points
+
+        except Exception as e:
+            logger.error(f"Error parsing bullet points: {str(e)}")
+            return []
+
+    async def _update_document_status(
+        self,
+        firebase_uid: str,
+        document_id: int,
+        status: str,
+        metadata_updates: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Update document status and metadata"""
+        try:
+            document = await self.get_document_by_id(firebase_uid, document_id)
+            if not document:
+                return
+
+            document.status = status
             
-            for analysis_type in analysis_types:
-                if analysis_type in type_mapping:
-                    prompt_types.append(type_mapping[analysis_type])
-                else:
-                    logger.warning(f"Unknown analysis type: {analysis_type}")
+            if metadata_updates:
+                if document.document_metadata is None:
+                    document.document_metadata = {}
+                document.document_metadata.update(metadata_updates)
+
+            await self.session.commit()
+            logger.debug(f"Updated document {document_id} status to {status}")
+
+        except Exception as e:
+            logger.error(f"Error updating document status: {str(e)}")
+
+    async def _update_document_analysis(
+        self,
+        firebase_uid: str,
+        document_id: int,
+        analysis_result: Dict[str, Any]
+    ) -> None:
+        """Update document with analysis results"""
+        try:
+            document = await self.get_document_by_id(firebase_uid, document_id)
+            if not document:
+                return
+
+            if document.document_metadata is None:
+                document.document_metadata = {}
             
-            # Generate comprehensive analysis prompt
-            prompt = create_analysis_prompt(
-                content=content,
-                analysis_types=prompt_types,
-                include_metadata=include_metadata
+            document.document_metadata['content_analysis'] = analysis_result
+            await self.session.commit()
+            logger.debug(f"Updated document {document_id} with analysis results")
+
+        except Exception as e:
+            logger.error(f"Error updating document analysis: {str(e)}")
+
+    async def get_document_by_id(
+        self,
+        firebase_uid: str,
+        document_id: int
+    ) -> Optional[Document]:
+        """Get a specific document by ID for a user"""
+        try:
+            user = await UserService.get_or_create_user(self.session, firebase_uid)
+            
+            query = select(Document).where(
+                and_(Document.id == document_id, Document.user_id == user.id)
             )
             
-            # Generate analysis using Gemini
-            result = await self.gemini_service.generate_content(
-                prompt=prompt,
-                model=model,
-                use_cache=True
-            )
+            result = await self.session.execute(query)
+            return result.scalar_one_or_none()
+
+        except Exception as e:
+            logger.error(f"Error getting document {document_id}: {str(e)}")
+            return None
+
+    async def get_documents_ready_for_analysis(
+        self,
+        firebase_uid: str,
+        limit: int = 10
+    ) -> List[Document]:
+        """Get documents that are ready for content analysis"""
+        try:
+            user = await UserService.get_or_create_user(self.session, firebase_uid)
             
-            if not result['success']:
-                return ContentAnalysisResult(
-                    success=False,
-                    error="Failed to generate analysis",
-                    analysis_timestamp=datetime.now(),
-                    model_used=result.get('model', 'unknown')
+            # Get documents that have content but haven't been analyzed yet
+            query = select(Document).where(
+                and_(
+                    Document.user_id == user.id,
+                    Document.content.isnot(None),
+                    Document.content != '',
+                    Document.status.in_(['processed', 'validated', 'embedded'])
                 )
+            ).limit(limit)
             
-            # Parse the response
-            analysis_data = self._parse_analysis_response(result['content'])
-            
-            return ContentAnalysisResult(
-                summary=analysis_data.get('summary'),
-                key_points=analysis_data.get('key_points'),
-                entities=analysis_data.get('entities'),
-                topics=analysis_data.get('topics'),
-                sentiment=analysis_data.get('sentiment'),
-                language=analysis_data.get('language'),
-                quality_score=analysis_data.get('quality_score'),
-                bullet_points=analysis_data.get('bullet_points'),
-                metadata=analysis_data.get('metadata'),
-                analysis_timestamp=datetime.now(),
-                model_used=result['model'],
-                success=True
-            )
-            
+            result = await self.session.execute(query)
+            return result.scalars().all()
+
         except Exception as e:
-            logger.error(f"Error analyzing content: {str(e)}")
-            return ContentAnalysisResult(
-                success=False,
-                error=str(e),
-                analysis_timestamp=datetime.now()
-            )
-    
-    async def extract_entities(
+            logger.error(f"Error getting documents ready for analysis: {str(e)}")
+            return []
+
+    async def batch_analyze_documents(
         self,
-        content: str,
-        model: GeminiModel = GeminiModel.FLASH
-    ) -> EntityExtractionResult:
-        """
-        Extract named entities from content
-        
-        Args:
-            content: Content to extract entities from
-            model: Gemini model to use
-            
-        Returns:
-            EntityExtractionResult with extracted entities
-        """
-        try:
-            logger.info("Starting entity extraction")
-            
-            # Generate entity extraction prompt
-            prompt = generate_prompt(
-                PromptType.ENTITY_EXTRACTION,
-                content
-            )
-            
-            # Generate analysis using Gemini
-            result = await self.gemini_service.generate_content(
-                prompt=prompt,
-                model=model,
-                use_cache=True
-            )
-            
-            if not result['success']:
-                return EntityExtractionResult(
-                    entities=[],
-                    total_count=0,
-                    categories={},
-                    confidence_scores=[],
-                    analysis_timestamp=datetime.now(),
-                    model_used=result.get('model', 'unknown'),
-                    success=False,
-                    error="Failed to extract entities"
-                )
-            
-            # Parse entity extraction response
-            entities_data = self._parse_entity_response(result['content'])
-            
-            # Calculate statistics
-            total_count = len(entities_data)
-            categories = {}
-            confidence_scores = []
-            
-            for entity in entities_data:
-                category = entity.get('category', 'OTHER')
-                categories[category] = categories.get(category, 0) + 1
-                confidence_scores.append(entity.get('confidence', 0.0))
-            
-            return EntityExtractionResult(
-                entities=entities_data,
-                total_count=total_count,
-                categories=categories,
-                confidence_scores=confidence_scores,
-                analysis_timestamp=datetime.now(),
-                model_used=result['model'],
-                success=True
-            )
-            
-        except Exception as e:
-            logger.error(f"Error extracting entities: {str(e)}")
-            return EntityExtractionResult(
-                entities=[],
-                total_count=0,
-                categories={},
-                confidence_scores=[],
-                analysis_timestamp=datetime.now(),
-                model_used='unknown',
-                success=False,
-                error=str(e)
-            )
-    
-    async def generate_summary(
-        self,
-        content: str,
-        max_length: int = 200,
-        model: GeminiModel = GeminiModel.FLASH
-    ) -> str:
-        """
-        Generate a summary of the content
-        
-        Args:
-            content: Content to summarize
-            max_length: Maximum length of summary
-            model: Gemini model to use
-            
-        Returns:
-            Generated summary
-        """
-        try:
-            prompt = generate_prompt(
-                PromptType.CONTENT_SUMMARY,
-                content,
-                max_length=max_length
-            )
-            
-            result = await self.gemini_service.generate_content(
-                prompt=prompt,
-                model=model,
-                use_cache=True
-            )
-            
-            if result['success']:
-                return result['content'].strip()
-            else:
-                return "Failed to generate summary"
-                
-        except Exception as e:
-            logger.error(f"Error generating summary: {str(e)}")
-            return f"Error generating summary: {str(e)}"
-    
-    async def extract_key_points(
-        self,
-        content: str,
-        max_points: int = 10,
-        model: GeminiModel = GeminiModel.FLASH
-    ) -> List[str]:
-        """
-        Extract key points from content
-        
-        Args:
-            content: Content to extract key points from
-            max_points: Maximum number of key points
-            model: Gemini model to use
-            
-        Returns:
-            List of key points
-        """
-        try:
-            prompt = generate_prompt(
-                PromptType.KEY_POINTS,
-                content,
-                max_points=max_points
-            )
-            
-            result = await self.gemini_service.generate_content(
-                prompt=prompt,
-                model=model,
-                use_cache=True
-            )
-            
-            if result['success']:
-                return self._parse_key_points(result['content'])
-            else:
-                return ["Failed to extract key points"]
-                
-        except Exception as e:
-            logger.error(f"Error extracting key points: {str(e)}")
-            return [f"Error extracting key points: {str(e)}"]
-    
-    async def analyze_sentiment(
-        self,
-        content: str,
-        model: GeminiModel = GeminiModel.FLASH
+        firebase_uid: str,
+        document_ids: Optional[List[int]] = None,
+        analysis_type: str = "bullet_points"
     ) -> Dict[str, Any]:
         """
-        Analyze sentiment of content
+        Analyze multiple documents in batch
         
         Args:
-            content: Content to analyze
-            model: Gemini model to use
+            firebase_uid: Firebase UID of the user
+            document_ids: List of document IDs to analyze (if None, analyzes ready documents)
+            analysis_type: Type of analysis to perform
             
         Returns:
-            Sentiment analysis results
+            Dictionary with batch analysis results
         """
         try:
-            prompt = generate_prompt(
-                PromptType.SENTIMENT_ANALYSIS,
-                content
-            )
-            
-            result = await self.gemini_service.generate_content(
-                prompt=prompt,
-                model=model,
-                use_cache=True
-            )
-            
-            if result['success']:
-                return self._parse_sentiment_response(result['content'])
+            if document_ids:
+                # Analyze specific documents
+                documents_to_analyze = []
+                for doc_id in document_ids:
+                    doc = await self.get_document_by_id(firebase_uid, doc_id)
+                    if doc and doc.content:
+                        documents_to_analyze.append(doc)
             else:
-                return {
-                    "sentiment": "unknown",
-                    "confidence": 0.0,
-                    "error": "Failed to analyze sentiment"
-                }
-                
-        except Exception as e:
-            logger.error(f"Error analyzing sentiment: {str(e)}")
-            return {
-                "sentiment": "unknown",
-                "confidence": 0.0,
-                "error": str(e)
+                # Get documents ready for analysis
+                documents_to_analyze = await self.get_documents_ready_for_analysis(firebase_uid)
+
+            results = {
+                'total_documents': len(documents_to_analyze),
+                'successful_analyses': 0,
+                'failed_analyses': 0,
+                'results': []
             }
-    
-    def _parse_analysis_response(self, response: str) -> Dict[str, Any]:
-        """Parse comprehensive analysis response"""
-        try:
-            # Try to parse as JSON first
-            if response.strip().startswith('{'):
-                return json.loads(response)
-            
-            # If not JSON, try to extract structured data
-            return self._extract_structured_data(response)
-            
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse analysis response as JSON")
-            return self._extract_structured_data(response)
-    
-    def _parse_entity_response(self, response: str) -> List[Dict[str, Any]]:
-        """Parse entity extraction response"""
-        try:
-            # Try to parse as JSON first
-            if response.strip().startswith('{'):
-                data = json.loads(response)
-                return data.get('entities', [])
-            
-            # If not JSON, try to extract entities from text
-            return self._extract_entities_from_text(response)
-            
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse entity response as JSON")
-            return self._extract_entities_from_text(response)
-    
-    def _parse_key_points(self, response: str) -> List[str]:
-        """Parse key points from response"""
-        lines = response.split('\n')
-        key_points = []
-        
-        for line in lines:
-            line = line.strip()
-            if line and (line.startswith('•') or line.startswith('-') or line.startswith('*')):
-                # Remove bullet point markers
-                point = line[1:].strip()
-                if point:
-                    key_points.append(point)
-            elif line and line[0].isdigit() and '.' in line:
-                # Handle numbered points
-                point = line.split('.', 1)[1].strip()
-                if point:
-                    key_points.append(point)
-        
-        return key_points
-    
-    def _parse_sentiment_response(self, response: str) -> Dict[str, Any]:
-        """Parse sentiment analysis response"""
-        try:
-            if response.strip().startswith('{'):
-                return json.loads(response)
-            
-            # Extract sentiment from text
-            response_lower = response.lower()
-            if 'positive' in response_lower:
-                sentiment = 'positive'
-            elif 'negative' in response_lower:
-                sentiment = 'negative'
-            else:
-                sentiment = 'neutral'
-            
-            return {
-                "sentiment": sentiment,
-                "confidence": 0.7,  # Default confidence
-                "tone": "professional"
-            }
-            
-        except Exception as e:
-            logger.warning(f"Error parsing sentiment response: {str(e)}")
-            return {
-                "sentiment": "neutral",
-                "confidence": 0.5,
-                "tone": "unknown"
-            }
-    
-    def _extract_structured_data(self, response: str) -> Dict[str, Any]:
-        """Extract structured data from unstructured response"""
-        data = {}
-        
-        # Extract summary
-        if 'summary' in response.lower():
-            summary_start = response.lower().find('summary')
-            if summary_start != -1:
-                summary_text = response[summary_start:summary_start+200]
-                data['summary'] = summary_text.strip()
-        
-        # Extract language
-        if 'language' in response.lower():
-            lang_start = response.lower().find('language')
-            if lang_start != -1:
-                lang_text = response[lang_start:lang_start+50]
-                data['language'] = lang_text.strip()
-        
-        return data
-    
-    def _extract_entities_from_text(self, response: str) -> List[Dict[str, Any]]:
-        """Extract entities from unstructured text response"""
-        entities = []
-        lines = response.split('\n')
-        
-        for line in lines:
-            line = line.strip()
-            if line and ':' in line:
-                parts = line.split(':', 1)
-                if len(parts) == 2:
-                    entity_text = parts[0].strip()
-                    category = parts[1].strip()
+
+            # Process each document
+            for document in documents_to_analyze:
+                try:
+                    analysis_result = await self.analyze_document_content(
+                        firebase_uid=firebase_uid,
+                        document_id=document.id,
+                        analysis_type=analysis_type
+                    )
                     
-                    entities.append({
-                        'text': entity_text,
-                        'category': category.upper(),
-                        'confidence': 0.8,
-                        'context': ''
+                    if analysis_result:
+                        results['successful_analyses'] += 1
+                        results['results'].append({
+                            'document_id': document.id,
+                            'title': document.title,
+                            'status': 'success'
+                        })
+                    else:
+                        results['failed_analyses'] += 1
+                        results['results'].append({
+                            'document_id': document.id,
+                            'title': document.title,
+                            'status': 'failed'
+                        })
+
+                except Exception as e:
+                    logger.error(f"Error analyzing document {document.id}: {str(e)}")
+                    results['failed_analyses'] += 1
+                    results['results'].append({
+                        'document_id': document.id,
+                        'title': document.title,
+                        'status': 'error',
+                        'error': str(e)
                     })
-        
-        return entities
+
+            logger.info(f"Batch analysis completed: {results['successful_analyses']} successful, {results['failed_analyses']} failed")
+            return results
+
+        except Exception as e:
+            logger.error(f"Error in batch analysis: {str(e)}")
+            return {
+                'total_documents': 0,
+                'successful_analyses': 0,
+                'failed_analyses': 0,
+                'error': str(e),
+                'results': []
+            }
 
 
 # Global service instance
 _content_analysis_service: Optional[ContentAnalysisService] = None
 
 
-def get_content_analysis_service() -> ContentAnalysisService:
-    """Get the global content analysis service instance"""
-    global _content_analysis_service
-    if _content_analysis_service is None:
-        _content_analysis_service = ContentAnalysisService()
-    return _content_analysis_service
-
-
-def initialize_content_analysis_service(gemini_service: Optional[GeminiService] = None) -> ContentAnalysisService:
-    """Initialize the global content analysis service instance"""
-    global _content_analysis_service
-    _content_analysis_service = ContentAnalysisService(gemini_service)
-    return _content_analysis_service
+def get_content_analysis_service(session: AsyncSession) -> ContentAnalysisService:
+    """Get a ContentAnalysisService instance"""
+    return ContentAnalysisService(session)
