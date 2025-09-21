@@ -1,0 +1,43 @@
+.about {
+    background-color: lightblue
+}
+.learning {
+    background-color: lightgray
+}
+.entity {
+    background-color: lightgreen
+}
+
+.ask {
+  display: flex;
+  flex-direction: row;
+  padding: 1%;
+  justify-items: right;
+}
+
+.answer {
+  padding: 1%;
+  border: 1px solid #f1f1f1;
+  border-radius: 5%;
+}
+textarea {
+  width: 100%;
+  height: 100px;
+  padding: 12px 20px;
+  box-sizing: border-box;
+  border: 2px solid #ccc;
+  border-radius: 4px;
+  background-color: #f8f8f8;
+  font-size: 16px;
+  resize: none;
+}
+  
+.article {
+    font-family: "Trebuchet MS", sans-serif, monospace;
+    font-size: 18px;
+    font-weight: 545;
+    letter-spacing: .08rem;
+    padding-left: 5%;
+    padding-right: 10%;
+    
+}

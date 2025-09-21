@@ -1,247 +1,114 @@
-# iCognition Backend - Product Requirements Document
+# Frontend Backend Integration PRD
 
-## Executive Summary
+## Project Overview
+Update the existing Vue.js frontend application to work seamlessly with the new FastAPI backend architecture. The frontend is already well-structured with Vue 3, TypeScript, PrimeVue, and Pinia, but needs updates to integrate with the new backend API endpoints, authentication system, and advanced features.
 
-iCognition is an AI-powered document analysis and knowledge management platform that enables users to bookmark web pages and PDF documents, automatically extract insights, and engage in intelligent conversations about the content. The platform leverages Google's Gemini AI models for content analysis, entity extraction, and question-answering capabilities.
+## Current Frontend State
+- Vue 3 with Composition API and TypeScript
+- PrimeVue UI component library
+- Pinia state management
+- Firebase authentication
+- WebSocket support for real-time updates
+- Well-organized structure with composables, services, and stores
 
-## Product Overview
+## Backend Capabilities (New)
+- FastAPI with async/await patterns
+- Firebase-based user authentication and management
+- Document management with URL/content processing
+- AI-powered content analysis and entity extraction
+- Real-time WebSocket communication
+- Advanced search with vector similarity
+- Background task processing
+- Comprehensive error handling and logging
 
-### Vision
-To create an intelligent web page, articles, and document analysis platform that transforms static content into interactive, searchable knowledge through AI-powered insights and conversational interfaces.
+## Integration Requirements
 
-### Mission
-Empower users to efficiently process, understand, and interact with digital content by providing automated analysis, entity extraction, and intelligent question-answering capabilities.
+### 1. API Endpoint Updates
+- Update all API calls to match new backend endpoints
+- Replace old `/documents_plus/user/{user_id}` with new `/documents/` endpoints
+- Update bookmark endpoints to use new `/bookmarks/` structure
+- Implement new user management endpoints (`/users/`)
+- Add support for new document analysis endpoints
 
-## Core Features
+### 2. Authentication Integration
+- Integrate Firebase auth with backend user management system
+- Update user context handling for API calls
+- Implement proper authentication headers and tokens
+- Handle user profile management through backend
 
-### 1. Document Ingestion and Processing
+### 3. Data Models and TypeScript Updates
+- Update existing TypeScript models to match new backend response structures
+- Create new models for advanced features (analysis reports, entity extraction, etc.)
+- Update DocModel, Bookmark, and other core models
+- Add models for new backend features
 
-#### 1.1 Web Page Bookmarking
-- **Functionality**: Users can bookmark web pages by providing URLs or the content of the web page
-- **Processing**:
-  - The client should send the page content either in clean text or raw HTML. But sometimes, the client won’t be able to get the page text, in those cases, the client will send URL and the backend will try and fetch the content from the URL.
-  - HTML content extraction using BeautifulSoup
-  - Meta tag parsing (title, author, publication date, description, keywords)
-  - Main article content identification
-  - Content validation (minimum paragraph requirements)
-- **Storage**: Raw HTML and structured content stored in PostgreSQL
-- **Supported Sources**: Web pages, excluding home pages and search pages
+### 4. WebSocket Implementation Enhancement
+- Update WebSocket setup to match new backend structure
+- Implement support for new message types (analysis progress, entity extraction, etc.)
+- Handle real-time document processing updates
+- Add support for background task progress tracking
 
-#### 1.2 PDF Document Upload - Remove this functionality. 
-- **Functionality**: Users can upload PDF files for analysis
-- **Processing**:
-  - PDF to Markdown conversion using pymupdf4llm
-  - Markdown to HTML conversion
-  - Content structure preservation
-- **Storage**: Files stored in Google Cloud Storage via FUSE mount
-- **File Management**: Organized by user ID and source ID
+### 5. Service Layer Updates
+- Update ProjectService.js to use new backend endpoints
+- Enhance DocxrayService.js with new backend capabilities
+- Implement proper error handling matching backend responses
+- Add new services for advanced features
 
-#### 1.3 Content Analysis Pipeline – This pipeline should be broken down into multiple background tasks, rather than having a single large pipeline. 
-- **Automated Processing**: Background tasks for content analysis
-- **AI-Powered Extraction**:
-  - Document summarization - can be removed. 
-  - Key bullet points generation - keep 
-  - Entity and concept identification - keep, but put in a different background task
-  - Topic categorization - keep, but put in a different background task
-- **Status Tracking**: Processing states (Pending, Processing, Done, Failure)
+### 6. UI Components and Features
+- Add new UI components for content analysis visualization
+- Implement entity extraction display components
+- Add document processing status indicators
+- Create analysis report viewing components
+- Enhance existing document management interface
 
-### 2. AI-Powered Content Analysis
+### 7. State Management Updates
+- Update Pinia stores to work with new backend data structures
+- Implement proper state management for new features
+- Update document store to handle new backend responses
+- Add stores for analysis and entity data
 
-#### 2.1 Document Summarization
-- **Technology**: Google Gemini 2.0 Flash/Pro models
-- **Outputs**:
-  - Document overview ("What this article is about")
-  - Key bullet points (up to 6 points)
-  - Content categorization
-  - Bias assessment
-- **Citations**: Source sentences with relevance scores
+### 8. Real-time Features
+- Implement real-time document processing updates
+- Add progress indicators for background tasks
+- Handle WebSocket message routing for different feature types
+- Implement proper error handling for real-time updates
 
-#### 2.2 Entity Extraction and Enrichment
-- **Entity Types**: People, Products, Companies, Locations, Events, Technology, Topics
-- **Enrichment Process**:
-  - Wikidata integration for entity validation
-  - AI-powered entity matching
-  - Description enhancement
-  - Alias identification
-- **Storage**: Vector embeddings for semantic search
+## Technical Specifications
 
-#### 2.3 Question-Answer Generation  – remove this capability
-- **Automated Q&A**: AI generates relevant questions and answers
-- **Custom Questions**: Users can ask specific questions about documents
-- **Citation Support**: Answers include source citations
-- **Vector Search**: Question embeddings for similarity matching
-
-### 3. Intelligent Search and Discovery
-
-#### 3.1 Hybrid Search System – Remove this capability
-- **Text Search**: PostgreSQL full-text search with TSVECTOR
-- **Semantic Search**: Vector similarity using pgvector
-- **Search Aggregation**: Combines text and semantic results
-- **Threshold Management**: Dynamic similarity thresholds
-
-#### 3.2 Entity-Based Filtering
-- **Tree Structure**: Hierarchical entity organization
-- **Document Filtering**: Filter documents by entities
-- **User-Specific**: Personalized entity trees per user
-
-#### 3.3 RAG (Retrieval-Augmented Generation)
-- **Context Retrieval**: Relevant document chunks for questions
-- **Answer Generation**: AI-powered responses with citations
-- **Multi-Document**: Cross-document question answering
-- Reimplement with LangChain and LangGraph
-
-### 4. Conversational Interface
-
-#### 4.1 Chat System
-- **Document Chat**: Contextual conversations about specific documents
-- **Collection Chat**: Multi-document conversations
-- **Session Management**: Persistent chat sessions with timeout
-- **Real-time Updates**: WebSocket-based live updates
-
-#### 4.2 Chat Features
-- **Suggested Questions**: AI-generated conversation starters
-- **Opening Messages**: Automated document introductions
-- **Bias Analysis**: Content bias assessment and communication
-- **HTML Formatting**: Rich text responses with formatting
-
-#### 4.3 Chat History
-- **Persistent Storage**: All conversations saved to database
-- **Context Awareness**: Chat history influences responses
-- **Event Tracking**: Different message types (summary, entities, Q&A)
-
-### 5. User Management and Data Organization
-
-#### 5.1 User System
-- **User Creation**: Automatic user creation on first bookmark
-- **User Data**: Personalized document collections
-- **Entity Associations**: User-specific entity relationships
-
-#### 5.2 Collections Management – Remove functionality
-- **Dynamic Collections**: Collections created from document IDs
-- **Hash-based IDs**: Consistent collection identification
-- **Multi-Document Support**: Collections can contain multiple documents
-
-#### 5.3 Data Privacy
-- **User Isolation**: All data scoped to user ID
-- **Secure Storage**: Encrypted data storage
-- **Access Control**: User-specific data access
-
-### 6. Technical Infrastructure
-
-#### 6.1 Database Architecture
-- **Primary Database**: PostgreSQL with pgvector extension
-- **Models**: SQLModel-based ORM
-- **Relationships**: Many-to-many entity-document relationships
-- **Indexing**: GIN indexes for full-text search, HNSW for vector search
-
-#### 6.2 AI Integration
-- **Primary AI**: Google Gemini 2.0 Flash/Pro
-- **Embeddings**: Gemini embedding models (768 and 3072 dimensions)
-- **Rate Limiting**: Retry logic with exponential backoff
-- **Error Handling**: Comprehensive error management
-
-#### 6.3 External Services
-- **Wikidata API**: Entity enrichment and validation
-- **Google Cloud Storage**: File storage via FUSE mount
-- **WebSocket**: Real-time communication
-- **Background Tasks**: Async processing with FastAPI
-
-#### 6.4 API Architecture
-- **Framework**: FastAPI with async support
-- **Endpoints**: RESTful API with comprehensive error handling
-- **WebSocket**: Real-time updates and chat
-- **CORS**: Cross-origin resource sharing configuration
-
-## User Workflows
-
-### Primary User Journey
-
-1. **Content Discovery**: User finds interesting web page
-2. **Bookmark/Upload**: User bookmarks URL 
-3. **Automatic Processing**: System processes content in background
-4. **AI Analysis**: Document analyzed for entities, topics, summaries
-5. **Interactive Exploration**: User engages with suggested questions
-6. **Custom Queries**: User asks specific questions about content
-7. **Search and Discovery**: User searches across all their documents
-8. **Collection Building**: User creates collections of related documents
-
-### Secondary Workflows
-
-- **Entity Exploration**: Browse documents by entities and topics
-- **Cross-Document Analysis**: Ask questions across multiple documents
-- **Content Regeneration**: Reprocess documents with updated AI models
-- **Data Management**: Organize and manage document collections
-
-## Technical Requirements
+### API Integration
+- All API calls must use proper authentication headers
+- Implement consistent error handling across all services
+- Use TypeScript interfaces for all API responses
+- Implement proper loading states and error boundaries
 
 ### Performance Requirements
-- **Processing Time**: Document analysis within 30 seconds
-- **Search Response**: Search results within 2 seconds
-- **Concurrent Users**: Support for multiple simultaneous users
-- **Scalability**: Horizontal scaling capability
+- Maintain existing performance characteristics
+- Implement proper caching for frequently accessed data
+- Optimize WebSocket message handling
+- Ensure smooth real-time updates without UI blocking
 
-### Reliability Requirements
-- **Uptime**: 99.9% availability
-- **Data Persistence**: All user data permanently stored
-- **Error Recovery**: Graceful handling of AI service failures
-- **Backup**: Regular database backups
+### User Experience
+- Maintain existing UI/UX patterns
+- Add new features seamlessly to existing interface
+- Implement proper loading states for new features
+- Ensure backward compatibility where possible
 
-### Security Requirements
-- **Data Isolation**: User data completely isolated
-- **API Security**: Secure API endpoints
-- **File Security**: Secure file storage and access
-- **Privacy**: No cross-user data leakage
+## Success Criteria
+- All existing frontend functionality works with new backend
+- New backend features are accessible through frontend
+- Real-time updates work correctly
+- Authentication flow is seamless
+- Performance is maintained or improved
+- Code is maintainable and well-documented
 
-## Integration Points
+## Dependencies
+- Existing Vue 3 frontend codebase
+- New FastAPI backend with all endpoints
+- Firebase authentication system
+- WebSocket infrastructure
 
-### External APIs
-- **Google Gemini**: AI model services
-- **Wikidata**: Entity enrichment
-- **Google Cloud Storage**: File storage
-- **PostgreSQL**: Primary database
-
-### Internal Components
-- **HTML Parser**: Content extraction
-- **Entity Handler**: Entity processing
-- **Search Handler**: Search functionality
-- **Chat Manager**: Conversation management
-- **Embedding Handler**: Vector generation
-
-## Future Enhancements
-
-### Planned Features
-- **Integrate with Firebase Authentication**: 
-- **Deploy on Google Cloud**: Use GCP with Cloud SQL and Cloud Run to host the service
-- **API Extensions**: Third-party integrations
-- **Mobile Support**: Mobile application development
-
-### Technical Improvements
-- **Caching Layer**: Redis for improved performance
-- **Microservices**: Service decomposition
-- **Real-time Processing**: Stream processing capabilities
-
-## Success Metrics
-
-### User Engagement
-- **Document Processing**: Number of documents processed per user
-- **Chat Interactions**: Frequency of chat usage
-- **Search Usage**: Search query frequency
-- **Session Duration**: Average user session length
-
-### Technical Performance
-- **Processing Speed**: Average document processing time
-- **Search Accuracy**: Relevance of search results
-- **System Reliability**: Uptime and error rates
-- **Scalability**: Performance under load
-
-### Business Impact
-- **User Retention**: Monthly active users
-- **Content Volume**: Total documents processed
-- **Feature Adoption**: Usage of different features
-- **User Satisfaction**: User feedback and ratings
-
-## Conclusion
-
-iCognition represents a comprehensive AI-powered document analysis platform that transforms static content into interactive knowledge. The system combines advanced AI capabilities with robust technical infrastructure to provide users with intelligent document processing, search, and conversational interfaces. The platform is designed for scalability, reliability, and user privacy while delivering powerful insights and analysis capabilities.
-
-
+## Timeline Considerations
+- Prioritize core functionality updates first
+- Implement new features incrementally
+- Maintain working state throughout development
+- Test integration at each major milestone

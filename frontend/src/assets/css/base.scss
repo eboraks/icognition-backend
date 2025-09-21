@@ -1,0 +1,237 @@
+/* color palette */
+:root {
+  --primary-color:#3497BE!important;      // Primary Main
+  --primary-200:#8AD3E1!important;        // Primary Light
+  --primary-500:#3497be!important;        // Primary Main
+  --primary-800:#054761!important;        // Primary Dark
+
+  --cyan-200:rgba(0,170,255,.95)!important;  // Select Light
+  --cyan-500:rgba(0,170,255,.9)!important;  // Select Main
+  --cyan-800:rgba(0,170,255,.85)!important;  // Select Dark
+
+  --blue-100:#CDE8FC;       // Info-Link Ultralight
+  --blue-200:#64B5F6;       // Info-Link Light
+  --blue-400:#0d7699;       // Info-Link Website
+  --blue-500:#2196F3;       // Info-Link Main
+  --blue-600:#2196f3;       // Info-Link Main
+  --blue-800:#1976D2;       // Info-Link Dark
+    
+  --red-200:#E57373;        // Error Light
+  --red-500:#F44336;        // Error Main
+  --red-800:#D32F2F;        // Error Dark
+  --red-900:#611A15;        // Error Text
+  
+  --teal-200:#65d7c0;       // Secondary Light
+  --teal-500:#29b998;       // Secondary Main
+  --teal-800:#26796c;       // Secondary Dark
+
+  --green-200:#96d7AC;      // Success Light
+  --green-500:#4CAF6E;      // Success Main
+  --green-800:#297945;      // Success Dark
+  --green-900:#1C4229;      // Success Text
+
+  --orange-200:#FFB74D;     // Warning Light
+  --orange-500:#FF9800;     // Warning Main
+  --orange-600: rgba(255, 94, 0, .73); // Notations/Comments
+  --orange-800:#F57C00;     // Warning Dark
+  --orange-900:#661F00;     // Warning Text
+
+  --surface-50: #F8FAFC;   // Slate
+  --surface-100: #F1F5F9;  // Slate
+  --surface-200: #E2E8F0;  // Slate
+  --surface-300: #CBD5E1;  // Slate
+  --surface-400: #93A3B8;  // Slate
+  --surface-500: #64748B;  // Slate
+  --surface-600: #465569;  // Slate
+  --surface-700: #324155;  // Slate
+  --surface-800: #1E293B;  // Slate
+  --surface-900: #0F172B;  // Slate
+
+  --vt-c-white: #ffffff;
+  --vt-c-white-soft: #f8f8f8;
+  --vt-c-white-mute: #f2f2f2;
+
+  --vt-c-black: #181818;
+  --vt-c-black-soft: #222222;
+  --vt-c-black-mute: #282828;
+
+  --vt-c-indigo: #2c3e50;
+
+  --vt-c-divider-light-1: rgba(60, 60, 60, 0.29);
+  --vt-c-divider-light-2: rgba(60, 60, 60, 0.12);
+  --vt-c-divider-dark-1: rgba(84, 84, 84, 0.65);
+  --vt-c-divider-dark-2: rgba(84, 84, 84, 0.48);
+
+  --vt-c-text-light-1: var(--vt-c-indigo);
+  --vt-c-text-light-2: rgba(60, 60, 60, 0.66);
+  --vt-c-text-dark-1: var(--vt-c-white);
+  --vt-c-text-dark-2: rgba(235, 235, 235, 0.64);
+}
+
+/* semantic color variables for this project */
+:root {
+  --color-background: var(--vt-c-white);
+  --color-background-soft: var(--vt-c-white-soft);
+  --color-background-mute: var(--vt-c-white-mute);
+
+  --color-border: var(--vt-c-divider-light-2);
+  --color-border-hover: var(--vt-c-divider-light-1);
+
+  --color-heading: var(--vt-c-text-light-1);
+  --color-text: var(--vt-c-text-light-1);
+
+  --section-gap: 160px;
+  --border-radius: 6px;
+
+  --p-breadcrumb-background: transparent;
+  --p-breadcrumb-padding: 0em 0em .25em .25em;
+  --p-button-icon-only-width: 2em;
+  --p-button-primary-background: var(--primary-color);
+  --p-button-primary-border-color: var(--primary-color);
+  --p-button-primary-hover-background: transparent;
+  --p-button-primary-hover-border-color: transparent;
+  --p-button-sm-font-size: .75rem;
+  --p-card-body-padding: .25rem;
+  --p-checkbox-height: 1rem;
+  --p-checkbox-width: 1rem;
+  --p-dialog-header-padding: .75rem 1.25rem;
+  --p-dialog-content-padding: .75rem;
+  --p-dialog-title-font-size: 1.75rem;
+  --p-dialog-title-font-weight: 400;
+  --p-inputtext-padding-y: .25rem;
+  --p-message-content-padding: .25rem .5rem;
+  --p-panel-content-padding: 0rem;
+  --p-panel-footer-padding: 0rem;
+  --p-panel-header-background: transparent;
+  --p-panel-header-padding: .5em;
+  --p-splitter-background: transparent;
+  --p-splitter-border-color: transparent;
+  --p-tabs-tab-active-border-color: var(--surface-300);
+  --p-tabs-tab-active-color: var(--vt-c-black);
+  --p-tabs-tab-background: var(--surface-300);
+  --p-tabs-tab-border-width: 1px 1px 0px 1px;
+  --p-tabs-tab-color: var(--surface-500);
+  --p-tabs-tab-font-weight: 100;
+  --p-tabs-tab-margin: 0 .15em;
+  --p-tabs-tab-padding: .75em 1em;
+  --p-tabs-tablist-background: transparent;
+  --p-tabs-tabpanel-background: var(--gray-200);
+  --p-tabs-tabpanel-padding: 0rem;
+  --p-tag-info-background: var(--blue-100);
+  --p-tag-info-color: var(--vt-c-black);
+  --p-tag-padding: .1rem .25rem;
+  --p-tag-primary-background: var(--blue-100);
+  --p-tag-primary-color: var(--vt-c-black);
+  --p-tree-node-color: var(--vt-c-white);
+  --p-tree-node-hover-background: transparent;
+  --p-tree-node-hover-color: var(--vt-c-white);
+  --p-tree-node-toggle-button-color: var(--vt-c-white);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-background: var(--vt-c-black);
+    --color-background-soft: var(--vt-c-black-soft);
+    --color-background-mute: var(--vt-c-black-mute);
+
+    --color-border: var(--vt-c-divider-dark-2);
+    --color-border-hover: var(--vt-c-divider-dark-1);
+
+    --color-heading: var(--vt-c-text-dark-1);
+    --color-text: var(--vt-c-text-dark-2);
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  font-weight: normal;
+}
+
+body {
+  min-height: 100vh;
+  color: var(--color-text);
+  background: var(--color-background);
+  transition:
+    color 0.5s,
+    background-color 0.5s;
+  line-height: 1.6;
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    'HarmoniaSans',
+    Roboto,
+    Oxygen,
+    Ubuntu,
+    Cantarell,
+    'Fira Sans',
+    'Droid Sans',
+    'Helvetica Neue',
+    sans-serif;
+  font-size: 15px;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+// Reader Background colors
+.bg-highlight {
+  background-color: rgba(70, 255, 0, .55);
+}
+
+.bg-playfill {
+  background-color: #F2FFEC;
+}
+
+.bg-reader {
+  background-color: #FFB74D;
+}
+
+.bg-stopfill {
+  background-color: #FFECEC;
+}
+
+// Ask iCognition Background colors
+.bg-header-selected {
+  background-color: #ADCEE5;
+}
+
+.bg-body-selected {
+  background-color: #E0F1FA;
+}
+
+.bg-provenance-highlighting {
+  background-color: rgba(33, 150, 243, .78);
+}
+
+.hero-background {
+  background-image:url(/src/assets/images/background/background-hero.png);
+  background-repeat:no-repeat;
+  background-size:cover
+}
+
+.footer {
+  p {
+    font-weight:600;
+
+    a {
+      font-weight:400;
+      color:#000;
+    }
+  }
+
+  h5 {
+    a {
+      font-size:.875em;
+      font-weight:400;
+      color:#000;
+    }
+  }
+
+  span {
+    color:#000;
+  }
+}

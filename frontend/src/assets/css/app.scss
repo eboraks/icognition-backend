@@ -1,0 +1,134 @@
+.route-app {
+    .app-header-routing {
+        display: flex!important;
+    }
+
+    .app-header-title {
+        display: block!important;
+
+        .header-title-logo {
+            padding-top: 0px!important;
+
+            img {
+                color: var(---vt-c-white);
+                max-height: 50px;
+                width: auto;
+            }
+        }
+    }
+
+    .app-profile {
+        display: block;
+
+        .p-button {
+            height: 2.25rem;
+            width: 2.25rem;
+        }
+    }
+
+    #body-library {
+        height: calc(100% - 84px - 72px);
+    }
+
+    .dialog-inner-scroll {
+        height: calc(100% - 68.8px);
+    }
+
+    .collectionHeightLarge {
+        height: calc(100% - 3.1em)!important;
+    }
+
+    #website-header {
+        height: 84px;
+    }
+
+    .p-button.button-library-tab {
+        background-color: var(---vt-c-white)!important;
+        color: var(--gray-400)!important;
+        
+        &.is-selected {
+            background-color: var(--blue-500)!important;
+            border-color: var(--blue-500)!important;
+
+            .p-button-label {
+                color: white;
+            }
+        }
+    }
+
+    .selectedRoute {
+        color: var(---vt-c-white)!important;
+    }
+
+    #siteWrapper {
+        height: 100vh !important;
+    }
+
+    .splitter-height {
+        height: calc(100% - 5.525em);
+    }
+
+    .splitter-panel-container-small {
+        flex-basis: 4em!important;
+    }
+
+    .splitter-panel-container-big {
+        flex-basis: calc(100% - 4.5em) !important
+    }
+
+    .splitter-panel-container-25 {
+        flex-basis: calc(25% - 4px)!important;
+    }
+
+    .splitter-panel-container-34 {
+        flex-basis: 34%!important;
+    }
+
+    .splitter-panel-container-66 {
+        flex-basis: 66%!important;
+    }
+
+    .splitter-panel-container-75 {
+        flex-basis: calc(75% - 4px)!important;
+    }
+
+    .splitter-panel-container-full {
+        flex-basis: 100%!important;
+
+        + div {
+            display: none;
+        }
+    }
+
+    .splitter-panel-container-none {
+        flex-basis: 0%!important;
+    }
+
+    textarea {
+        background-color: white;
+    }
+
+    .website-header-title {
+        display: none!important;
+    }
+
+    .website-login-logout {
+        display: none!important;
+    }
+
+    .webite-login-menu {
+        display: none!important;
+    }
+
+    #footer {
+        .section .content-wrapper .content > div {
+            padding: 1.5rem 0 !important;
+        }
+    }
+
+    .text-black-alpha-90 {
+        a {
+            color: rgba(0,0,0,0.9) !important;
+        }
+    }
+}

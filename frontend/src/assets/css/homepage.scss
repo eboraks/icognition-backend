@@ -1,0 +1,81 @@
+.route-website {
+    .app-header-routing {
+        display: none!important;
+    }
+
+    .app-header-title {
+        display: none!important;
+    }
+
+    .app-profile {
+        display: none!important;
+    }
+
+    .website-header-title {
+        display: block;
+        justify-content: center;
+    }
+
+    .website-login-logout {
+        display: block;
+    }
+
+    .webite-login-menu {
+        display: block;
+    }
+}
+
+.header-title-logo img {
+    max-height: 75px;
+    width: auto;
+}
+
+@media screen and (max-width: 767px) {
+    .header-title-logo img {
+        height: auto;
+        width: auto;
+        max-height: 60px;
+    }
+}
+
+.text-tertiary {
+    color: #83d5e8;
+}
+
+.border-top-6 {
+    border-top-width: 6px !important;
+    border-top-style: solid;
+}
+
+@media screen and (min-width: 768px) {
+    .content-transform-text {
+        max-width: 70%;
+    }
+}
+
+@media screen and (max-width: 767px) {
+    .p-card {
+        background-color: transparent;
+        box-shadow: none;
+
+        .p-card-content {
+            padding: .75rem 0!important;
+        }
+    }
+}
+
+@media screen and (min-width: 768px) {
+    .p-card {
+        background-color: transparent;
+        box-shadow: none;
+
+        .p-card-title {
+            height: 75px;
+        }
+
+        .p-card-content {
+            height: 220px;
+            padding: .75rem 0!important;
+        }
+    }
+}
