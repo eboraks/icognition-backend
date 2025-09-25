@@ -9,7 +9,7 @@ from sqlalchemy import select
 from datetime import datetime
 from pydantic import BaseModel, Field
 import uuid as uuid_pkg
-
+from sqlmodel import select
 from app.db.database import get_session
 from app.core.user_context import UserContext, get_authenticated_user_context, get_active_user_context
 from app.services.bookmark_service import BookmarkService
@@ -19,7 +19,9 @@ from app import app_logic, html_parser
 import app.getters as getter
 from app.services.content_analysis_service import get_content_analysis_service
 import app.embedding_handler as embedding_handler_module
-from app.models import Document, Bookmark
+from app.models import Document, Bookmark, PagePayload
+from app.services.document_service import DocumentService
+
 
 logger = get_logger(__name__)
 
@@ -29,7 +31,7 @@ embedding_handler = embedding_handler_module.EmbeddingHandler()
 
 async def _process_document_content(
     session: AsyncSession,
-    document_id: int,
+    document_id: str,
     title: Optional[str],
     url: Optional[str]
 ):
@@ -68,7 +70,7 @@ async def _process_document_content(
         # Update document with analysis results
         document.ai_is_about = analysis_result['summary']
         document.ai_bullet_points = analysis_result['bullet_points']
-        document.updated_at = datetime.utcnow()
+        document.updated_at = datetime.now()
         
         # Commit changes
         await session.commit()
@@ -209,8 +211,8 @@ class BookmarkResponse(BaseModel):
     processing_status: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
-    user_id: int
-
+    user_id: str
+    document_id: Optional[uuid_pkg.UUID] = None
 
 class BookmarkListResponse(BaseModel):
     """Bookmark list response model"""
@@ -243,7 +245,23 @@ async def create_bookmark(
         )
         existing_bookmark = existing_bookmark.scalar_one_or_none()
         
+        document_service = DocumentService(session)
         if existing_bookmark:
+            ## Get the document, and if it doesn't have AI content, re-analyze it
+            document = await document_service.get_document_by_id(
+                user_id=user_context.user_id,
+                document_id=existing_bookmark.document_id
+            )
+            if document is not None and (document.ai_is_about is None or document.ai_bullet_points is None):
+                background_tasks.add_task(
+                    _process_document_content,
+                    session,
+                    document.id,
+                    existing_bookmark.title,
+                    existing_bookmark.url
+                )
+                background_tasks.add_task(embedding_handler._find_documents_without_embeddings, user_context.user_id)
+
             logger.info(f"Duplicate bookmark found for URL: {bookmark_data.url}, returning existing bookmark")
             return BookmarkResponse(
                 id=existing_bookmark.id,
@@ -256,7 +274,8 @@ async def create_bookmark(
                 processing_status=existing_bookmark.processing_status,
                 created_at=existing_bookmark.created_at,
                 updated_at=existing_bookmark.updated_at,
-                user_id=existing_bookmark.user_id
+                user_id=existing_bookmark.user_id,
+                document_id=existing_bookmark.document_id
             )
         
         logger.info(f"No duplicate found, proceeding with bookmark creation for URL: {bookmark_data.url}")
@@ -281,7 +300,7 @@ async def create_bookmark(
         else:
             logger.info(f"Processing HTML content for URL: {bookmark_data.url}")
             # Create page object from URL (this extracts content)
-            from app.models import PagePayload
+            
             page_payload = PagePayload(
                 url=bookmark_data.url,
                 user_id=str(user_context.user_id),  # Convert to string for legacy compatibility
@@ -321,9 +340,8 @@ async def create_bookmark(
         await session.commit()
         await session.refresh(bookmark)
         
-        if _doc is not None:
+        if _doc is not None and (_doc.ai_is_about is None or _doc.ai_bullet_points is None):
             # Start background processing tasks
-            content_analysis_service = get_content_analysis_service()
             background_tasks.add_task(
                 _process_document_content,
                 session,
@@ -347,7 +365,8 @@ async def create_bookmark(
             processing_status="pending" if _doc else "not_processed",
             created_at=bookmark.created_at,
             updated_at=bookmark.updated_at,
-            user_id=bookmark.user_id
+            user_id=bookmark.user_id,
+            document_id=_doc.id if _doc else None
         )
             
     except HTTPException:
@@ -359,6 +378,60 @@ async def create_bookmark(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create bookmark"
+        )
+
+
+@router.get("/find", response_model=BookmarkResponse)
+async def find_bookmark(
+    url: str,
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    session: AsyncSession = Depends(get_session)
+):
+    """Find an existing bookmark by URL"""
+    try:
+        logger.info(f"Searching for bookmark with URL: {url}")
+        
+        # Search for existing bookmark with this URL and user
+        result = await session.execute(
+            select(Bookmark).where(
+                Bookmark.url == url,
+                Bookmark.user_id == user_context.user_id
+            )
+        )
+        existing_bookmark = result.scalar_one_or_none()
+        
+        if not existing_bookmark:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No bookmark found for URL: {url}"
+            )
+        
+        logger.info(f"Found bookmark: {existing_bookmark.id}")
+        
+        return BookmarkResponse(
+            id=existing_bookmark.id,
+            url=existing_bookmark.url,
+            title=existing_bookmark.title,
+            description=existing_bookmark.description,
+            content=existing_bookmark.content,
+            bookmark_metadata=existing_bookmark.bookmark_metadata,
+            is_processed=existing_bookmark.is_processed,
+            processing_status=existing_bookmark.processing_status,
+            created_at=existing_bookmark.created_at,
+            updated_at=existing_bookmark.updated_at,
+            user_id=existing_bookmark.user_id,
+            document_id=existing_bookmark.document_id
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error finding bookmark: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to find bookmark"
         )
 
 
@@ -374,7 +447,7 @@ async def create_simple_bookmark(
         
         bookmark = await BookmarkService.create_bookmark(
             session=session,
-            firebase_uid=user_context.firebase_uid,
+            user_id=user_context.user_id,
             url=bookmark_data.url,
             title=bookmark_data.title,
             description=bookmark_data.description,
@@ -435,7 +508,7 @@ async def get_user_bookmarks(
         
         total_count = await bookmark_service.count_user_bookmarks(
             session=session,
-            firebase_uid=user_context.firebase_uid,
+            user_id=user_context.user_id,
             is_processed=is_processed
         )
         
@@ -477,7 +550,7 @@ async def get_user_bookmarks(
 
 @router.get("/{bookmark_id}", response_model=BookmarkResponse)
 async def get_bookmark(
-    bookmark_id: int,
+    bookmark_id: uuid_pkg.UUID,
     user_context: UserContext = Depends(get_authenticated_user_context),
     session: AsyncSession = Depends(get_session)
 ):
@@ -522,7 +595,7 @@ async def get_bookmark(
 
 @router.put("/{bookmark_id}", response_model=BookmarkResponse)
 async def update_bookmark(
-    bookmark_id: int,
+    bookmark_id: uuid_pkg.UUID,
     bookmark_update: BookmarkUpdateRequest,
     user_context: UserContext = Depends(get_authenticated_user_context),
     session: AsyncSession = Depends(get_session)
@@ -534,7 +607,7 @@ async def update_bookmark(
         success = await bookmark_service.update_bookmark(
             session=session,
             bookmark_id=bookmark_id,
-            firebase_uid=user_context.firebase_uid,
+            user_id=user_context.user_id,
             title=bookmark_update.title,
             description=bookmark_update.description,
             content=bookmark_update.content,
@@ -551,7 +624,7 @@ async def update_bookmark(
         updated_bookmark = await bookmark_service.get_bookmark_by_id(
             session=session,
             bookmark_id=bookmark_id,
-            firebase_uid=user_context.firebase_uid
+            user_id=user_context.user_id
         )
         
         if not updated_bookmark:
@@ -585,7 +658,7 @@ async def update_bookmark(
 
 @router.delete("/{bookmark_id}")
 async def delete_bookmark(
-    bookmark_id: int,
+    bookmark_id: uuid_pkg.UUID,
     user_context: UserContext = Depends(get_authenticated_user_context),
     session: AsyncSession = Depends(get_session)
 ):
@@ -596,7 +669,7 @@ async def delete_bookmark(
         success = await bookmark_service.delete_bookmark(
             session=session,
             bookmark_id=bookmark_id,
-            firebase_uid=user_context.firebase_uid
+            user_id=user_context.user_id
         )
         
         if not success:
@@ -628,7 +701,7 @@ async def get_bookmarks_by_url(
         
         bookmarks = await bookmark_service.get_bookmarks_by_url(
             session=session,
-            firebase_uid=user_context.firebase_uid,
+            user_id=user_context.user_id,
             url=url
         )
         
@@ -695,8 +768,7 @@ async def _create_document_from_clean_text(
     Create Document directly from clean text content without Page object.
     This bypasses HTML parsing for iPhone app content.
     """
-    from sqlmodel import select
-    import datetime
+    
     
     logger.info(f"Creating document from clean text for URL: {bookmark_data.url}")
     
@@ -721,8 +793,8 @@ async def _create_document_from_clean_text(
         content_source="text",
         content=bookmark_data.content,
         user_id=user_context.user_id,
-        created_at=datetime.datetime.utcnow(),
-        updated_at=datetime.datetime.utcnow()
+        created_at=datetime.now(),
+        updated_at=datetime.now()
     )
     
     # Save to database
@@ -748,8 +820,6 @@ async def _create_document_from_page(
     """
     Create Document from Page object (HTML content).
     """
-    from sqlmodel import select
-    import datetime
     
     logger.info(f"Creating document from page for URL: {page.clean_url}")
     
@@ -774,8 +844,8 @@ async def _create_document_from_page(
         raw_html=page.html_root_element,
         content=page.content,
         user_id=user_context.user_id,
-        created_at=datetime.datetime.utcnow(),
-        updated_at=datetime.datetime.utcnow()
+        created_at=datetime.now(),
+        updated_at=datetime.now()
     )
     
     # Save to database

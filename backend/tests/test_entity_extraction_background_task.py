@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.main_new import app
 from app.db.database import get_session
-from app.models import NewEntity as Entity, EntityDocument, Document, NewUser as User
+from app.models import Entity, EntityDocument, Document, User
 from app.services.entity_extraction_service import get_entity_extraction_service
 from app.services.entity_extraction_task_manager import get_entity_extraction_task_manager
 from app.services.gemini_service import get_gemini_service

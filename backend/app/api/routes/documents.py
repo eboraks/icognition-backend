@@ -5,6 +5,7 @@ API routes for document management
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, and_
 
 from app.core.user_context import get_active_user_context, UserContext
 from app.db.database import get_session
@@ -18,8 +19,12 @@ from app.api.models.document_models import (
     DocumentContentResponse
 )
 from app.api.errors import NotFoundError, ValidationError
+from app.log import get_logger
+from app.models import Document
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+
+logger = get_logger(__name__)
 
 
 @router.post("/", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
@@ -87,7 +92,7 @@ async def create_document(
         # Handle direct content submission
         if request.content and request.content_type in ['html', 'text']:
             document = await document_service.create_document_from_content(
-                firebase_uid=user_context.firebase_uid,
+                firebase_uid=user_context.user_id,
                 content=request.content,
                 content_type=request.content_type,
                 title=request.title,
@@ -96,7 +101,7 @@ async def create_document(
         # Handle legacy raw_html field (for backward compatibility)
         elif request.raw_html:
             document = await document_service.create_document(
-                firebase_uid=user_context.firebase_uid,
+                firebase_uid=user_context.user_id,
                 url=str(request.url) if request.url else None,
                 title=request.title or "Untitled",
                 raw_html=request.raw_html,
@@ -105,7 +110,7 @@ async def create_document(
         # Handle URL-based document creation
         elif request.url:
             document = await document_service.create_document_from_url(
-                firebase_uid=user_context.firebase_uid,
+                firebase_uid=user_context.user_id,
                 url=str(request.url),
                 title=request.title
             )
@@ -115,7 +120,7 @@ async def create_document(
                 detail="Either URL or content must be provided"
             )
         
-        return DocumentResponse.from_orm(document)
+        return DocumentResponse.model_validate(document)
         
     except HTTPException:
         raise
@@ -140,7 +145,7 @@ async def get_documents(
         document_service = DocumentService(session)
         
         documents, total = await document_service.get_user_documents(
-            firebase_uid=user_context.firebase_uid,
+            firebase_uid=user_context.user_id,
             page=page,
             page_size=page_size,
             status=status_filter
@@ -149,7 +154,7 @@ async def get_documents(
         total_pages = (total + page_size - 1) // page_size
         
         return DocumentListResponse(
-            documents=[DocumentResponse.from_orm(doc) for doc in documents],
+            documents=[DocumentResponse.model_validate(doc) for doc in documents],
             total=total,
             page=page,
             page_size=page_size,
@@ -175,18 +180,19 @@ async def get_document(
         document_service = DocumentService(session)
         
         document = await document_service.get_document_by_id(
-            firebase_uid=user_context.firebase_uid,
+            user_id=user_context.user_id,
             document_id=document_id
         )
         
         if not document:
             raise NotFoundError(f"Document {document_id} not found")
         
-        return DocumentResponse.from_orm(document)
+        return DocumentResponse.model_validate(document)
         
     except NotFoundError:
         raise
     except Exception as e:
+        logger.error(f"Failed to retrieve document: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve document: {str(e)}"
@@ -209,7 +215,7 @@ async def update_document(
         update_data = request.dict(exclude_unset=True)
         
         document = await document_service.update_document(
-            firebase_uid=user_context.firebase_uid,
+            user_id=user_context.user_id,
             document_id=document_id,
             **update_data
         )
@@ -217,7 +223,7 @@ async def update_document(
         if not document:
             raise NotFoundError(f"Document {document_id} not found")
         
-        return DocumentResponse.from_orm(document)
+        return DocumentResponse.model_validate(document)
         
     except NotFoundError:
         raise
@@ -230,7 +236,7 @@ async def update_document(
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(
-    document_id: int,
+    document_id: str,  # Changed from int to str for UUID
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
 ):
@@ -240,7 +246,7 @@ async def delete_document(
         document_service = DocumentService(session)
         
         success = await document_service.delete_document(
-            firebase_uid=user_context.firebase_uid,
+            user_id=user_context.user_id,
             document_id=document_id
         )
         
@@ -268,11 +274,11 @@ async def get_documents_by_url(
         document_service = DocumentService(session)
         
         documents = await document_service.get_documents_by_url(
-            firebase_uid=user_context.firebase_uid,
+            user_id=user_context.user_id,
             url=url
         )
         
-        return [DocumentResponse.from_orm(doc) for doc in documents]
+        return [DocumentResponse.model_validate(doc) for doc in documents]
         
     except Exception as e:
         raise HTTPException(
@@ -293,11 +299,11 @@ async def get_documents_by_status(
         document_service = DocumentService(session)
         
         documents = await document_service.get_documents_by_status(
-            firebase_uid=user_context.firebase_uid,
+            user_id=user_context.user_id,
             status=status
         )
         
-        return [DocumentResponse.from_orm(doc) for doc in documents]
+        return [DocumentResponse.model_validate(doc) for doc in documents]
         
     except Exception as e:
         raise HTTPException(
@@ -308,7 +314,7 @@ async def get_documents_by_status(
 
 @router.get("/{document_id}/content", response_model=DocumentContentResponse)
 async def get_document_content(
-    document_id: int,
+    document_id: str,  # Changed from int to str for UUID
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
 ):
@@ -318,14 +324,14 @@ async def get_document_content(
         document_service = DocumentService(session)
         
         document = await document_service.get_document_by_id(
-            firebase_uid=user_context.firebase_uid,
+            user_id=user_context.user_id,
             document_id=document_id
         )
         
         if not document:
             raise NotFoundError(f"Document {document_id} not found")
         
-        return DocumentContentResponse.from_orm(document)
+        return DocumentContentResponse.model_validate(document)
         
     except NotFoundError:
         raise
@@ -338,7 +344,7 @@ async def get_document_content(
 
 @router.patch("/{document_id}/status", response_model=DocumentProcessingStatusResponse)
 async def update_document_status(
-    document_id: int,
+    document_id: str,  # Changed from int to str for UUID
     status: str,
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
@@ -349,7 +355,7 @@ async def update_document_status(
         document_service = DocumentService(session)
         
         document = await document_service.update_document_status(
-            firebase_uid=user_context.firebase_uid,
+            user_id=user_context.user_id,
             document_id=document_id,
             status=status
         )
@@ -357,7 +363,7 @@ async def update_document_status(
         if not document:
             raise NotFoundError(f"Document {document_id} not found")
         
-        return DocumentProcessingStatusResponse.from_orm(document)
+        return DocumentProcessingStatusResponse.model_validate(document)
         
     except NotFoundError:
         raise
@@ -370,7 +376,7 @@ async def update_document_status(
 
 @router.post("/{document_id}/fetch", response_model=DocumentResponse)
 async def fetch_document_content(
-    document_id: int,
+    document_id: str,  # Changed from int to str for UUID
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
 ):
@@ -380,14 +386,14 @@ async def fetch_document_content(
         document_service = DocumentService(session)
         
         document = await document_service.fetch_and_update_document(
-            firebase_uid=user_context.firebase_uid,
+            user_id=user_context.user_id,
             document_id=document_id
         )
         
         if not document:
             raise NotFoundError(f"Document {document_id} not found")
         
-        return DocumentResponse.from_orm(document)
+        return DocumentResponse.model_validate(document)
         
     except NotFoundError:
         raise
@@ -400,7 +406,7 @@ async def fetch_document_content(
 
 @router.post("/{document_id}/embed", response_model=DocumentResponse)
 async def generate_document_embedding(
-    document_id: int,
+    document_id: str,  # Changed from int to str for UUID
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
 ):
@@ -427,14 +433,14 @@ async def generate_document_embedding(
         # Get updated document
         document_service = DocumentService(session)
         document = await document_service.get_by_id(
-            firebase_uid=user_context.firebase_uid,
+            user_id=user_context.user_id,
             document_id=document_id
         )
         
         if not document:
             raise NotFoundError(f"Document {document_id} not found")
         
-        return DocumentResponse.from_orm(document)
+        return DocumentResponse.model_validate(document)
         
     except NotFoundError:
         raise
@@ -480,13 +486,13 @@ async def search_similar_documents(
         
         for similarity_result in search_result.results:
             document = await document_service.get_by_id(
-                firebase_uid=user_context.firebase_uid,
+                firebase_uid=user_context.user_id,
                 document_id=similarity_result.document_id
             )
             if document:
                 documents.append(document)
         
-        return [DocumentResponse.from_orm(doc) for doc in documents]
+        return [DocumentResponse.model_validate(doc) for doc in documents]
         
     except Exception as e:
         raise HTTPException(
@@ -556,7 +562,7 @@ async def get_embedding_statistics(
 
 @router.post("/{document_id}/validate", response_model=DocumentResponse)
 async def validate_document_content(
-    document_id: int,
+    document_id: str,  # Changed from int to str for UUID
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
 ):
@@ -567,7 +573,7 @@ async def validate_document_content(
         
         # Get the document
         document = await document_service.get_by_id(
-            firebase_uid=user_context.firebase_uid,
+            firebase_uid=user_context.user_id,
             document_id=document_id
         )
         
@@ -602,7 +608,7 @@ async def validate_document_content(
 
 @router.get("/{document_id}/validation-report")
 async def get_document_validation_report(
-    document_id: int,
+    document_id: str,  # Changed from int to str for UUID
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
 ):
@@ -613,7 +619,7 @@ async def get_document_validation_report(
         
         # Get the document
         document = await document_service.get_by_id(
-            firebase_uid=user_context.firebase_uid,
+            firebase_uid=user_context.user_id,
             document_id=document_id
         )
         
@@ -650,7 +656,7 @@ async def get_document_validation_report(
 
 @router.post("/{document_id}/analyze")
 async def analyze_document_content(
-    document_id: int,
+    document_id: str,  # Changed from int to str for UUID
     analysis_type: str = Query("bullet_points", description="Type of analysis to perform"),
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
@@ -662,7 +668,7 @@ async def analyze_document_content(
         
         # Verify document exists and belongs to user
         document = await document_service.get_document_by_id(
-            firebase_uid=user_context.firebase_uid,
+            firebase_uid=user_context.user_id,
             document_id=document_id
         )
         
@@ -680,7 +686,7 @@ async def analyze_document_content(
         task_manager = get_content_analysis_task_manager()
         
         result = await task_manager.analyze_document_async(
-            firebase_uid=user_context.firebase_uid,
+            firebase_uid=user_context.user_id,
             document_id=document_id,
             analysis_type=analysis_type
         )
@@ -706,7 +712,7 @@ async def analyze_document_content(
 
 @router.get("/{document_id}/analysis-report")
 async def get_document_analysis_report(
-    document_id: int,
+    document_id: str,  # Changed from int to str for UUID
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
 ):
@@ -717,7 +723,7 @@ async def get_document_analysis_report(
         
         # Get the document
         document = await document_service.get_document_by_id(
-            firebase_uid=user_context.firebase_uid,
+            firebase_uid=user_context.user_id,
             document_id=document_id
         )
         
@@ -754,7 +760,7 @@ async def get_document_analysis_report(
 
 @router.post("/batch/analyze")
 async def batch_analyze_documents(
-    document_ids: Optional[List[int]] = None,
+    document_ids: Optional[List[str]] = None,  # Changed from List[int] to List[str] for UUIDs
     analysis_type: str = Query("bullet_points", description="Type of analysis to perform"),
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
@@ -767,7 +773,7 @@ async def batch_analyze_documents(
         task_manager = get_content_analysis_task_manager()
         
         result = await task_manager.batch_analyze_documents_async(
-            firebase_uid=user_context.firebase_uid,
+            firebase_uid=user_context.user_id,
             document_ids=document_ids,
             analysis_type=analysis_type
         )
@@ -796,7 +802,7 @@ async def get_analysis_tasks(
         from app.services.content_analysis_task_manager import get_content_analysis_task_manager
         task_manager = get_content_analysis_task_manager()
         
-        tasks = task_manager.get_all_tasks(firebase_uid=user_context.firebase_uid)
+        tasks = task_manager.get_all_tasks(firebase_uid=user_context.user_id)
         
         return {
             "tasks": tasks,
@@ -827,7 +833,7 @@ async def get_analysis_task_status(
             raise NotFoundError(f"Task {task_id} not found")
         
         # Verify task belongs to user
-        if task_status.get('firebase_uid') != user_context.firebase_uid:
+        if task_status.get('firebase_uid') != user_context.user_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized to access this task"
@@ -862,7 +868,7 @@ async def cancel_analysis_task(
         if not task_status:
             raise NotFoundError(f"Task {task_id} not found")
         
-        if task_status.get('firebase_uid') != user_context.firebase_uid:
+        if task_status.get('firebase_uid') != user_context.user_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized to access this task"
@@ -912,7 +918,7 @@ async def get_analysis_statistics(
 
 @router.post("/{document_id}/extract-entities")
 async def extract_document_entities(
-    document_id: int,
+    document_id: str,  # Changed from int to str for UUID
     background_tasks: BackgroundTasks,
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
@@ -924,7 +930,7 @@ async def extract_document_entities(
         
         # Get the document
         document = await document_service.get_by_id(
-            firebase_uid=user_context.firebase_uid,
+            firebase_uid=user_context.user_id,
             document_id=document_id
         )
         
@@ -944,12 +950,12 @@ async def extract_document_entities(
         task_manager = get_entity_extraction_task_manager()
         
         # Start background task
-        task_id = f"entity_extraction_{user_context.firebase_uid}_{document_id}"
+        task_id = f"entity_extraction_{user_context.user_id}_{document_id}"
         
         # Add background task
         background_tasks.add_task(
             task_manager.extract_entities_async,
-            user_context.firebase_uid,
+            user_context.user_id,
             document_id,
             document.content
         )
@@ -975,7 +981,7 @@ async def extract_document_entities(
 
 @router.get("/{document_id}/entities")
 async def get_document_entities(
-    document_id: int,
+    document_id: str,  # Changed from int to str for UUID
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
 ):
@@ -986,7 +992,7 @@ async def get_document_entities(
         
         # Get the document
         document = await document_service.get_by_id(
-            firebase_uid=user_context.firebase_uid,
+            firebase_uid=user_context.user_id,
             document_id=document_id
         )
         
@@ -994,7 +1000,7 @@ async def get_document_entities(
             raise NotFoundError(f"Document {document_id} not found")
         
         # Import here to avoid circular imports
-        from app.db.models import Entity, EntityDocument
+        from app.models import Entity, EntityDocument
         
         # Get entities for this document
         query = select(Entity).join(EntityDocument).where(

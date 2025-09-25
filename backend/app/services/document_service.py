@@ -8,7 +8,7 @@ from sqlalchemy import select, func, and_
 from sqlalchemy.orm import selectinload
 import logging
 
-from app.models import Document, NewUser as User
+from app.models import Document, User
 from app.services.base_service import UserIsolatedService
 from app.services.web_fetcher import WebPageFetcher, fetch_web_page
 from app.services.user_service import UserService
@@ -26,7 +26,7 @@ class DocumentService(UserIsolatedService[Document]):
 
     async def create_document(
         self,
-        firebase_uid: str,
+        user_id: str,
         url: Optional[str] = None,
         title: str = "Untitled",
         raw_html: Optional[str] = None,
@@ -36,7 +36,7 @@ class DocumentService(UserIsolatedService[Document]):
         """Create a new document for a user"""
         
         # Get or create user
-        user = await UserService.get_or_create_user(self.session, firebase_uid)
+        user = await UserService.get_or_create_user(self.session, user_id)
         
         # Create document
         document_data = {
@@ -59,14 +59,14 @@ class DocumentService(UserIsolatedService[Document]):
 
     async def create_document_from_url(
         self,
-        firebase_uid: str,
+        user_id: str,
         url: str,
         title: Optional[str] = None
     ) -> Document:
         """Create a new document by fetching content from URL"""
         
         # Get or create user
-        user = await UserService.get_or_create_user(self.session, firebase_uid)
+        user = await UserService.get_or_create_user(self.session, user_id)
         
         # Update status to fetching
         document_data = {
@@ -163,7 +163,7 @@ class DocumentService(UserIsolatedService[Document]):
 
     async def create_document_from_content(
         self,
-        firebase_uid: str,
+        user_id: str,
         content: str,
         content_type: str,
         title: Optional[str] = None,
@@ -172,7 +172,7 @@ class DocumentService(UserIsolatedService[Document]):
         """Create a new document from direct content (HTML or text)"""
         
         # Get or create user
-        user = await UserService.get_or_create_user(self.session, firebase_uid)
+        user = await UserService.get_or_create_user(self.session, user_id)
         
         # Process content based on type
         if content_type == "html":
@@ -306,12 +306,12 @@ class DocumentService(UserIsolatedService[Document]):
 
     async def fetch_and_update_document(
         self,
-        firebase_uid: str,
-        document_id: int
+        user_id: str,
+        document_id: str  # Changed from int to str for UUID
     ) -> Optional[Document]:
         """Fetch content for an existing document"""
         
-        document = await self.get_document_by_id(firebase_uid, document_id)
+        document = await self.get_document_by_id(user_id, document_id)
         if not document:
             return None
         
@@ -403,14 +403,16 @@ class DocumentService(UserIsolatedService[Document]):
 
     async def get_user_documents(
         self,
-        firebase_uid: str,
+        user_id: str,
         page: int = 1,
         page_size: int = 20,
         status: Optional[str] = None
     ) -> Tuple[List[Document], int]:
         """Get paginated list of user documents"""
         
-        user = await self._get_user_by_firebase_uid(firebase_uid)
+        user = await UserService.get_user_by_firebase_uid(self.session, user_id)
+        if not user:
+            return [], 0
         
         # Build query
         query = select(Document).where(Document.user_id == user.id)
@@ -437,15 +439,13 @@ class DocumentService(UserIsolatedService[Document]):
 
     async def get_document_by_id(
         self,
-        firebase_uid: str,
+        user_id: str,
         document_id: str  # Changed from int to str for UUID
     ) -> Optional[Document]:
         """Get a specific document by ID for a user"""
         
-        user = await self._get_user_by_firebase_uid(firebase_uid)
-        
         query = select(Document).where(
-            and_(Document.id == document_id, Document.user_id == user.id)
+            and_(Document.id == document_id, Document.user_id == user_id)
         )
         
         result = await self.session.execute(query)
@@ -453,13 +453,13 @@ class DocumentService(UserIsolatedService[Document]):
 
     async def update_document(
         self,
-        firebase_uid: str,
+        user_id: str,
         document_id: str,  # Changed from int to str for UUID
         **update_data
     ) -> Optional[Document]:
         """Update document metadata"""
         
-        document = await self.get_document_by_id(firebase_uid, document_id)
+        document = await self.get_document_by_id(user_id, document_id)
         if not document:
             return None
         
@@ -476,12 +476,12 @@ class DocumentService(UserIsolatedService[Document]):
 
     async def delete_document(
         self,
-        firebase_uid: str,
+        user_id: str,
         document_id: str  # Changed from int to str for UUID
     ) -> bool:
         """Delete a document"""
         
-        document = await self.get_document_by_id(firebase_uid, document_id)
+        document = await self.get_document_by_id(user_id, document_id)
         if not document:
             return False
         
@@ -493,12 +493,14 @@ class DocumentService(UserIsolatedService[Document]):
 
     async def get_documents_by_url(
         self,
-        firebase_uid: str,
+        user_id: str,
         url: str
     ) -> List[Document]:
         """Get all documents for a specific URL"""
         
-        user = await self._get_user_by_firebase_uid(firebase_uid)
+        user = await UserService.get_user_by_firebase_uid(self.session, user_id)
+        if not user:
+            return []
         
         query = select(Document).where(
             and_(Document.user_id == user.id, Document.url == url)
@@ -509,14 +511,14 @@ class DocumentService(UserIsolatedService[Document]):
 
     async def update_document_status(
         self,
-        firebase_uid: str,
-        document_id: int,
+        user_id: str,
+        document_id: str,  # Changed from int to str for UUID
         status: str,
         **metadata_updates
     ) -> Optional[Document]:
         """Update document processing status"""
         
-        document = await self.get_document_by_id(firebase_uid, document_id)
+        document = await self.get_document_by_id(user_id, document_id)
         if not document:
             return None
         
@@ -536,12 +538,14 @@ class DocumentService(UserIsolatedService[Document]):
 
     async def get_documents_by_status(
         self,
-        firebase_uid: str,
+        user_id: str,
         status: str
     ) -> List[Document]:
         """Get all documents with a specific status"""
         
-        user = await self._get_user_by_firebase_uid(firebase_uid)
+        user = await UserService.get_user_by_firebase_uid(self.session, user_id)
+        if not user:
+            return []
         
         query = select(Document).where(
             and_(Document.user_id == user.id, Document.status == status)
@@ -552,12 +556,14 @@ class DocumentService(UserIsolatedService[Document]):
 
     async def count_user_documents(
         self,
-        firebase_uid: str,
+        user_id: str,
         status: Optional[str] = None
     ) -> int:
         """Count user documents, optionally filtered by status"""
         
-        user = await self._get_user_by_firebase_uid(firebase_uid)
+        user = await UserService.get_user_by_firebase_uid(self.session, user_id)
+        if not user:
+            return 0
         
         query = select(func.count(Document.id)).where(Document.user_id == user.id)
         

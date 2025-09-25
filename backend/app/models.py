@@ -50,7 +50,7 @@ class Document_Entity_Link(SQLModel, table=True):
         default=None, foreign_key="document.id", primary_key=True
     )
     entity_id: Optional[str] = Field(
-        default=None, foreign_key="entity.id", primary_key=True
+        default=None, foreign_key="entities.id", primary_key=True
     )
 
 
@@ -60,43 +60,15 @@ class Entity_User_Link(SQLModel, table=True):
     """
 
     entity_id: Optional[str] = Field(
-        default=None, foreign_key="entity.id", primary_key=True
+        default=None, foreign_key="entities.id", primary_key=True
     )
     user_id: Optional[str] = Field(
-        default=None, foreign_key="user.id", primary_key=True
+        default=None, foreign_key="users.id", primary_key=True
     )
 
 
 
-class Entity(SQLModel, table=True):
-    """
-    Represents an entity with its ID, document ID, name, description, source, type, Wikidata ID, and score.
-    """
-
-    id: str =  Field(primary_key=True)
-    name: str = Field(nullable=False)
-    normalized_label: str = Field(default=None, nullable=True)
-    verbatim_text: str = Field(default=None, nullable=True)
-    description: str = Field(default=None, nullable=True)
-    source: str = Field(default=None, nullable=True)
-    type: str = Field(nullable=False)
-    wikidata_id: str = Field(default=None, nullable=True)
-    wikidata_label: str = Field(default=None, nullable=True)
-    wikidata_description: str = Field(default=None, nullable=True)
-    wikidata_pageviews: int = Field(default=None, nullable=True)
-    wikidata_instance_of: List[str] = Field(default=[], sa_column=Column(ARRAY(String)))
-    update_at: datetime = Field(default=datetime.now(), nullable=True)
-    aliases: List[dict] = Field(default=[], sa_column=Column(JSONB))
-    description_vector: List[float] = Field(default=[], sa_column=Column(Vector(3072), nullable=True))
-    
-    ## Many to Many relationships between entities documents
-    documents: list["Document"] = Relationship(
-        back_populates="entities", link_model=Document_Entity_Link
-    )
-  
-    users: list["User"] = Relationship(
-        back_populates="entities", link_model=Entity_User_Link
-    )
+# Removed old Entity model - using NewEntity as Entity instead
 
     def to_node(self):
         return TreeNode(
@@ -154,7 +126,7 @@ class Document(SQLModel, table=True):
     )
     
     # User association (from new model)
-    user_id: Optional[int] = Field(default=None, foreign_key="users.id", index=True, nullable=True)
+    user_id: Optional[str] = Field(default=None, foreign_key="users.id", index=True, nullable=True)
     
     # Document identification
     title: str = Field(default=None, nullable=True)
@@ -197,10 +169,7 @@ class Document(SQLModel, table=True):
     # Remove original_text, html_elements, and raw_answer as they're stored elsewhere
     # These fields will be migrated out later
 
-    ## Many to Many relationships between documents and entities
-    entities: list["Entity"] = Relationship(
-        back_populates="documents", link_model=Document_Entity_Link
-    )
+    # Removed entities relationship to avoid conflicts with Entity model
     qans: list["Question_Answer"] = Relationship(back_populates="document")
     
     def to_display(self) -> dict:
@@ -622,18 +591,6 @@ class Page(SQLModel, table=False):
     html_root_element: Optional[str] = Field(default=None)
 
 
-class User(SQLModel, table=True):
-    """
-    Represents a user with its ID, email, password, and role.
-    """
-
-    id: str = Field(primary_key=True)
-    first_name: str = Field(nullable=True)
-    last_name: str = Field(nullable=True)
-
-    entities: list["Entity"] = Relationship(
-        back_populates="users", link_model=Entity_User_Link
-    )
 
 
 class Embedding(SQLModel, table=True):
@@ -935,24 +892,21 @@ class TestEntity(SQLModel, table=True):
     entity_metadata: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
 
 
-# New User model (Firebase-based) - keeping both for compatibility
-class NewUser(SQLModel, table=True):
-    """New User model for Firebase authentication and user management"""
+# User model (Firebase-based)
+class User(SQLModel, table=True):
+    """User model for Firebase authentication and user management"""
     
     __tablename__ = "users"
     
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: Optional[str] = Field(default=None, primary_key=True)
     created_at: Optional[datetime] = Field(
-        default_factory=datetime.utcnow,
+        default_factory=datetime.now,
         sa_column=Column(DateTime(timezone=True), server_default=func.now())
     )
     updated_at: Optional[datetime] = Field(
-        default_factory=datetime.utcnow,
+        default_factory=datetime.now,
         sa_column=Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     )
-    
-    # Firebase UID - unique identifier from Firebase Auth
-    firebase_uid: str = Field(max_length=128, index=True, unique=True)
     
     # User profile information
     email: Optional[str] = Field(max_length=255, index=True)
@@ -961,7 +915,7 @@ class NewUser(SQLModel, table=True):
     
     # User activity tracking
     last_active: Optional[datetime] = Field(
-        default_factory=datetime.utcnow,
+        default_factory=datetime.now,
         sa_column=Column(DateTime(timezone=True), server_default=func.now())
     )
     
@@ -994,7 +948,7 @@ class Bookmark(SQLModel, table=True):
     )
 
     # User association
-    user_id: int = Field(foreign_key="users.id", index=True)
+    user_id: str = Field(foreign_key="users.id", index=True)
 
     # Document association
     document_id: Optional[uuid_pkg.UUID] = Field(foreign_key="document.id", index=True)
@@ -1014,8 +968,8 @@ class Bookmark(SQLModel, table=True):
 
 
 # New Entity model (from app.db.models)
-class NewEntity(SQLModel, table=True):
-    """New Entity model for extracted entities from documents"""
+class Entity(SQLModel, table=True):
+    """Entity model for extracted entities from documents"""
     
     __tablename__ = "entities"
     
@@ -1028,7 +982,7 @@ class NewEntity(SQLModel, table=True):
     wikidata_description: Optional[str] = Field(default=None, sa_column=Column(Text))
     aliases: Optional[List[str]] = Field(default=None, sa_column=Column(ARRAY(Text)))
     vector: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(768)))
-    user_id: int = Field(foreign_key="users.id", index=True)
+    user_id: str = Field(foreign_key="users.id", index=True)
     created_at: Optional[datetime] = Field(
         default_factory=datetime.utcnow,
         sa_column=Column(DateTime(timezone=True), server_default=func.now())
@@ -1044,7 +998,7 @@ class EntityDocument(SQLModel, table=True):
     
     __tablename__ = "entity_documents"
     
-    entity_id: int = Field(foreign_key="entities.id", primary_key=True)
+    entity_id: str = Field(foreign_key="entities.id", primary_key=True)
     document_id: uuid_pkg.UUID = Field(foreign_key="document.id", primary_key=True)  # Changed to reference document table
     relevance: float = Field(default=0.0)
     created_at: Optional[datetime] = Field(

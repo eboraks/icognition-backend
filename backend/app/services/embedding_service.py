@@ -14,7 +14,7 @@ from sqlalchemy import select, func, text
 from sqlmodel import select as sqlmodel_select
 
 from app.services.gemini_service import GeminiService, GeminiModel, get_gemini_service
-from app.models import Document, NewUser as User
+from app.models import Document, User
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)

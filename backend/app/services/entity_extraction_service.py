@@ -10,7 +10,7 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
 
-from app.models import NewEntity as Entity, EntityDocument, Document, NewUser as User
+from app.models import Entity, EntityDocument, Document, User
 from app.services.base_service import UserIsolatedService
 from app.services.gemini_service import get_gemini_service, GeminiModel
 from app.services.user_service import UserService

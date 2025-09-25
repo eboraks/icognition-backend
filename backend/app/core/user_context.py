@@ -7,7 +7,7 @@ from fastapi import Request, HTTPException, status, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 
-from app.models import NewUser as User
+from app.models import User
 from app.db.database import get_session
 from app.services.user_service import UserService
 from app.utils.logging import get_logger
@@ -19,13 +19,12 @@ logger = get_logger(__name__)
 class UserContext:
     """User context for request handling"""
     
-    def __init__(self, user: Optional[User] = None, firebase_uid: Optional[str] = None):
+    def __init__(self, user: Optional[User] = None):
         self.user = user
-        self.firebase_uid = firebase_uid
         self.is_authenticated = user is not None
     
     @property
-    def user_id(self) -> Optional[int]:
+    def user_id(self) -> Optional[str]:
         """Get user ID if authenticated"""
         return self.user.id if self.user else None
     
@@ -108,7 +107,11 @@ class UserContextManager:
         """Require user to be active, raise HTTPException if not"""
         UserContextManager.require_authentication(user_context)
         
-        if not user_context.user.is_active:
+        # Skip active check if auth is disabled
+        if settings.DISABLE_AUTH:
+            return
+            
+        if not user_context.user or not user_context.user.is_active:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="User account is deactivated"
@@ -138,13 +141,13 @@ async def get_authenticated_user_context(
         # Create a simple mock user object for testing
         class MockUser:
             def __init__(self):
-                self.id = 1
+                self.id = "test-user-id"  # Simple test user ID
                 self.email = "test@example.com"
                 self.name = "Test User"
                 self.is_active = True
         
         mock_user = MockUser()
-        user_context = UserContext(user=mock_user, firebase_uid="test-firebase-uid")
+        user_context = UserContext(user=mock_user)
     
     UserContextManager.require_authentication(user_context)
     return user_context
@@ -156,5 +159,21 @@ async def get_active_user_context(
 ) -> UserContext:
     """FastAPI dependency to get active user context"""
     user_context = await UserContextManager.get_user_from_request(request, session)
+    
+    # If auth is disabled, create a default test user context
+    if settings.DISABLE_AUTH:
+        logger.warning("Creating default test user context (DISABLE_AUTH enabled)")
+        
+        # Create a simple mock user object for testing
+        class MockUser:
+            def __init__(self):
+                self.id = "test-user-id"  # Simple test user ID
+                self.email = "test@example.com"
+                self.name = "Test User"
+                self.is_active = True
+        
+        mock_user = MockUser()
+        user_context = UserContext(user=mock_user)
+    
     UserContextManager.require_active_user(user_context)
     return user_context

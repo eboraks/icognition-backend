@@ -86,9 +86,9 @@ app.add_exception_handler(Exception, http_error_handler)
 app.add_exception_handler(RequestValidationError, validation_error_handler)
 
 # Register API routes
-app.include_router(users.router, prefix="/api/v1")
+app.include_router(users.router)
 app.include_router(bookmarks.router)
-app.include_router(documents.router, prefix="/api/v1")
+app.include_router(documents.router)
 
 
 @app.get("/")

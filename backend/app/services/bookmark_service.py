@@ -9,7 +9,7 @@ from sqlalchemy import select, update, delete
 from sqlalchemy.exc import IntegrityError
 import logging
 
-from app.models import Bookmark, NewUser as User
+from app.models import Bookmark, User
 from app.services.user_service import UserService
 from app.services.base_service import UserIsolatedService, DataIsolationValidator
 from app.utils.logging import get_logger

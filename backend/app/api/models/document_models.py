@@ -6,7 +6,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, HttpUrl, Field, field_validator, model_validator, ConfigDict
 from app.models import Document
-
+import uuid as uuid_pkg
 
 class DocumentCreateRequest(BaseModel):
     """Request model for creating a new document"""
@@ -51,10 +51,9 @@ class DocumentCreateRequest(BaseModel):
 class DocumentResponse(BaseModel):
     """Response model for document data"""
     
-    id: int
-    created_at: datetime
+    id: uuid_pkg.UUID
     updated_at: datetime
-    user_id: int
+    user_id: str
     url: Optional[str] = None
     title: str
     content_source: str
@@ -63,8 +62,9 @@ class DocumentResponse(BaseModel):
     description: Optional[str] = None
     keywords: Optional[List[str]] = None
     content: Optional[str] = None
-    status: str
     document_metadata: Optional[Dict[str, Any]] = None
+    ai_is_about: Optional[str] = None
+    ai_bullet_points: Optional[List[str]] = None
     
     model_config = ConfigDict(from_attributes=True)
 
@@ -99,7 +99,7 @@ class DocumentUpdateRequest(BaseModel):
 class DocumentProcessingStatusResponse(BaseModel):
     """Response model for document processing status"""
     
-    id: int
+    id: uuid_pkg.UUID
     status: str
     updated_at: datetime
     document_metadata: Optional[Dict[str, Any]] = None
@@ -110,7 +110,7 @@ class DocumentProcessingStatusResponse(BaseModel):
 class DocumentContentResponse(BaseModel):
     """Response model for document content (for analysis)"""
     
-    id: int
+    id: uuid_pkg.UUID
     title: str
     content: str
     author: Optional[str] = None

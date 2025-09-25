@@ -9,7 +9,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 import logging
 
-from app.models import NewUser as User
+from app.models import User
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)

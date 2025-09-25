@@ -8,7 +8,7 @@ from sqlalchemy import select, and_
 from fastapi import HTTPException, status
 import logging
 
-from app.db.models import Document, Bookmark, User
+from app.models import Document, Bookmark, User
 from app.services.base_service import UserIsolatedService, SecurityError
 from app.services.user_service import UserService
 from app.core.security_config import security_auditor, SecurityLevel
