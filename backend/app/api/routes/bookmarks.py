@@ -100,7 +100,7 @@ async def re_analyze_bookmark(
         result = await session.execute(
             select(Bookmark).where(
                 Bookmark.id == bookmark_id,
-                Bookmark.user_id == user_context.user_id
+                Bookmark.user_id == user_context.user.id
             )
         )
         bookmark = result.scalar_one_or_none()
@@ -143,30 +143,6 @@ async def re_analyze_bookmark(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to re-trigger analysis"
         )
-
-@router.post("/create-test-user")
-async def create_test_user(session: AsyncSession = Depends(get_session)):
-    """Create a test user for testing purposes"""
-    from app.services.user_service import UserService
-    
-    try:
-        # Check if test user already exists
-        existing_user = await UserService.get_user_by_email(session, "test@example.com")
-        if existing_user:
-            return {"message": "Test user already exists", "user_id": existing_user.id}
-        
-        # Create test user
-        test_user = await UserService.create_user(
-            session,
-            email="test@example.com",
-            name="Test User",
-            firebase_uid="test-firebase-uid"
-        )
-        
-        return {"message": "Test user created", "user_id": test_user.id}
-    except Exception as e:
-        return {"error": str(e)}
-
 
 @router.get("/test-auth")
 async def test_auth_disabled():
@@ -225,7 +201,7 @@ class BookmarkListResponse(BaseModel):
     has_previous: bool
 
 
-@router.post("/", response_model=BookmarkResponse)
+@router.post("/", response_model=BookmarkResponse, status_code=201)
 async def create_bookmark(
     bookmark_data: BookmarkCreateRequest,
     background_tasks: BackgroundTasks,
@@ -240,7 +216,7 @@ async def create_bookmark(
         existing_bookmark = await session.execute(
             select(Bookmark).where(
                 Bookmark.url == bookmark_data.url,
-                Bookmark.user_id == user_context.user_id
+                Bookmark.user_id == user_context.user.id
             )
         )
         existing_bookmark = existing_bookmark.scalar_one_or_none()
@@ -249,7 +225,7 @@ async def create_bookmark(
         if existing_bookmark:
             ## Get the document, and if it doesn't have AI content, re-analyze it
             document = await document_service.get_document_by_id(
-                user_id=user_context.user_id,
+                user_id=user_context.user.id,
                 document_id=existing_bookmark.document_id
             )
             if document is not None and (document.ai_is_about is None or document.ai_bullet_points is None):
@@ -260,7 +236,7 @@ async def create_bookmark(
                     existing_bookmark.title,
                     existing_bookmark.url
                 )
-                background_tasks.add_task(embedding_handler._find_documents_without_embeddings, user_context.user_id)
+                background_tasks.add_task(embedding_handler._find_documents_without_embeddings, user_context.user.id)
 
             logger.info(f"Duplicate bookmark found for URL: {bookmark_data.url}, returning existing bookmark")
             return BookmarkResponse(
@@ -303,7 +279,7 @@ async def create_bookmark(
             
             page_payload = PagePayload(
                 url=bookmark_data.url,
-                user_id=str(user_context.user_id),  # Convert to string for legacy compatibility
+                user_id=str(user_context.user.id),  # Convert to string for legacy compatibility
                 title=bookmark_data.title,
                 description=bookmark_data.description,
                 content=bookmark_data.content
@@ -331,7 +307,7 @@ async def create_bookmark(
             description=bookmark_data.description,
             content=bookmark_data.content,
             bookmark_metadata=bookmark_data.metadata or {},
-            user_id=user_context.user_id,
+            user_id=user_context.user.id,
             document_id=_doc.id if _doc else None
         )
         
@@ -351,7 +327,7 @@ async def create_bookmark(
             )
             
             # Find documents without embeddings
-            background_tasks.add_task(embedding_handler._find_documents_without_embeddings, user_context.user_id)
+            background_tasks.add_task(embedding_handler._find_documents_without_embeddings, user_context.user.id)
         
         # Return bookmark response
         return BookmarkResponse(
@@ -383,19 +359,19 @@ async def create_bookmark(
 
 @router.get("/find", response_model=BookmarkResponse)
 async def find_bookmark(
-    url: str,
+    query: str = Query(..., description="URL to search for"),
     user_context: UserContext = Depends(get_authenticated_user_context),
     session: AsyncSession = Depends(get_session)
 ):
     """Find an existing bookmark by URL"""
     try:
-        logger.info(f"Searching for bookmark with URL: {url}")
+        logger.info(f"Searching for bookmark with URL: {query}")
         
         # Search for existing bookmark with this URL and user
         result = await session.execute(
             select(Bookmark).where(
-                Bookmark.url == url,
-                Bookmark.user_id == user_context.user_id
+                Bookmark.url == query,
+                Bookmark.user_id == user_context.user.id
             )
         )
         existing_bookmark = result.scalar_one_or_none()
@@ -403,7 +379,7 @@ async def find_bookmark(
         if not existing_bookmark:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No bookmark found for URL: {url}"
+                detail=f"No bookmark found for URL: {query}"
             )
         
         logger.info(f"Found bookmark: {existing_bookmark.id}")
@@ -435,53 +411,6 @@ async def find_bookmark(
         )
 
 
-@router.post("/simple", response_model=BookmarkResponse)
-async def create_simple_bookmark(
-    bookmark_data: BookmarkCreateRequest,
-    user_context: UserContext = Depends(get_authenticated_user_context),
-    session: AsyncSession = Depends(get_session)
-):
-    """Create a simple bookmark without document processing (for manual bookmarks)"""
-    try:
-        bookmark_service = BookmarkService()
-        
-        bookmark = await BookmarkService.create_bookmark(
-            session=session,
-            user_id=user_context.user_id,
-            url=bookmark_data.url,
-            title=bookmark_data.title,
-            description=bookmark_data.description,
-            content=bookmark_data.content,
-            metadata=bookmark_data.metadata
-        )
-        
-        if not bookmark:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create bookmark"
-            )
-        
-        return BookmarkResponse(
-            id=bookmark.id,
-            url=bookmark.url,
-            title=bookmark.title,
-            description=bookmark.description,
-            content=bookmark.content,
-            bookmark_metadata=bookmark.bookmark_metadata,
-            is_processed=bookmark.is_processed,
-            processing_status=bookmark.processing_status,
-            created_at=bookmark.created_at,
-            updated_at=bookmark.updated_at,
-            user_id=bookmark.user_id
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error creating simple bookmark: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create bookmark"
-        )
 
 
 @router.get("/", response_model=BookmarkListResponse)
@@ -500,7 +429,7 @@ async def get_user_bookmarks(
         
         bookmarks = await bookmark_service.get_user_bookmarks(
             session=session,
-            firebase_uid=user_context.firebase_uid,
+            firebase_uid=user_context.user.id,
             limit=page_size,
             offset=offset,
             is_processed=is_processed
@@ -508,7 +437,7 @@ async def get_user_bookmarks(
         
         total_count = await bookmark_service.count_user_bookmarks(
             session=session,
-            user_id=user_context.user_id,
+            firebase_uid=user_context.user.id,
             is_processed=is_processed
         )
         
@@ -561,7 +490,7 @@ async def get_bookmark(
         bookmark = await bookmark_service.get_bookmark_by_id(
             session=session,
             bookmark_id=bookmark_id,
-            firebase_uid=user_context.firebase_uid
+            firebase_uid=user_context.user.id
         )
         
         if not bookmark:
@@ -607,7 +536,7 @@ async def update_bookmark(
         success = await bookmark_service.update_bookmark(
             session=session,
             bookmark_id=bookmark_id,
-            user_id=user_context.user_id,
+            firebase_uid=user_context.user.id,
             title=bookmark_update.title,
             description=bookmark_update.description,
             content=bookmark_update.content,
@@ -624,7 +553,7 @@ async def update_bookmark(
         updated_bookmark = await bookmark_service.get_bookmark_by_id(
             session=session,
             bookmark_id=bookmark_id,
-            user_id=user_context.user_id
+            firebase_uid=user_context.user.id
         )
         
         if not updated_bookmark:
@@ -669,7 +598,7 @@ async def delete_bookmark(
         success = await bookmark_service.delete_bookmark(
             session=session,
             bookmark_id=bookmark_id,
-            user_id=user_context.user_id
+            firebase_uid=user_context.user.id
         )
         
         if not success:
@@ -701,7 +630,7 @@ async def get_bookmarks_by_url(
         
         bookmarks = await bookmark_service.get_bookmarks_by_url(
             session=session,
-            user_id=user_context.user_id,
+            firebase_uid=user_context.user.id,
             url=url
         )
         
@@ -777,7 +706,7 @@ async def _create_document_from_clean_text(
     result = await session.execute(
         select(Document).where(
             Document.url == clean_url,
-            Document.user_id == user_context.user_id
+            Document.user_id == user_context.user.id
         )
     )
     existing_doc = result.scalar_one_or_none()
@@ -792,7 +721,7 @@ async def _create_document_from_clean_text(
         url=clean_url,
         content_source="text",
         content=bookmark_data.content,
-        user_id=user_context.user_id,
+        user_id=user_context.user.id,
         created_at=datetime.now(),
         updated_at=datetime.now()
     )
@@ -827,7 +756,7 @@ async def _create_document_from_page(
     result = await session.execute(
         select(Document).where(
             Document.url == page.clean_url,
-            Document.user_id == user_context.user_id
+            Document.user_id == user_context.user.id
         )
     )
     existing_doc = result.scalar_one_or_none()
@@ -842,8 +771,8 @@ async def _create_document_from_page(
         url=page.clean_url,
         content_source="html",
         raw_html=page.html_root_element,
-        content=page.content,
-        user_id=user_context.user_id,
+        content=page.full_text,
+        user_id=user_context.user.id,
         created_at=datetime.now(),
         updated_at=datetime.now()
     )

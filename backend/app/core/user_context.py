@@ -1,5 +1,5 @@
 """
-User context management for request handling
+User context management for request handling with Firebase authentication
 """
 
 from typing import Optional, Dict, Any
@@ -12,6 +12,7 @@ from app.db.database import get_session
 from app.services.user_service import UserService
 from app.utils.logging import get_logger
 from app.core.config import settings
+from app.core.firebase_auth import firebase_auth
 
 logger = get_logger(__name__)
 
@@ -49,40 +50,50 @@ class UserContextManager:
         firebase_uid: Optional[str] = None
     ) -> UserContext:
         """
-        Extract user context from request.
-        This is where we'll integrate with Firebase authentication later.
-        For now, we'll use a placeholder approach.
+        Extract user context from request using Firebase authentication.
         """
         try:
-            # TODO: Replace with actual Firebase token validation
-            # For now, we'll extract from headers or use provided firebase_uid
+            decoded_token = None
             
             if not firebase_uid:
-                # Try to get from Authorization header
+                # Try to get from Authorization header and verify Firebase token
                 auth_header = request.headers.get("Authorization")
                 if auth_header and auth_header.startswith("Bearer "):
-                    # Placeholder: extract Firebase UID from token
-                    # In real implementation, this would validate the Firebase token
-                    firebase_uid = auth_header.split(" ")[1]  # Simplified for now
+                    id_token = auth_header.split(" ")[1]
+                    try:
+                        # Verify Firebase ID token
+                        decoded_token = await firebase_auth.verify_id_token(id_token)
+                        firebase_uid = decoded_token.get("uid")
+                        logger.info(f"Successfully verified Firebase token for user: {firebase_uid}")
+                    except HTTPException as e:
+                        # Token verification failed
+                        logger.warning(f"Firebase token verification failed: {e.detail}")
+                        return UserContext()
                 else:
-                    # Try to get from custom header
+                    # Try to get from custom header (fallback for testing)
                     firebase_uid = request.headers.get("X-Firebase-UID")
+                    if firebase_uid:
+                        logger.info(f"Using Firebase UID from custom header: {firebase_uid}")
             
             if not firebase_uid:
-                logger.warning("No Firebase UID found in request")
+                logger.debug("No Firebase UID found in request")
                 return UserContext()
             
-            # Get or create user
+            # Get or create user in local database
             user = await UserService.get_or_create_user(
                 session=session,
-                firebase_uid=firebase_uid
+                firebase_uid=firebase_uid,
+                email=decoded_token.get("email") if decoded_token else None,
+                display_name=decoded_token.get("name") if decoded_token else None,
+                photo_url=decoded_token.get("picture") if decoded_token else None,
+                email_verified=decoded_token.get("email_verified", False) if decoded_token else False
             )
             
             if not user:
                 logger.error(f"Failed to get or create user for Firebase UID: {firebase_uid}")
                 return UserContext()
             
-            return UserContext(user=user, firebase_uid=firebase_uid)
+            return UserContext(user=user)
             
         except Exception as e:
             logger.error(f"Error getting user from request: {e}")
@@ -141,7 +152,7 @@ async def get_authenticated_user_context(
         # Create a simple mock user object for testing
         class MockUser:
             def __init__(self):
-                self.id = "test-user-id"  # Simple test user ID
+                self.id = "test_user_12345"  # Simple test user ID
                 self.email = "test@example.com"
                 self.name = "Test User"
                 self.is_active = True
@@ -167,7 +178,7 @@ async def get_active_user_context(
         # Create a simple mock user object for testing
         class MockUser:
             def __init__(self):
-                self.id = "test-user-id"  # Simple test user ID
+                self.id = "test_user_12345"  # Simple test user ID
                 self.email = "test@example.com"
                 self.name = "Test User"
                 self.is_active = True

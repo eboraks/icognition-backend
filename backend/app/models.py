@@ -4,6 +4,8 @@ import uuid as uuid_pkg
 from sqlmodel import SQLModel, Field, Float, JSON, Integer, Relationship, String
 from sqlalchemy import Column, Index, DateTime, func, Text, FLOAT
 from sqlalchemy.dialects.postgresql import JSONB, ARRAY, TSVECTOR
+from sqlalchemy import Text
+import os
 from pgvector.sqlalchemy import Vector
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -898,7 +900,8 @@ class User(SQLModel, table=True):
     
     __tablename__ = "users"
     
-    id: Optional[str] = Field(default=None, primary_key=True)
+    # Use id as Firebase UID for vendor agnostic design
+    id: str = Field(primary_key=True, max_length=255)
     created_at: Optional[datetime] = Field(
         default_factory=datetime.now,
         sa_column=Column(DateTime(timezone=True), server_default=func.now())

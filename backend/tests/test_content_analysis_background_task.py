@@ -9,7 +9,7 @@ from typing import Dict, Any
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.main_new import app
+from app.main import app
 from app.db.database import get_session
 from app.models import Document, User
 from app.services.content_analysis_service import get_content_analysis_service

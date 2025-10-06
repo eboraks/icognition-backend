@@ -20,10 +20,10 @@ class UserService:
     
     @staticmethod
     async def get_user_by_firebase_uid(session: AsyncSession, firebase_uid: str) -> Optional[User]:
-        """Get user by Firebase UID"""
+        """Get user by Firebase UID (stored as id)"""
         try:
             result = await session.execute(
-                select(User).where(User.firebase_uid == firebase_uid)
+                select(User).where(User.id == firebase_uid)
             )
             return result.scalar_one_or_none()
         except Exception as e:
@@ -49,19 +49,20 @@ class UserService:
         email: Optional[str] = None,
         display_name: Optional[str] = None,
         photo_url: Optional[str] = None,
+        email_verified: bool = False,
         preferences: Optional[Dict[str, Any]] = None
     ) -> Optional[User]:
         """Create a new user with automatic timestamp handling"""
         try:
             now = datetime.utcnow()
             user = User(
-                firebase_uid=firebase_uid,
+                id=firebase_uid,  # Use Firebase UID as the primary key
                 email=email,
                 display_name=display_name,
                 photo_url=photo_url,
                 preferences=preferences or {},
                 is_active=True,
-                is_verified=False,
+                is_verified=email_verified,
                 first_login=now,
                 last_login=now,
                 last_active=now
@@ -90,6 +91,7 @@ class UserService:
         email: Optional[str] = None,
         display_name: Optional[str] = None,
         photo_url: Optional[str] = None,
+        email_verified: bool = False,
         preferences: Optional[Dict[str, Any]] = None
     ) -> Optional[User]:
         """
@@ -113,6 +115,7 @@ class UserService:
                 email=email,
                 display_name=display_name,
                 photo_url=photo_url,
+                email_verified=email_verified,
                 preferences=preferences
             )
             

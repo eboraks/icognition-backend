@@ -1,0 +1,1407 @@
+from app.log import get_logger
+from app.extension_chat_handler import ChatHandler
+from app.response_models import Answer, ContentType, Summary, Topic, ChatMessagePublic
+from app.core.firebase_auth import firebase_auth
+from app.core.auth_middleware import get_current_user, get_current_user_uid, verify_user_access, get_optional_user
+from app.core.user_context import get_authenticated_user_context, UserContext
+logger = get_logger(__name__)
+
+
+import asyncio
+from enum import Enum
+import time
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    BackgroundTasks,
+    Response,
+    status,
+    Depends, 
+    UploadFile,
+    File,
+    Form,
+    WebSocket,
+    WebSocketDisconnect,
+)
+
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import PlainTextResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from typing import List, Annotated
+from app.models import (
+    Chat_Message,
+    QuestionPlayload,
+    User,
+    Source,
+    Document,
+    PagePayload,
+    HTTPError,
+    SearchPayload,
+    SearchResults,
+    TreeNode,
+    StudyCollectionPublic,
+    StudyTaskPublic,
+    WebSocketMessageType,
+    BroadcastMessage,
+)
+from app.collection_manager import collections_manager
+from app.source_doc_handler import SourceDocHandler
+import app.question_answer_handler as question_answer_handler
+import json, aiofiles
+import app.app_logic as app_logic
+import app.html_parser as html_parser
+import app.getters as getter
+import app.deleters as deleters
+import app.entity_handler as entity_handler
+from app.search_handler import SearchHandler
+from app.user_handler import UserHandler
+import os.path
+from app.chat_session_manager import chat_session_manager
+from contextlib import asynccontextmanager
+import app.embedding_handler as embedding_handler
+
+
+search = SearchHandler()
+embedding_handler = embedding_handler.EmbeddingHandler()
+
+
+
+class Groups(Enum):
+    LIBRARY = "Library Search & Filter"
+    BOOKMARK = "Bookmark / Source"
+    DOCUMENT = "Document and Related Data (Entities, Questions...)"
+    USER_DATA = "User Data (Documents, Entities, Topics)"
+    ACTION = "Initiate Action"
+    STUDY_COLLECTION = "Study Collection"
+    ICONS = "Icons"
+    FOR_TESTING = "For Testing"
+    ASK_QUESTION = "Ask Question"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Initialize resources
+    logger.info("Starting FastAPI application with Firebase authentication")
+    
+    # Initialize Firebase Admin SDK
+    try:
+        # Firebase is initialized in firebase_auth module on import
+        logger.info("Firebase Admin SDK initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize Firebase: {e}")
+        # Don't fail startup, but log the error
+    
+    chat_session_manager.start_cleanup_task()
+    yield
+    # Shutdown: Clean up resources
+    logger.info("Shutting down FastAPI application")
+    # If you need to clean up any resources when the app shuts down, do it here
+
+
+app = FastAPI(lifespan=lifespan)
+
+
+origins = [
+    "chrome-extension://oeilkphkfimekfadiflbljknbhfmppej",
+    "http://localhost:8080",
+    "https://icognition.ai",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["icognitoin-answer-type"],
+)
+
+
+class ConnectionManager:
+    
+    active_connections: dict[str, WebSocket] = {}
+
+    async def connect(self, websocket: WebSocket, session_id: str):
+
+        await websocket.accept()
+        self.active_connections[session_id] = websocket
+        logger.info(f"Websocket connected for {session_id}")
+
+    async def disconnect(self, session_id: str, message: str):
+        try:
+            websocket = self.active_connections[session_id]
+            await websocket.close(code=1000, reason=message)
+            del self.active_connections[session_id]
+            logger.info(f"Websocket disconnected for {session_id}")
+        except Exception as e:
+            logger.error(
+                f"Error in disconnecting websocket {session_id}. Error: {str(e)}"
+            )
+            logger.error(
+                f"Error in disconnecting websocket {session_id}. Error: {str(e)}"
+            )
+            pass
+
+    async def broadcast(self, message: str, user_id: str):
+        # Find all session keys that contain the user_id
+        matching_sessions = [
+            session_id for session_id in self.active_connections.keys() 
+            if user_id in session_id
+        ]
+        
+        disconnected = []
+        for session_id in matching_sessions:
+            websocket = self.active_connections[session_id]
+            try:
+                await websocket.send_text(message)
+            except RuntimeError as e:
+                # Connection is closed, mark for removal
+                logger.info(f"WebSocket closed for session {session_id}, removing connection")
+                disconnected.append(session_id)
+            except Exception as e:
+                logger.error(f"Error broadcasting message: {str(e)}")
+                disconnected.append(session_id)
+        
+        # Clean up disconnected websockets
+        for session_id in disconnected:
+            if session_id in self.active_connections:
+                del self.active_connections[session_id]
+    
+    async def broadcast_message(self, broadcast_message: BroadcastMessage):
+        """
+        Broadcast a message using the BroadcastMessage format
+        
+        Args:
+            broadcast_message: The BroadcastMessage object to broadcast
+        """
+        try:
+            # Convert the message to JSON and broadcast it
+            json_message = broadcast_message.to_json()
+            await self.broadcast(json_message, broadcast_message.user_id)
+            logger.debug(f"Broadcast message of type {broadcast_message.message_type} to user {broadcast_message.user_id}")
+        except Exception as e:
+            logger.error(f"Error broadcasting message: {str(e)}")
+
+
+manager = ConnectionManager()
+
+
+async def broadcastProgress(doc_id: str, user_id: str, increment: int):
+    try:
+        # Create a progress message
+        progress_message = BroadcastMessage(
+            user_id=user_id,
+            message_type=WebSocketMessageType.PROGRESS_PERCENTAGE.value,
+            data=increment,
+            document_id=doc_id
+        )
+        
+        # Broadcast the message
+        await manager.broadcast_message(progress_message)
+
+    except Exception as e:
+        logger.error(f"Error in broadcastProgress: {str(e)}")
+        pass
+
+
+@app.get("/populate_entities", tags=["Document"], status_code=200)
+async def populate_entities():
+    await entity_handler.populate_entities()
+    return {"Message": "Entities populated"}
+
+@app.websocket("/ws/{user_id}/{source}")
+async def websocket_endpoint(websocket: WebSocket, user_id: str, source: str):
+    session_id = f"{source}:{user_id}"
+    await manager.connect(websocket, session_id)
+    logger.info(f"Websocket endpoint message for {session_id}")
+    try:
+        while True:
+            data = await websocket.receive_text()
+            #logger.info(f"Websocket received message {data}")
+            await manager.broadcast(message=data, user_id=user_id)
+    except WebSocketDisconnect as e:
+        logger.error(f"Websocket Exception for {session_id}. Error: {str(e)}")
+        await manager.disconnect(session_id, "Error in websocket connection")
+        # await manager.broadcast("Client disconnected.", user_id)
+
+ 
+def chat_event_listener(**kwargs):
+    print(f"Document ID: {kwargs['doc_id']}")
+    print(f"Ask: {kwargs['ask']}")
+    print(f"Response: {kwargs['response']}")
+    print("-" * 50)
+
+
+
+@app.get("/")
+async def root():
+    return {"message": "Welcome to Icognition API"}
+
+
+@app.get("/ping", status_code=200)
+async def ping():
+
+    db_status = False
+    try:
+        bm = app_logic.test_db_connection()
+        if bm:
+            db_status = True
+
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(
+            status_code=500, detail=f"Database connection failed. Error: {str(e)}"
+        )
+
+    return {"Message": f"Service is up and running. DB status: {db_status}"}
+
+
+@app.get("/auth/test", status_code=200, tags=["Authentication"])
+async def test_firebase_auth(user_context: UserContext = Depends(get_authenticated_user_context)):
+    """Test Firebase authentication - requires valid Firebase ID token"""
+    return {
+        "message": "Firebase authentication successful",
+        "user": {
+            "id": user_context.user.id,
+            "firebase_uid": user_context.user.firebase_uid,
+            "email": user_context.user.email,
+            "display_name": user_context.user.display_name,
+            "is_active": user_context.user.is_active,
+            "is_verified": user_context.user.is_verified
+        }
+    }
+
+
+@app.get("/status", status_code=200)
+async def ping():
+
+    db_status = False
+    db_docs_count = 0
+    fuse_status = False
+
+    sourceHandler = SourceDocHandler()
+    try:
+        bm = app_logic.test_db_connection()
+        if bm:
+            db_status = True
+
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(
+            status_code=500, detail=f"Database connection failed. Error: {str(e)}"
+        )
+
+    try:
+        db_docs_count = getter.get_documents_count()
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(
+            status_code=500, detail=f"Database connection failed. Error: {str(e)}"
+        )
+
+    try:
+        file_content = "test"
+        filename = "test.txt"
+        sourceHandler.write_file(filename=filename, content=file_content)
+        if file_content == sourceHandler.read_file(filename=filename):
+            fuse_status = True
+
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(
+            status_code=500, detail=f"File system connection failed. Error: {str(e)}"
+        )
+
+    return {
+        "Message": f"Service is up and running. DB status: {db_status}, DB docs count: {db_docs_count}, Fuse status: {fuse_status}"
+    }
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    logger.error(request)
+    logger.error(exc)
+    return PlainTextResponse(str(request), status_code=400)
+
+
+@app.post("/add_user", status_code=204, tags=[Groups.USER_DATA.value])
+async def add_user(user: User):
+    user_handler = UserHandler()
+
+    try:
+        user_handler.add_users_from_source()
+        user_handler.add_user(user)
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(status_code=500, detail="User creation failed")
+
+
+@app.get(
+    "/populate_user_table",
+    status_code=204,
+    tags=[Groups.ACTION.value, Groups.FOR_TESTING.value],
+)
+async def add_user():
+    user_handler = UserHandler()
+
+    try:
+        user_handler.add_users_from_source()
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(
+            status_code=500, detail="Failed to populate user table" + str(e)
+        )
+
+
+@app.post(
+    "/bookmark",
+    tags=[Groups.BOOKMARK.value],
+    responses={
+        400: {
+            "model": HTTPError,
+            "description": "Reporting back errors",
+        },
+        404: {"model": HTTPError, "description": "Page is not supported"},
+        201: {"model": Source, "description": "Bookmark created successfully"},
+        200: {"model": Source, "description": "Bookmark already exists"},
+    },
+)
+async def create_bookmark(
+    payload: PagePayload, background_tasks: BackgroundTasks, response: Response
+):
+
+    logger.info(f"Icognition bookmark endpoint called on {payload.url}")
+
+    if payload.user_id == None:
+        logger.warn(f"User ID not provided for {payload.url}")
+        raise HTTPException(
+            status_code=400,
+            detail="User ID not provided for the bookmark",
+        )
+
+    # Check if user exists, create if not
+    user_handler = UserHandler()
+    
+    if not user_handler.user_exits(payload.user_id):
+        logger.info(f"Creating new user with ID: {payload.user_id}")
+        try:
+            user = User(id=payload.user_id)
+            user_handler.add_user(user)
+        except Exception as e:
+            logger.error(f"Failed to create user: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to create user"
+            )
+
+    # Check if payload.url is not the root URL of a website
+    if html_parser.unsupported_page_url(payload.url):
+        logger.warn(f"Invalid URL provided: {payload.url}")
+        raise HTTPException(
+            status_code=400,
+            detail="I am sorry, I can't analyze home or search pages",
+        )
+
+    page = app_logic.create_page(payload)
+
+    if page is None:
+        logger.warn(f"Page object not created for {payload.url}")
+        raise HTTPException(
+            status_code=404,
+            detail="Hmm, I wasn't able to find information on this page. I sent a message to our engineers",
+        )
+
+    ## Check in bookmark already exists
+    try:
+        _source = getter.get_source_by_url(payload.user_id, page.clean_url)
+
+        if _source is None:
+            logger.info(f"Source not found for {page.clean_url}, creating new source")
+            _source = app_logic.create_source_bookmark(page, payload.user_id)
+
+        if _source is not None:
+            logger.info(f"Source found for {page.clean_url}, updating source")
+            _source.html_root_element = page.html_root_element
+            app_logic.merge_record(_source)
+            
+            _doc = getter.get_document_by_source_id(_source.id)
+             
+            
+            ## Chat handler will initate the chat and boradcast it to the client
+            ## If chat already exists in the DB, the hanlder will broadcast the existing chat
+            chat_handler = ChatHandler(document_id = _doc.id, user_id = _source.user_id, event_listener = manager.broadcast_message)
+            background_tasks.add_task(chat_handler.start_analyze, _doc)
+            
+            
+            ## Find documents without embeddings
+            background_tasks.add_task(embedding_handler._find_documents_without_embeddings, _source.user_id)
+            return _source
+            
+        
+    except Exception as e:
+        logger.error("Error in create_bookmark: ", e)
+        raise HTTPException(status_code=500, detail="Bookmark creation failed")
+
+
+@app.post(
+    "/document/regenerate",
+    tags=["Document"],
+    response_model=Source,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def post_regenerate_document(
+    old_doc: Document, background_tasks: BackgroundTasks
+):
+    """
+    This method create document using a source id and a URL.
+    Because create_source_bookmark also generate document, this method is use to re-generate
+    the a document. Because it can take time to generate a document, this method
+    kickoff the generate and return 202
+    """
+    logger.info(f"Regenrate Document ID {old_doc.id}")
+    # Generate LLM content in a background process
+
+    # Reason for returning bookmark is because the document will changed after the regeneration,
+    # and the bookmark will be used to get the new document
+    new_doc = app_logic.clone_document(old_doc)
+    background_tasks.add_task(regenerate_document, new_doc)
+    bookmark = app_logic.reassociate_bookmark_with_document(old_doc.id, new_doc.id)
+
+    if bookmark is None:
+        raise HTTPException(status_code=404, detail="Bookmark not found")
+    return bookmark
+
+
+@app.get("/extract_entities_from_document", tags=["Document"], status_code=201)
+async def extract_entities_from_document(document_id: str, background_tasks: BackgroundTasks):
+    
+    background_tasks.add_task(
+        generate_document_entities, document_id
+    )
+    return {"Message": "Extracting entities from document"}
+
+
+
+@app.get("/regenerate/entities", tags=["Document"], status_code=200)
+async def get_regenerate_entities(background_tasks: BackgroundTasks):
+    background_tasks.add_task(regenerate_entities)
+    return {"Message": "Regenerating entities"}
+
+
+@app.get("/build_entity_vectors", tags=["Document"], status_code=200)
+async def get_build_entity_vectors(background_tasks: BackgroundTasks):
+    background_tasks.add_task(entity_handler.generate_entities_vectors)
+    return {"Message": "Building entity vectors"}
+
+
+@app.get("/boradcast/{user_id}", tags=["Document"], status_code=200)
+async def broadcast_document_update(
+    message: str, user_id: str, document_id: str = None
+):
+
+    if document_id is not None:
+        doc = getter.get_document_public_by_id(document_id)
+        message = {
+            "user_id": user_id,
+            "document_id": document_id,
+            "type": "document",
+            "data": doc.model_dump_json(),
+        }
+        await manager.broadcast(json.dumps(message), user_id)
+
+    qas = question_answer_handler.get_question_answer_by_document_id(document_id)
+    if len(qas) > 0:
+        qas = [qa.to_public().model_dump_json() for qa in qas]
+        message = {
+            "user_id": user_id,
+            "document_id": document_id,
+            "type": "doc_qanda",
+            "data": qas,
+        }
+        await manager.broadcast(json.dumps(message), user_id)
+
+
+## Background task to generate summaries from LLM
+async def generate_document_summary(source: Source):
+    document = getter.get_document_by_id(source.document_id)
+    doc_id = str(document.id)
+
+    try:
+        if document.status in ["Pending", "Done", "Failure"]:
+            logger.info(f"Background task for document ID: {source.document_id}")
+
+            await broadcastProgress(doc_id, source.user_id, 15)
+            document = await app_logic.generate_summary(doc=document)
+            
+            if document is None:
+                logger.error(f"Document generate summary failed for {source.document_id}")
+                raise Exception("Document generate summary failed")
+            
+            await broadcastProgress(doc_id, source.user_id, 30)
+
+            ## Broadcast the document to the user
+            doc = getter.get_document_public_by_id(document.id)
+            
+            # Create a document message
+            document_message = BroadcastMessage(
+                user_id=source.user_id,
+                message_type=WebSocketMessageType.DOCUMENT.value,
+                data=doc.model_dump_json(),
+                document_id=doc.id
+            )
+            
+            # Broadcast the message
+            await manager.broadcast_message(document_message)
+            await broadcastProgress(doc_id, source.user_id, 10)
+
+            await app_logic.generate_embeddings_for_docs(
+                documents=[document], user_id=source.user_id
+            )
+            logger.info(
+                f"Background task for document ID: {source.document_id} completed"
+            )
+    except Exception as e:
+        logger.error("generate_document summary", e)
+
+
+
+
+async def generate_document_entities(document_id: str):
+    document = getter.get_document_by_id(document_id)
+    user_id = getter.get_source_by_document_id(document_id).user_id
+
+    try:
+        if len(getter.get_entities_ids_by_document_id(document.id)) == 0:
+            ent_success = await entity_handler.generate_entities(
+                user_id=user_id, doc=document
+            )
+            topic_success = await entity_handler.generate_topics(
+                user_id=user_id, doc=document
+            )
+            logger.info(
+                f"Background task for generating entities and topics for: {document.id} completed. Result, number of entities: {len(ent_success)} number of topics: {len(topic_success)}"
+            )
+            await app_logic.generate_embeddings_for_entities(
+                entities=ent_success, user_id=user_id
+            )
+            await app_logic.generate_embeddings_for_entities(
+                entities=topic_success, user_id=user_id
+            )
+    except Exception as e:
+        logger.error("Generate document entities ", e)
+
+
+async def generate_document_qanda(source: Source):
+    document = getter.get_document_by_id(source.document_id)
+    doc_id = str(document.id)
+    try:
+        if (
+            len(question_answer_handler.get_question_answer_by_document_id(document.id))
+            == 0
+        ):
+            await broadcastProgress(doc_id, source.user_id, 5)
+
+            await question_answer_handler.generate_doc_quesions_answers(
+                user_id=source.user_id, doc=document
+            )
+            qas = question_answer_handler.get_question_answer_public_by_document_id(
+                document.id
+            )
+            qas = [qa.model_dump() for qa in qas]
+            await broadcastProgress(doc_id, source.user_id, 20)
+
+            logger.info(
+                f"Background task for generating questions and answers for: {document.id} completed. Number of questions and answers, {len(qas)}"
+            )
+            
+            # Create a Q&A message
+            qanda_message = BroadcastMessage(
+                user_id=source.user_id,
+                message_type=WebSocketMessageType.DOC_QANDA.value,
+                data=json.dumps(qas),
+                document_id=str(document.id)
+            )
+            
+            # Broadcast the message
+            await manager.broadcast_message(qanda_message)
+            await broadcastProgress(doc_id, source.user_id, 20)
+
+            ## For now, we are not generating embeddings for questions and answers
+    except Exception as e:
+        logger.error("Generate document question and answers ", e)
+
+
+def generate_document_qanda_sync(source: Source):
+    asyncio.run(generate_document_qanda(source))
+
+
+## Background task to regenerate summaries from LLM if not already exists
+async def regenerate_document(document: Document):
+
+    if document.status in ["Pending", "Done", "Failure"]:
+        logger.info(
+            f"Background task for deleting document ID: {document.id} and associated records"
+        )
+        deleters.delete_document_associate_records(document_id=document.id)
+
+    source = getter.get_source_by_document_id(document.id)
+    try:
+        if document.status in ["Pending", "Done", "Failure"]:
+            logger.info(f"Background task for document ID: {document.id}")
+            document = await app_logic.generate_summary(doc=document)
+            await app_logic.generate_embeddings_for_docs(
+                documents=[document], user_id=source.user_id
+            )
+            logger.info(
+                f"Background task for document ID: {source.document_id} completed"
+            )
+    except Exception as e:
+        logger.error(e)
+
+    try:
+        if len(getter.get_entities_ids_by_document_id(document.id)) == 0:
+            ent_success = await entity_handler.generate_entities(
+                user_id=source.user_id, doc=document
+            )
+            topic_success = await entity_handler.generate_topics(
+                user_id=source.user_id, doc=document
+            )
+            logger.info(
+                f"Background task for generating entities and topics for: {document.id} completed. Result, number of entities: {len(ent_success)} number of topics: {len(topic_success)}"
+            )
+            await app_logic.generate_embeddings_for_entities(
+                entities=ent_success, user_id=source.user_id
+            )
+            await app_logic.generate_embeddings_for_entities(
+                entities=topic_success, user_id=source.user_id
+            )
+    except Exception as e:
+        logger.error(e)
+
+    try:
+        if (
+            len(question_answer_handler.get_question_answer_by_document_id(document.id))
+            == 0
+        ):
+            success = await question_answer_handler.generate_doc_quesions_answers(
+                user_id=source.user_id, doc=document
+            )
+            logger.info(
+                f"Background task for generating questions and answers for: {document.id} completed. Result, {success}"
+            )
+            ## For now, we are not generating embeddings for questions and answers
+    except Exception as e:
+        logger.error(e)
+
+
+async def regenerate_entities():
+
+    ## Get all documents
+    documents = getter.get_all_documents()
+
+    for doc in documents:
+        try:
+            deleters.delete_entities_associated_with_document(doc.id)
+            deleters.delete_orphaned_entities()
+        except Exception as e:
+            logger.error(
+                f"Error deleting entities for document {doc.id}. Error {str(e)}"
+            )
+            raise Exception(
+                f"Error deleting entities for document {doc.id}. Error {str(e)}"
+            )
+
+    for document in documents:
+        try:
+            user_id = getter.get_source_by_document_id(doc.id).user_id
+            ent_success = await entity_handler.generate_entities(
+                user_id=user_id, doc=document
+            )
+            topic_success = await entity_handler.generate_topics(
+                user_id=user_id, doc=document
+            )
+            logger.info(
+                f"Background task for generating entities and topics for: {document.id} completed. Result, number of entities: {len(ent_success)} number of topics: {len(topic_success)}"
+            )
+            await app_logic.generate_embeddings_for_entities(
+                entities=ent_success, user_id=user_id
+            )
+            await app_logic.generate_embeddings_for_entities(
+                entities=topic_success, user_id=user_id
+            )
+        except Exception as e:
+            logger.error(
+                f"Error generating entities for document {doc.id}. Error {str(e)}"
+            )
+
+
+@app.get(
+    "/bookmarks/user/{user_id}",
+    tags=["Bookmark"],
+    response_model=List[Source],
+    status_code=200,
+)
+async def get_bookmarks_by_user_id(user_id: str):
+    bookmarks = getter.get_sources_by_user_id(user_id)
+
+    if bookmarks is None:
+        raise HTTPException(status_code=404, detail="Bookmarks not found")
+
+    logger.info(f"Icognition return {len(bookmarks)} bookmarks")
+    return bookmarks
+
+
+@app.post("/bookmark/user", tags=["Bookmark"], response_model=Source, status_code=200)
+async def get_bookmarks_by_user_id(payload: PagePayload):
+    bookmark = getter.get_source_by_url(payload.user_id, payload.url)
+
+    if bookmark is None:
+        raise HTTPException(status_code=404, detail="Bookmark not found")
+
+    return bookmark
+
+
+@app.get(
+    "/documents_plus/user/{user_id}",
+    tags=["Document"],
+    response_model=List[dict],
+    status_code=200,
+)
+async def get_documents_plus_by_user_id(user_id: str):
+
+    results = getter.get_documents_public_by_user_id(user_id)
+    
+    if results is None:
+        raise HTTPException(status_code=404, detail="Documents not found")
+
+    logger.info(f"Icognition return {len(results)} documents_plus")
+    return results
+
+
+@app.get("/document/{id}/html_elements", tags=["Document"], status_code=200)
+async def get_document_html_elements(id: str):
+    try:
+        doc = getter.get_document_public_by_id(id)
+        return json.loads(doc.html_elements)
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(status_code=404, detail="Document not found")
+
+
+@app.get("/bookmark", tags=["Bookmark"], response_model=Source, status_code=200)
+async def get_bookmark_by_url(url: str):
+    bookmark = getter.get_source_by_url(url)
+
+    if bookmark is None:
+        raise HTTPException(status_code=404, detail="Bookmark not found")
+
+    logger.info(f"Icognition return bookmark {bookmark.id}")
+    return bookmark
+
+
+@app.get("/bookmark/{id}/document", tags=["Bookmark"])
+async def get_bookmark_document(id: str, response: Response):
+    logger.info(f"Icognition bookmark document endpoint called on {id}")
+    document = getter.get_document_by_source_id(id)
+
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # If document is still in processing, let the client know
+    if document.status == "Processing":
+        response.status_code = status.HTTP_206_PARTIAL_CONTENT
+        return document
+    else:
+        response.status_code = status.HTTP_200_OK
+        return document
+
+
+@app.get(
+    "/document_plus/{source_id}",
+    tags=["Bookmark"],
+    responses={
+        404: {
+            "model": HTTPError,
+            "description": "Returning document error",
+        },
+        206: {"model": None, "description": "Document is being processed"},
+        200: {"model": dict, "description": "Document is ready"},
+    },
+)
+async def get_document_plus(
+    source_id: str, response: Response, background_tasks: BackgroundTasks
+):
+    try:
+        source = getter.get_source_by_id(source_id)
+        if source is None:
+            raise ValueError(f"Source with source_id {source_id} not found")
+
+        if source.document_id is None:
+            generate_document_summary(source)
+            raise HTTPException(
+                status_code=404,
+                detail=f"Document is being generated for source_id {source_id}",
+            )
+
+        document = getter.get_document_public_by_id(source.document_id)
+
+        if document is None:
+            raise HTTPException(
+                status_code=404, detail=f"Document with id {source.document_id} not found"
+            )
+
+        logger.info(f"Document status: {document.get('status', 'Unknown')}")
+
+        # If document is still in processing, let the client know
+        if document.get("status") in ["Pending", "Processing"]:
+            if source.html_root_element:
+                logger.info(
+                    f"Document {source.document_id} is being processed with html_root_element"
+                )
+                background_tasks.add_task(regenerate_document, source.document_id)
+            response.status_code = status.HTTP_206_PARTIAL_CONTENT
+            return document
+        else:
+            response.status_code = status.HTTP_200_OK
+            return document
+
+    except ValueError as e:
+        logger.error(e)
+        raise HTTPException(status_code=404, detail=f"{e}")
+
+
+@app.get("/document/{id}", tags=["Document"])
+async def get_document(id: str, response: Response):
+    logger.info(f"Icognition document endpoint called on {id}")
+    document = getter.get_document_public_by_id(id)
+
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # If document is still in processing, let the client know
+    if document.status == "Processing":
+        response.status_code = status.HTTP_206_PARTIAL_CONTENT
+        return document
+    else:
+        response.status_code = status.HTTP_200_OK
+        return document
+
+
+@app.get("/document/{id}/xray", tags=["Document"])
+async def get_document_summary(id: str, response: Response, force: str | None = None):
+
+    try:
+        res = getter.get_document_public_by_id(id)
+        response.status_code = status.HTTP_200_OK
+        return res
+
+    except ValueError as e:
+        logger.error(e)
+        raise HTTPException(status_code=404, detail=e)
+
+
+@app.get("/document/{id}/questions_answers", tags=["Document"])
+async def get_document_questions_answers(id: str, response: Response):
+
+    try:
+        qas = question_answer_handler.get_question_answer_public_by_document_id(id)
+        response.status_code = status.HTTP_200_OK
+        return qas
+
+    except ValueError as e:
+        logger.error(e)
+        raise HTTPException(status_code=404, detail=e)
+
+
+@app.get("/document/{id}/chat", tags=["Document"])
+async def get_document_chat(id: str, response: Response) -> List[Chat_Message]:
+    try:
+        source = getter.get_source_by_document_id(id)
+        if source is None:
+            raise HTTPException(status_code=404, detail="Document or source not found")
+        user_id = source.user_id
+        chat_handler = ChatHandler(user_id=user_id, document_id=id)
+        chat_messages = chat_handler.get_initial_chat_history(document_id=id)
+    except Exception as e:
+        logger.error(e)
+        response.status_code = status.HTTP_404_NOT_FOUND
+        return []
+    
+    if chat_messages is not None:
+        chat_messages = [msg.to_dict() for msg in chat_messages]
+
+        response.status_code = status.HTTP_200_OK
+        return chat_messages
+    else:
+        response.status_code = status.HTTP_204_NO_CONTENT
+        return []
+   
+
+@app.get("/document/{id}/explain", tags=["Document"])
+async def get_document_explain(id: str, response: Response):
+
+    try:
+        user_id = getter.get_source_by_document_id(id).user_id
+        chat_handler = ChatHandler(document_id=id, user_id=user_id)
+        explain_message = chat_handler.generate_explain_message()
+        response.status_code = status.HTTP_200_OK
+        return explain_message
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(status_code=404, detail=e)
+
+
+@app.get("/document/from_chat/{id}", tags=["Document"], response_model=dict)
+async def get_document_from_chat(id: str, response: Response):
+    """
+    Create a document dictionary from chat history for a document
+    
+    This endpoint extracts information from chat messages with different event types:
+    - SUMMARY event type is used for document["is_about"]
+    - ENTITIES event type is used for document["entities_and_concepts"]
+    - CONTENT_TITLE event type is used for document["title"]
+    - CONTENT_TYPE event type is used for document["source_type"]
+    
+    Args:
+        id: The document ID
+        
+    Returns:
+        A document dictionary with data extracted from the chat history
+    """
+    try:
+        # Create a ChatHandler instance
+        chat_handler = ChatHandler(document_id=id)
+        
+        # Get document dict from chat history
+        document = chat_handler.get_document_from_chat_history()
+        
+        if document is None:
+            raise HTTPException(
+                status_code=404, 
+                detail="Could not create document from chat history. Chat history may be empty."
+            )
+        
+        response.status_code = status.HTTP_200_OK
+        return document
+        
+    except Exception as e:
+        logger.error(f"Error in get_document_from_chat: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/document/{id}/update_from_chat", tags=["Document"], response_model=dict)
+async def update_document_from_chat(id: str, response: Response):
+    """
+    Create a document dictionary from chat history
+    
+    This endpoint extracts information from chat messages with different event types:
+    - SUMMARY event type is used for document["is_about"]
+    - ENTITIES event type is used for document["entities_and_concepts"]
+    - CONTENT_TITLE event type is used for document["title"]
+    - CONTENT_TYPE event type is used for document["source_type"]
+    
+    Args:
+        id: The document ID
+        
+    Returns:
+        A document dictionary with data extracted from the chat history
+    """
+    try:
+        # Create a ChatHandler instance
+        chat_handler = ChatHandler(document_id=id)
+        
+        # Get document dict from chat history
+        document = chat_handler.get_document_from_chat_history()
+        
+        if document is None:
+            raise HTTPException(
+                status_code=404, 
+                detail="Could not create document from chat history. Chat history may be empty."
+            )
+        
+        response.status_code = status.HTTP_200_OK
+        return document
+        
+    except Exception as e:
+        logger.error(f"Error in update_document_from_chat: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/bookmark/{id}/keysentences", tags=["Bookmark"])
+async def get_bookmark_keysentences(id: int, response: Response):
+
+    try:
+        sentences = app_logic.document_key_sentences(id)
+        response.status_code = status.HTTP_200_OK
+        return sentences
+
+    except ValueError as e:
+        logger.error(e)
+        raise HTTPException(status_code=404, detail=e)
+
+
+@app.delete("/bookmark/{id}", tags=["Bookmark"], status_code=204)
+async def delete_bookmark(id: str) -> None:
+    """
+    Delete a bookmark and all associated records.
+    This endpoint can handle both source_id and document_id.
+    
+    Args:
+        id: Either a source_id or document_id
+    """
+    logger.info(f"Delete bookmark and associated records for id: {id}")
+    deleters.delete_source_and_associate_records(id)
+
+
+@app.delete("/document/{id}", tags=["Document"], status_code=204)
+async def delete_document(id: str) -> None:
+    logger.info(f"Delete document and associated records for id: {id}")
+
+    deleters.delete_document_and_associate_records(id)
+
+
+
+
+
+
+@app.get(
+    "/filter_nodes/{user_id}",
+    tags=["Library Search"],
+    response_model=List[TreeNode],
+    status_code=200,
+)
+async def get_user_filter_nodes(user_id: str):
+    try:
+        start_time = time.time()
+        nodes = getter.get_entities_tree_nodes_by_user_id(user_id)
+        logger.info(f"Time to get filter nodes: {(time.time() - start_time):.2f}")
+        return nodes
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(status_code=404, detail="Error getting filter nodes")
+
+
+@app.post(
+    "/search", tags=["Library Search"], status_code=200, response_model=list[dict]
+)
+async def search_documents(search_payload: SearchPayload, response: Response):
+    logger.info(f"Search documents with query: {search_payload.query}")
+
+    try:
+        results = await search(search_payload.user_id, search_payload.query)
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(status_code=404, detail="Search failed")
+    
+    return results
+
+
+@app.get(
+    "/generate_embedding/{user_id}",
+    tags=["User Data (Entities, Document)"],
+    status_code=200,
+)
+async def generate_embedding(user_id: str):
+    try:
+        await app_logic.generate_embeddings(user_id=user_id)
+        return {"Message": "Embedding generation completed"}
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(status_code=500, detail="Embedding generation failed")
+
+
+@app.get(
+    "/entities_names/{user_id}",
+    tags=["User Data (Entities, Document)"],
+    status_code=200,
+)
+async def get_user_entities_names(user_id: str):
+    try:
+        start_time = time.time()
+        names = getter.get_entities_names_by_user_id(user_id)
+        logger.info(f"Time to get entities names: {(time.time() - start_time):.2f}")
+        return names
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(status_code=404, detail="Entities not found")
+
+
+@app.get(
+    "/placeholder_image",
+    tags=["Icons"],
+    responses={200: {"content": {"image/png": {}}}},
+    response_class=FileResponse,
+)
+async def get_placeholder_image():
+    return FileResponse("./app/assets/images/library_placeholder.jpg")
+
+
+@app.get(
+    "/icon/{icon_name}",
+    tags=["Icons"],
+    responses={200: {"content": {"image/png": {}}}},
+    response_class=FileResponse,
+)
+async def get_icon(icon_name: str):
+    return FileResponse(f"./app/assets/images/{icon_name}.png")
+
+
+def chat_event_listener(event):
+    logger.info(f"Event listner called with event: {event}")
+
+
+
+
+
+
+
+
+async def listen_doc_generation(event: dict):
+    logger.info(f"Event listener called with event: {event['message']}")
+
+    source = event["source"]
+    if source.document_id is None:
+        logger.warn(f"Document was not created for source {source.id}")
+        return False
+    else:
+        await generate_document_summary(source)
+        return True
+
+
+@app.post("/create_source_upload_file/", tags=["Bookmark / Source"])
+async def create_source_upload_file(
+    file: Annotated[UploadFile, File()],
+    user_id: Annotated[str, Form()],
+    background_tasks: BackgroundTasks,
+):
+
+    user_handler = UserHandler()
+    source_handler = SourceDocHandler()
+
+    if user_handler.user_exits(user_id) != True:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+
+    logger.info(
+        f"File {file.filename} with contect type of {file.content_type} uploaded for user {user_id}"
+    )
+
+    try:
+        source = source_handler.create_source(user_id=user_id, filename=file.filename)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    async with aiofiles.open(source.filepath, "wb") as out_file:
+        content = await file.read()  # async read
+        await out_file.write(content)  # async write
+        await file.close()
+
+    background_tasks.add_task(
+        source_handler.generate_doc_from_pdf, source, listen_doc_generation
+    )
+
+    return {"filename": file.filename}
+
+
+@app.post(
+    "/ask_question",
+    tags=[Groups.ASK_QUESTION],
+    response_model=Chat_Message,
+    status_code=200,
+)
+async def ask_question(payload: QuestionPlayload):
+    try:
+        if payload.question is None:
+            raise HTTPException(status_code=400, detail="Question is required")
+        
+        
+        if payload.document_id is None and payload.collection_id is None and len(payload.documents_ids) == 0:
+            
+                
+        
+            
+            raise HTTPException(
+                status_code=400, detail="Collection ID or Document ID are required"
+            )
+
+        
+       
+        
+        if payload.document_id is not None:
+            # Use the ChatInitiationHandler to ask the question
+            # Get or create a chat session
+            user_id = getter.get_source_by_document_id(payload.document_id).user_id
+            
+            if user_id is None:
+                raise HTTPException(status_code=400, detail="User ID is required")
+            
+            chat_handler = ChatHandler(document_id = payload.document_id, user_id = user_id, event_listener = manager.broadcast_message)
+            
+            response = await chat_handler.ask_question(payload.question)
+
+            # Create a chat message
+            broadcast_message = BroadcastMessage(
+                user_id=user_id,
+                message_type=WebSocketMessageType.CHAT_MESSAGE.value,
+                data=response.model_dump_json(),
+                document_id=str(payload.document_id)
+            )
+            
+            # Broadcast the message
+            await manager.broadcast_message(broadcast_message)
+            
+            return response
+            
+        elif len(payload.documents_ids) > 0:
+            # Use the ChatInitiationHandler to ask the question
+             # Extract user_id from the payload or use a default
+            user_id = payload.user_id
+            
+            if user_id is None:
+                raise HTTPException(status_code=400, detail="User ID is required")
+            
+            collection = collections_manager.create_or_get_collection(payload.documents_ids, user_id)
+            
+            return Chat_Message(
+                chat_id="some_id",
+                chat_type="collection",
+                user_id=user_id,
+                user_prompt=payload.question,
+                ai_prompt="",
+                asked_by="user",
+                response=json.dumps({
+                    "answer_for_chat": "Hello from service",
+                    "short_answer_for_computer": "Hello from service",
+                    "citations": [],
+                    "status": "success"
+                }),
+                response_model="Answer",
+                event_name="MANUAL_MESSAGE"
+            )
+        else:
+            return Chat_Message(
+                chat_id="some_id",
+                chat_type="document",
+                user_id=user_id,
+                user_prompt=payload.question,
+                ai_prompt="",
+                asked_by="user",
+                response=json.dumps({
+                    "answer_for_chat": "Hello from service",
+                    "short_answer_for_computer": "Hello from service",
+                    "citations": [],
+                    "status": "ERROR"
+                }),
+            )
+
+    except Exception as e:
+        logger.error(f"Error in ask_question: {str(e)}")
+        raise HTTPException(status_code=500, detail="Question answering failed")
+
+
+@app.delete("/chat_message/{id}", tags=[Groups.ASK_QUESTION], status_code=204)
+async def delete_chat_message(id: int):
+    try:
+        deleters.delete_chat_message(id)
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(status_code=500, detail="Question answer deletion failed")
+
+
+
+
+@app.get("/reformat_citiation", tags=[Groups.FOR_TESTING.value], status_code=200)
+async def reformat_citiation():
+    try:
+        await app_logic.update_question_answer_citation_format()
+        return {"Message": "Citation reformatted"}
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(status_code=500, detail="Citation reformatting failed")
+
+
+@app.get(
+    "/broadcast/{user_id}/{document_id}", tags=[Groups.ACTION.value], status_code=200
+)
+async def broadcast_document_update(user_id: str, document_id: str):
+    doc = getter.get_document_public_by_id(document_id)
+    
+    # Create a document message
+    document_message = BroadcastMessage(
+        user_id=user_id,
+        message_type=WebSocketMessageType.DOCUMENT.value,
+        data=doc.model_dump_json(),
+        document_id=document_id
+    )
+    
+    # Broadcast the message
+    await manager.broadcast_message(document_message)
+    
+    return {"status": "success", "message": f"Document {document_id} broadcast to user {user_id}"}
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    while True:
+        data = await websocket.receive_text()
+        await websocket.send_text(f"Message text was: {data}")
+
+
+@app.get(
+    "/search_wikidata_for_entities", tags=[Groups.FOR_TESTING.value], status_code=200
+)
+async def search_wikidata_for_entities():
+    try:
+        await entity_handler.find_entities_without_wikidata_id()
+        return {"Message": "Wikidata search completed"}
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(status_code=500, detail="Wikidata search failed")
+
+
+@app.post("/run_external/{function_name}", tags=[Groups.ACTION.value])
+async def run_external_function(function_name: str, args: list[str] = []):
+    """Execute a function in external_runner.py"""
+    logger.info(f"Running external function {function_name} with args: {args}")
+    
+    # Construct the command
+    runner_path = os.path.join(os.path.dirname(__file__), "external_runner.py")
+    command = ["python", runner_path, function_name] + args
+    
+    try:
+        # Create and run the subprocess
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        # Get output
+        stdout, stderr = await process.communicate()
+        
+        # Log results
+        logger.info(f"External function completed with return code: {process.returncode}")
+        if stdout:
+            logger.info(f"stdout: {stdout.decode()}")
+        if stderr:
+            logger.error(f"stderr: {stderr.decode()}")
+            
+        return {
+            "status": "completed",
+            "return_code": process.returncode,
+            "stdout": stdout.decode() if stdout else None,
+            "stderr": stderr.decode() if stderr else None
+        }
+        
+    except Exception as e:
+        logger.error(f"Error running external function: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Failed to run external function: {str(e)}"
+        )
+
+

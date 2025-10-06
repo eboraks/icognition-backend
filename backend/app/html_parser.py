@@ -205,20 +205,20 @@ def get_webpage(payload: PagePayload) -> BeautifulSoup:
     try:
 
         if payload.html:
-            logging.info("Html_parser -> get_webpage -> Using payload html")
+            logger.info("Html_parser -> get_webpage -> Using payload html")
             return BeautifulSoup(payload.html, "html.parser")
 
-        logging.info("Html_parser -> get_webpage -> requests.get -> payload.url")
+        logger.info("Html_parser -> get_webpage -> requests.get -> payload.url")
         response = requests.get(payload.url)
         content = response.text
         return BeautifulSoup(content, "html.parser")
     except requests.exceptions.InvalidSchema as e:
-        logging.error(
+        logger.error(
             f"InvalidSchema wrror getting webpage: {payload.url} with error: {e}"
         )
         return None
     except Exception as e:
-        logging.error(f"Error getting webpage: {payload.url} with error: {e}")
+        logger.error(f"Error getting webpage: {payload.url} with error: {e}")
         return None
 
 
@@ -242,9 +242,9 @@ def find_main_article_element(soup: BeautifulSoup) -> list[str]:
     if len(content_estimator) == 0:
         return None
 
-    logging.info(content_estimator)
+    logger.info(content_estimator)
     if max(content_estimator) < 3:
-        logging.warning("Not enought content on the page")
+        logger.warning("Not enought content on the page")
         raise ValueError("Not enough contect on the page")
 
     # Select the article element with the most content
@@ -326,14 +326,14 @@ def create_page(payload: PagePayload) -> Page:
 
     html = get_webpage(payload)
     if html is None:
-        logging.error("No webpage found")
+        logger.error("No webpage found")
         return None
 
     if payload.source == "web":
         article_element = find_main_article_element(html)
 
         if article_element is None:
-            logging.error("No article element found in webpage")
+            logger.error("No article element found in webpage")
             return None
 
         paragraphs = get_paragraphs(article_element)
@@ -348,7 +348,7 @@ def create_page(payload: PagePayload) -> Page:
 
  
     if paragraphs is None:
-        logging.error("No paragraphs found in webpage")
+        logger.error("No paragraphs found in webpage")
         return None
 
     metatags = get_meta_tags(html)

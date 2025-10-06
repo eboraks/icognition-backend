@@ -45,7 +45,6 @@ class DocumentService(UserIsolatedService[Document]):
             "title": title,
             "raw_html": raw_html or "",
             "content_source": content_source,
-            "status": "pending",
             **kwargs
         }
         
@@ -68,14 +67,13 @@ class DocumentService(UserIsolatedService[Document]):
         # Get or create user
         user = await UserService.get_or_create_user(self.session, user_id)
         
-        # Update status to fetching
+        # Create document for URL fetching
         document_data = {
             "user_id": user.id,
             "url": url,
             "title": title or "Fetching...",
             "raw_html": "",
-            "content_source": "url",
-            "status": "fetching"
+            "content_source": "url"
         }
         
         document = Document(**document_data)
@@ -96,7 +94,7 @@ class DocumentService(UserIsolatedService[Document]):
                 
                 # Update document with fetched content
                 document.raw_html = html_content
-                document.status = "fetched"
+                # Document fetched successfully
                 
                 # Update title if not provided or if extracted title is better
                 if not title and enhanced_metadata.get('title'):
@@ -139,7 +137,7 @@ class DocumentService(UserIsolatedService[Document]):
                 
             else:
                 # Fetch failed
-                document.status = "fetch_failed"
+                # Document fetch failed
                 document.document_metadata = {
                     'fetch_error': fetch_metadata.get('error', 'Unknown error'),
                     'fetch_metadata': fetch_metadata
@@ -151,7 +149,7 @@ class DocumentService(UserIsolatedService[Document]):
             
         except Exception as e:
             # Handle unexpected errors
-            document.status = "fetch_error"
+            # Document fetch error
             document.document_metadata = {
                 'fetch_error': f'Unexpected error: {str(e)}'
             }
@@ -190,7 +188,7 @@ class DocumentService(UserIsolatedService[Document]):
                 "raw_html": content,
                 "content": extracted_text,
                 "content_source": "html",
-                "status": "processed"
+                # Document processed
             }
             
         elif content_type == "text":
@@ -207,7 +205,7 @@ class DocumentService(UserIsolatedService[Document]):
                 "raw_html": wrapped_html,
                 "content": content,
                 "content_source": "text",
-                "status": "processed"
+                # Document processed
             }
         
         else:
@@ -315,8 +313,7 @@ class DocumentService(UserIsolatedService[Document]):
         if not document:
             return None
         
-        # Update status to fetching
-        document.status = "fetching"
+        # Document fetching
         await self.session.commit()
         
         try:
@@ -332,7 +329,7 @@ class DocumentService(UserIsolatedService[Document]):
                 
                 # Update document with fetched content
                 document.raw_html = html_content
-                document.status = "fetched"
+                # Document fetched successfully
                 
                 # Update title if extracted title is better
                 if enhanced_metadata.get('title') and len(enhanced_metadata['title']) > len(document.title):
@@ -377,7 +374,7 @@ class DocumentService(UserIsolatedService[Document]):
                 
             else:
                 # Fetch failed
-                document.status = "fetch_failed"
+                # Document fetch failed
                 if document.document_metadata is None:
                     document.document_metadata = {}
                 document.document_metadata.update({
@@ -391,7 +388,7 @@ class DocumentService(UserIsolatedService[Document]):
             
         except Exception as e:
             # Handle unexpected errors
-            document.status = "fetch_error"
+            # Document fetch error
             if document.document_metadata is None:
                 document.document_metadata = {}
             document.document_metadata['fetch_error'] = f'Unexpected error: {str(e)}'
@@ -405,8 +402,7 @@ class DocumentService(UserIsolatedService[Document]):
         self,
         user_id: str,
         page: int = 1,
-        page_size: int = 20,
-        status: Optional[str] = None
+        page_size: int = 20
     ) -> Tuple[List[Document], int]:
         """Get paginated list of user documents"""
         
@@ -417,13 +413,10 @@ class DocumentService(UserIsolatedService[Document]):
         # Build query
         query = select(Document).where(Document.user_id == user.id)
         
-        if status:
-            query = query.where(Document.status == status)
+        # Status filtering removed (status field no longer exists)
         
         # Get total count
         count_query = select(func.count(Document.id)).where(Document.user_id == user.id)
-        if status:
-            count_query = count_query.where(Document.status == status)
         
         total_result = await self.session.execute(count_query)
         total = total_result.scalar()
@@ -509,20 +502,17 @@ class DocumentService(UserIsolatedService[Document]):
         result = await self.session.execute(query)
         return result.scalars().all()
 
-    async def update_document_status(
+    async def update_document_metadata(
         self,
         user_id: str,
         document_id: str,  # Changed from int to str for UUID
-        status: str,
         **metadata_updates
     ) -> Optional[Document]:
-        """Update document processing status"""
+        """Update document metadata"""
         
         document = await self.get_document_by_id(user_id, document_id)
         if not document:
             return None
-        
-        document.status = status
         
         # Update metadata if provided
         if metadata_updates:
@@ -533,22 +523,21 @@ class DocumentService(UserIsolatedService[Document]):
         await self.session.commit()
         await self.session.refresh(document)
         
-        logger.info(f"Updated document {document_id} status to {status}")
+        logger.info(f"Updated document {document_id} metadata")
         return document
 
-    async def get_documents_by_status(
+    async def get_user_documents_all(
         self,
-        user_id: str,
-        status: str
+        user_id: str
     ) -> List[Document]:
-        """Get all documents with a specific status"""
+        """Get all documents for a user"""
         
         user = await UserService.get_user_by_firebase_uid(self.session, user_id)
         if not user:
             return []
         
         query = select(Document).where(
-            and_(Document.user_id == user.id, Document.status == status)
+            Document.user_id == user.id
         ).order_by(Document.created_at.desc())
         
         result = await self.session.execute(query)
@@ -556,10 +545,9 @@ class DocumentService(UserIsolatedService[Document]):
 
     async def count_user_documents(
         self,
-        user_id: str,
-        status: Optional[str] = None
+        user_id: str
     ) -> int:
-        """Count user documents, optionally filtered by status"""
+        """Count user documents"""
         
         user = await UserService.get_user_by_firebase_uid(self.session, user_id)
         if not user:
@@ -567,14 +555,13 @@ class DocumentService(UserIsolatedService[Document]):
         
         query = select(func.count(Document.id)).where(Document.user_id == user.id)
         
-        if status:
-            query = query.where(Document.status == status)
+        # Status filtering removed (status field no longer exists)
         
         result = await self.session.execute(query)
         return result.scalar()
     
     async def _validate_document_content(self, document: Document) -> None:
-        """Validate document content and update status accordingly"""
+        """Validate document content"""
         try:
             from app.services.content_validation_service import get_content_validation_service
             
@@ -608,13 +595,10 @@ class DocumentService(UserIsolatedService[Document]):
                 'processing_time': validation_report.processing_time
             }
             
-            # Update document status based on validation
+            # Document validation completed
             if validation_report.is_valid:
-                if document.status == "fetched":
-                    document.status = "validated"
                 logger.info(f"Document {document.id} content validation passed (score: {validation_report.overall_score:.2f})")
             else:
-                document.status = "validation_failed"
                 logger.warning(f"Document {document.id} content validation failed (score: {validation_report.overall_score:.2f})")
                 
                 # Add validation issues to metadata
