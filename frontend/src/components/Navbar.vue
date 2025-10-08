@@ -28,7 +28,7 @@
                 <!-- Actions -->
                 <div class="col-3 md:flex pr-3 align-items-center justify-content-end">
                     <div class="hidden md:flex website-login-logout">
-                        <div v-if="user_state.user" class="text-right">
+                        <div v-if="authStore.isAuthenticated" class="text-right">
                             <button type="button" class="login-with-google-btn mr-2" @click="handleLogout">
                                 Logout
                             </button>
@@ -46,16 +46,12 @@
     <header
         data-test="header"
         id="app-header"
-        class="header w-full bg-primary-800 shadow-5 overflow-hidden sticky top-0"
-        style="z-index: 500;"
+        class="header w-full bg-primary-800 shadow-5 sticky top-0"
+        style="z-index: 1000;"
         tabindex="-1">
         <div class="grid">
-            <a href="#page" class="hidden">
-                Skip to Content
-            </a>
-            <!-- Background -->
             <div class="flex col-12 pb-0">
-                <!-- Title and nav wrapper -->
+                <!-- Logo section -->
                 <div class="col-3 py-1" style="min-width: 9.5em;">
                     <div class="header-title app-header-title mt-2" data-animation-role="header-element">
                         <div class="header-title-logo">
@@ -67,27 +63,19 @@
                         </div>
                     </div>
                 </div>
+                
+                <!-- Center tabs section -->
                 <div class="col-6 text-center py-1 flex align-content-center flex-wrap">
-                    <!-- Title / App Routing -->
                     <div class="app-header-routing flex flex-row text-white" data-animation-role="header-element">
-                        <p :class="[router.currentRoute.value.name == 'library' || router.currentRoute.value.name == 'docxray' ? 'selectedRoute': '']" class="mr-3 text-lg cursor-pointer text-400" @click="router.push('/Library')">My Library</p>
-                        <p :class="[router.currentRoute.value.name == 'collections' || router.currentRoute.value.name == 'collectiondetails' ? 'selectedRoute': '']" class="mr-3 text-lg cursor-pointer text-400" @click="router.push('/Collections')" >My Collections</p>
-                    </div>
-                    <div class="header-title website-header-title w-full" data-animation-role="header-element">
-                        <div class="header-title-logo md:pt-3 xs:pt-3">
-                            <a href="/" data-animation-role="header-element">
-                                <img
-                                src="/src/assets/images/iCognitionLogo.png?format=1500w"
-                                alt="iCognition.ai">
-                            </a>
-                        </div>
+                        <p :class="[router.currentRoute.value.name == 'library' || router.currentRoute.value.name == 'docxray' ? 'selectedRoute': '']" class="mr-3 text-lg cursor-pointer text-400" @click="router.push('/library')">My Library</p>
+                        <p :class="[router.currentRoute.value.name == 'collections' || router.currentRoute.value.name == 'collectiondetails' ? 'selectedRoute': '']" class="mr-3 text-lg cursor-pointer text-400" @click="router.push('/collections')" >My Collections</p>
                     </div>
                 </div>
 
-                <!-- Actions -->
+                <!-- Actions section -->
                 <div class="col-3 md:flex pr-3 py-1 align-items-center justify-content-end">
                     <div class="hidden md:flex website-login-logout">
-                        <div v-if="user_state.user" class="text-right">
+                        <div v-if="authStore.isAuthenticated" class="text-right">
                             <button type="button" class="login-with-google-btn mr-2" @click="handleLogout">
                                 Logout
                             </button>
@@ -102,13 +90,35 @@
                         <Button type="button" class="bg-primary text-white" @click="toggleWebsiteMenu" icon="pi pi-user" aria-haspopup="true" aria-controls="overlay_menu" />
                         <Menu ref="menu_website" id="overlay_menu" :model="website_menu_items" :popup="true" />
                     </div>
-                    <div class="card px-4 py-0 flex justify-content-end app-profile">
-                        <Button @click="toggleAppMenu" rounded aria-haspopup="true" aria-controls="overlay_menu" aria-label="User" style="background-repeat: no-repeat; background-size: cover;" :style="{ backgroundImage: `url(${user_state?.user?.photoURL})` }" />
-                        <a @click="toggleAppMenu" class="flex flex-row">
-                            <p class="text-white ml-2">{{ user_state?.user?.displayName }}</p>
+                    <div class="card px-4 py-0 flex justify-content-end app-profile" style="position: relative;">
+                        <div @click="toggleAppMenu" class="flex flex-row align-items-center cursor-pointer" style="position: relative;">
+                            <img v-if="authStore.currentUser?.photoURL" 
+                                 :src="authStore.currentUser.photoURL" 
+                                 alt="User Avatar" 
+                                 class="border-circle mr-2" 
+                                 style="width: 32px; height: 32px;" />
+                            <div v-else class="bg-primary border-circle mr-2 flex align-items-center justify-content-center" 
+                                 style="width: 32px; height: 32px;">
+                                <i class="pi pi-user text-white"></i>
+                            </div>
+                            <p class="text-white ml-2">{{ authStore.currentUser?.displayName }}</p>
                             <i class="pi pi-angle-down text-white ml-2 mt-1"></i>
-                        </a>
-                        <Menu ref="menu_app" id="overlay_menu" :model="app_menu_items" :popup="true" />
+                        </div>
+                        
+                        <!-- Simple dropdown menu -->
+                        <div v-if="showAppMenu" 
+                             @click.stop
+                             class="absolute bg-white border-round shadow-3 p-2"
+                             style="top: 100%; right: 0; min-width: 150px; z-index: 9999; border: 1px solid #e0e0e0;">
+                            <div @click="handleLogout" 
+                                 class="p-2 cursor-pointer border-round flex align-items-center text-gray-700"
+                                 style="transition: background-color 0.2s;"
+                                 @mouseover="$event.target.style.backgroundColor = '#f5f5f5'"
+                                 @mouseout="$event.target.style.backgroundColor = 'transparent'">
+                                <i class="pi pi-sign-out mr-2"></i>
+                                Sign Out
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -123,59 +133,80 @@
 </script>
 
 <script setup lang="ts">
-    import { useLogout } from '@/composables/useLogout';
-    import { useSignin } from '@/composables/useLogin';
-    import user_state from '@/composables/getUser';
+    import { useAuthStore } from '../stores/auth_store.js';
     import { useRouter } from 'vue-router';
-    import { ref } from 'vue';
-    import { auth } from '@/firebase/config';
+    import { ref, onMounted, onUnmounted, nextTick } from 'vue';
+    import Button from 'primevue/button';
+    import Menu from 'primevue/menu';
+    import Menubar from 'primevue/menubar';
+    import TabMenu from 'primevue/tabmenu';
 
-    const { error, logout } = useLogout();
-    const { login_error, login, isPending, loginGoogle } = useSignin();
-    const menu_app = ref();
+    const authStore = useAuthStore();
     const menu_website = ref();
+    const showAppMenu = ref(false);
     const router = useRouter();
 
     const toggleAppMenu = (event: Event) => {
-        menu_app.value.toggle(event);
+        event.stopPropagation();
+        showAppMenu.value = !showAppMenu.value;
+        console.log('Toggle app menu:', showAppMenu.value);
     };
 
     const toggleWebsiteMenu = (event: Event) => {
         menu_website.value.toggle(event);
     };
 
-    // Check if user is logged in. If so, redirect to library page
-    // I ended up using this listener in Navbar because I wasn't able to redirect after login because of race condition. 
-    // The router guard always executed before the user was fully logged in.
-    auth.onAuthStateChanged(async (_user: any) => {
-        if (user_state.user) {
-            if (router.currentRoute.value.name == 'home') {
-                router.push({ name: 'library' });
-            }
-        }
+    // Close menu when clicking outside
+    const closeMenu = () => {
+        showAppMenu.value = false;
+    };
+
+    // Clean up function
+    const cleanup = () => {
+        showAppMenu.value = false;
+        document.removeEventListener('click', closeMenu);
+    };
+
+    onMounted(() => {
+        document.addEventListener('click', closeMenu);
     });
 
+    onUnmounted(() => {
+        cleanup();
+    });
+
+    // Note: Navigation is now handled by router guards, not component watchers
+
     const handleLogout = async () => {
+        console.log('Starting logout process...');
+        showAppMenu.value = false; // Close menu first
+        
         try {
-            await logout().then(() => {
-                router.push('/');
-            }).catch((error: any) => {
-                console.log(error.value);
-            });
+            await authStore.logout();
+            console.log('Logout successful, navigating to home...');
+            
+            // Use nextTick to ensure DOM is stable before navigation
+            await nextTick();
+            await router.push('/');
+            
+            console.log('Navigation completed');
         } catch (error: any) {
-            console.log(error.value);
+            console.error('Logout error:', error);
         }
     }
 
     const handleGoogleLogin = async () => {
         try {
-            await loginGoogle().then(() => {
-                console.log('Login successful using Google: ', user_state.user);
-            }).catch((error: any) => {
-                console.log(error);
-            });
+            await authStore.loginWithGoogle();
+            console.log('Login successful using Google:', authStore.currentUser);
+            
+            // Navigate to library after successful login
+            console.log('Redirecting to library after login...');
+            await nextTick();
+            await router.push('/library');
+            console.log('Navigation to library completed');
         } catch (error: any) {
-            console.log('Login failed using Google: ', user_state.user);
+            console.error('Login failed using Google:', error);
         }
     }
 
@@ -230,5 +261,26 @@
             document.getElementById('website-header')?.classList.add('hidden');
             document.getElementById('app-header')?.classList.remove('hidden');
         }
+    });
+
+    const tabItems = ref([
+        { label: 'My Library', route: '/library' },
+        { label: 'My Collections', route: '/collections' }
+    ]);
+
+    const activeTabIndex = ref(0);
+
+    const syncActiveTab = () => {
+        const name = router.currentRoute.value.name as string | undefined;
+        activeTabIndex.value = name === 'collections' || name === 'collectiondetails' ? 1 : 0;
+    };
+
+    const onTabChange = (e: any) => {
+        const item = tabItems.value[e.index];
+        if (item?.route) router.push(item.route);
+    };
+
+    onMounted(() => {
+        syncActiveTab();
     });
 </script>

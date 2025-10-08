@@ -184,3 +184,41 @@
         background-color: black;
     }
 }
+
+// Library-specific styles
+.p-splitter {
+    border: none;
+    background: transparent;
+}
+
+.p-splitter .p-splitter-panel {
+    background: transparent;
+}
+
+.p-datatable {
+    background: white !important;
+
+    .p-datatable-wrapper {
+        background: white !important;
+    }
+
+    .p-datatable-thead > tr > th {
+        background: white !important;
+    }
+
+    .p-datatable-tbody > tr {
+        background: white !important;
+    }
+
+    .p-datatable-tbody > tr > td {
+        background: white !important;
+    }
+
+    .p-datatable-row-expansion {
+        background: white !important;
+    }
+
+    .p-datatable-row-expansion > td {
+        background: white !important;
+    }
+}

@@ -1,23 +1,32 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { RouteRecordRaw } from "vue-router";
-import user_state from '@/composables/getUser.js';
+import { useAuthStore } from '../stores/auth_store.js';
 
-// route guard
+// Route guard for protected routes (requires authentication)
 const requireAuth = (to: any, from: any, next: any) => {
-  if (!user_state.user) {
-    console.log('require auth: user not logged in. User: ', user_state.user)
-    next({ name: 'home' })
+  const authStore = useAuthStore();
+  
+  if (!authStore.isAuthenticated) {
+    console.log('Route guard: User not authenticated, redirecting to home');
+    next({ name: 'home' });
   } else {
-    next()
+    console.log('Route guard: User authenticated, allowing access');
+    next();
   }
 };
 
-const authenticated = (to: any, from: any, next: any) => {
-  if (user_state.user) {
-    console.log('authenticated: user logged in. From: ', from, ' To: ', to)
-    next({ name: to })
+// Route guard for guest-only routes (redirect if already authenticated)
+const guestOnly = (to: any, from: any, next: any) => {
+  const authStore = useAuthStore();
+  
+  console.log('Guest-only route guard - Auth status:', authStore.isAuthenticated, 'User:', authStore.currentUser);
+  
+  if (authStore.isAuthenticated) {
+    console.log('Route guard: User already authenticated, redirecting to library');
+    next({ name: 'library' });
   } else {
-    next()
+    console.log('Route guard: User not authenticated, allowing access to guest route');
+    next();
   }
 };
 
@@ -25,8 +34,7 @@ const routes: Array<RouteRecordRaw> = [
   {
     path: '/',
     name: 'home',
-    component: () => import("@/views/HomeView.vue"),
-    beforeEnter: authenticated
+    component: () => import("../views/HomeView.vue")
   },
   // {
   //   path: '/:pathMatch(.*)*',
@@ -37,44 +45,71 @@ const routes: Array<RouteRecordRaw> = [
   {
     path: '/library',
     name: 'library',
-    component: () => import("@/views/DocumentContainer.vue"),
-    beforeEnter: requireAuth
+    component: () => import("../views/DocumentContainer.vue")
   },
   {
     path: '/collections',
     name: 'collections',
-    component: () => import("@/views/library/Collections.vue"),
-    beforeEnter: requireAuth
+    component: () => import("../views/library/Collections.vue")
   },
   {
     path: '/collectiondetails/:id',
     name: 'collectiondetails',
-    component: () => import("@/views/library/CollectionDetails.vue"),
-    beforeEnter: requireAuth,
+    component: () => import("../views/library/CollectionDetails.vue"),
     props: true
   },
   { 
     path: '/docxray/:id',
     name: 'docxray',
-    component: () => import("@/views/library/DocXRayView.vue"),
-    beforeEnter: requireAuth,
+    component: () => import("../views/library/DocXRayView.vue"),
     props: true
   },
   { 
     path: '/privacy-policy',
     name: 'privacy-policy',
-    component: () => import("@/components/PrivacyPolicy.vue"),
+    component: () => import("../components/PrivacyPolicy.vue"),
   },
   { 
     path: '/terms-of-use',
     name: 'terms-of-use',
-    component: () => import("@/components/TermsOfUse.vue"),
+    component: () => import("../components/TermsOfUse.vue"),
   }
 ];
 
 const router = createRouter({
   history: createWebHistory(),
   routes
+});
+
+// Global navigation guard to ensure auth state is initialized and handle redirects
+router.beforeEach(async (to, from, next) => {
+  const authStore = useAuthStore();
+  
+  // Wait for auth initialization if not already done
+  if (!authStore.initialized) {
+    console.log('Router: Waiting for auth initialization...');
+    await authStore.initAuth();
+  }
+  
+  console.log('Global router guard - going to:', to.name, 'authenticated:', authStore.isAuthenticated);
+  
+  // Handle automatic redirects based on auth state
+  const protectedRoutes = ['library', 'search', 'collections', 'document', 'analyze', 'profile'];
+  const guestRoutes = ['home'];
+  
+  if (authStore.isAuthenticated && guestRoutes.includes(to.name as string)) {
+    console.log('Authenticated user accessing guest route, redirecting to library');
+    next({ name: 'library' });
+    return;
+  }
+  
+  if (!authStore.isAuthenticated && protectedRoutes.includes(to.name as string)) {
+    console.log('Unauthenticated user accessing protected route, redirecting to home');
+    next({ name: 'home' });
+    return;
+  }
+  
+  next();
 });
 
 export default router;

@@ -1,68 +1,40 @@
 <template>
     <div id="body-library" class="grid nested-grid grid-nogutter col-12 surface-100" style="height: calc(100% - 4.5em - 5.25em);">
         <div class="col-12 bg-white border-round border-300 border-2 p-0 h-full">
-            <Splitter class="grid nested-grid grid-nogutter h-full border-round border-noround-right">
-                <SplitterPanel :class="{ 'splitter-panel-container-small': !buttonToggleSplitterPanelLeft }" class="col-12 p-2 border-round bg-primary-800 border-noround-right" :size="25" :minSize="1">
+            <Splitter class="h-full border-round border-noround-right">
+                <SplitterPanel :class="{ 'splitter-panel-container-small': !buttonToggleSplitterPanelLeft }" class="p-2 border-round bg-primary-500 border-noround-right" :size="25" :minSize="1">
                     <div class="grid h-full">
                         <div class="col-6">
                             <Button v-if="!buttonToggleSplitterPanelLeft" class="bg-transparent border-transparent border-0 text-white ml-1" icon="pi pi-filter" @click="buttonToggleSplitterPanelLeft = !buttonToggleSplitterPanelLeft" rounded aria-label="Expand Panel"/>
-                            <h4 v-if="buttonToggleSplitterPanelLeft" class="font-semibold pt-2 text-white">Filters</h4>
+                            <h4 v-if="buttonToggleSplitterPanelLeft" class="font-semibold pt-2 text-white">Filter by Topic</h4>
                         </div>
                         <div class="col-6 text-right">
                             <Button v-if="buttonToggleSplitterPanelLeft" class="bg-transparent border-transparent border-0 text-white" icon="pi pi-filter" @click="buttonToggleSplitterPanelLeft = !buttonToggleSplitterPanelLeft" rounded aria-label="Collapse Panel"/>
                         </div>
                         <div class="w-full" style="height: calc(100% - 3.75em);" v-if="buttonToggleSplitterPanelLeft">
-                            <div v-if="documentStore.tree_nodes.length == 0 && documentStore.isPendingLibrary" class="flex flex-flow justify-content-center">
+                            <div v-if="documentStore.isPendingLibrary" class="flex flex-flow justify-content-center">
                                 <i class="text-white pi pi-spin pi-spinner" style="font-size: 2rem"></i>
                             </div>                         
-                            <div v-if="documentStore.tree_nodes.length == 0 && !documentStore.isPendingLibrary">
-                                <div class="col-12 pt-7 mt-6">
-                                    <img class="flex m-auto" alt="bookmark" style="max-width: 100px;" src="/src/assets/images/icons/bookmark.png" />
-                                </div>
-                                <div class="col-12">
-                                    <p class="flex text-center m-auto text-white" style="max-width: 60%;">
-                                        You don't have any bookmark filters created yet, because you haven't bookmarked any pages.
-                                    </p>
-                                </div>
-                            </div>
                             <div class="w-full h-full" v-else>
                                 <div class="w-full border-round-lg h-full">
-                                    <SubtopicsTree />
+                                    <LibraryFilters :nodes="documentStore.tree_nodes" @update:filters="onCheckedIds" />
                                 </div>
                             </div>
                         </div>
                     </div>
                 </SplitterPanel>
-                <SplitterPanel :class="{ 'splitter-panel-container-big': !buttonToggleSplitterPanelLeft }" class="col-12 p-0" :size="75">
-                    <div class="flex flex-row w-full" style="height: 3.3em;">
-                        <div class="col-6 mt-1">
-                            <IconField>
-                                <InputIcon>
-                                    <i class="pi pi-search" />
-                                </InputIcon>
-                                <AutoComplete class="surface-50 border-round-lg w-full" inputId="ac" v-model="search_term" :suggestions="items" 
-                                    @complete="autocompleteSearch" @keydown.enter="searchHandle"  
-                                    @input="inputHandle" @keydown.escape="emptied" placeholder="Search"/> 
-                            </IconField>
-                        </div>
-                        <div class="col-6 flex align-content-between flex-wrap justify-content-end pr-0">
-                            <a class="px-5 py-1 font-semibold" @click="onExpandAll" style="height: 2rem;" tabindex="0">
-                                <i class="pi pi-plus text-black-alpha-90 text-xs"></i> Expand All
-                            </a>
-                        <a @click="onCollapseAll" class="px-5 py-1 mr-3 font-semibold" style="height: 2rem;" tabindex="0">
-                            <i class="pi pi-minus text-black-alpha-90 text-xs"></i> Collapse All
-                        </a>
-                            <Button type="button" label="Upload PDF" aria-label="Upload PDF" class="p-2 mr-2 bg-primary-500" @click="showUploadFileDialog = !showUploadFileDialog" />
-                        </div>
+                <SplitterPanel :class="{ 'splitter-panel-container-big': !buttonToggleSplitterPanelLeft }" class="p-0 bg-white flex flex-column" :size="75">
+                    <div class="flex flex-row w-full p-3 bg-white" style="flex-shrink: 0;">
+                        <LibraryToolbar class="w-full" @search="onToolbarSearch" @expandAll="onExpandAll" @collapseAll="onCollapseAll" @upload="onUpload" />
                     </div>
                     <!-- Div that will display RAG answer if resp_type === RAGAnswer -->
-                    <div v-if="documentStore.resp_type === 'RAGAnswer'" class="col-12 p-0">
+                    <div v-if="documentStore.resp_type === 'RAGAnswer'" class="col-12 p-0 bg-white">
                         <div class="col-12 p-0">
                             <div class="col-8 p-4">{{ documentStore.answer }}</div>
                         </div>
                     </div>
-                    <div class="card" style="height: calc(100% - 3.3em);">
-                        <Library ref="docsTable" :documents="documentStore.getDocuments"/>
+                    <div class="bg-white" style="flex-grow: 1; overflow: auto;">
+                        <LibraryTable ref="docsTable" :documents="libraryStore.filteredDocuments" :loading="libraryStore.loading"/>
                     </div>
                 </SplitterPanel>
             </Splitter>
@@ -74,17 +46,22 @@
 </template>
 
 <script lang="ts">
-    import Library from '@/views/library/Documents.vue';
+    import LibraryTable from '@/components/library/LibraryTable.vue';
     export default {
         name: 'DocumentContainer',
         components: {
-            'Library': Library
+            'LibraryTable': LibraryTable
         }
     }
 </script>
 
 <script lang="ts" setup>
-    import SubtopicsTree from '@/components/SubtopicsTree.vue';
+    import LibraryFilters from '@/components/library/LibraryFilters.vue';
+    import LibraryToolbar from '@/components/library/LibraryToolbar.vue';
+    import { useLibraryStore } from '@/stores/library_store';
+    import Splitter from 'primevue/splitter';
+    import SplitterPanel from 'primevue/splitterpanel';
+    import Button from 'primevue/button';
     
     import user_state from '@/composables/getUser';
     import { handleFileUpload } from '@/composables/handleFileUpload';
@@ -110,13 +87,20 @@
 
     const docsTable = ref<any>(null);
     const onExpandAll = () => {
-        docsTable.value.onExpandAll(); 
+        if (docsTable.value?.expandedRows) {
+            const newExpandedRows: { [key: string]: boolean } = {};
+            libraryStore.documents.forEach(doc => {
+                newExpandedRows[doc.id] = true;
+            });
+            docsTable.value.expandedRows = newExpandedRows;
+        }
     }
     const onCollapseAll = () => {
-        docsTable.value.onCollapseAll();
+        if (docsTable.value?.expandedRows) docsTable.value.expandedRows = {};
     }
 
     const documentStore = useDocumentStore();
+    const libraryStore = useLibraryStore();
     const uploadUrl = ref('http://localhost:8889/create_source_upload_file/');
     
 
@@ -128,6 +112,7 @@
             
             //await getDocuments(user_state.user?.uid as string);
             await documentStore.fetchDocuments(user_state.user?.uid as string);
+            await libraryStore.fetchDocuments();
             console.log("Documents from document store: ", documentStore.getDocuments);
             //await getSubtopics(user_state.user.uid);
             await documentStore.getSubtopicsNodes(user_state.user?.uid as string);
@@ -167,12 +152,18 @@
 
     const onCheckedIds = (checkedIds: any) => {
         fitlerCheckedIds.value = checkedIds;
+        libraryStore.setFilters(checkedIds);
     }
 
 
     const emptied = () => {
         console.log("Emptied");
         search_term.value = '';
+        searchHandle();
+    }
+    const onToolbarSearch = (q: string) => {
+        search_term.value = q;
+        libraryStore.setSearch(q);
         searchHandle();
     }
     const searchHandle = async () => {

@@ -6,6 +6,10 @@
 @use './talkify.scss';
 @use './prime-components.scss';
 
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 @font-face {
   font-family: 'HarmoniaSans-Regular';
   src: asset-url('/fonts/HarmoniaSansProCyr-Regular.ttf') format('truetype');
