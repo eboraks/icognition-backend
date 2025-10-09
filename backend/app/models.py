@@ -10,9 +10,9 @@ from pgvector.sqlalchemy import Vector
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict
-from app.icog_util import remove_none_header_elements
+# Legacy import removed - icog_util moved to legacy_files
 
-from app.gemini_client import GeminiClient
+# Legacy import removed - gemini_client moved to legacy_files
 
 
 logging.basicConfig(
@@ -287,7 +287,7 @@ class Document(SQLModel, table=True):
             logging.error(f"Error processing source_text_in_html for document {self.id}: {e}")
             return ""
 
-    async def generate_vector(self, geminiClient: GeminiClient):
+    async def generate_vector(self, geminiClient=None):
 
         try:
             if self.ai_is_about and self.ai_bullet_points:
@@ -397,7 +397,7 @@ class Study_Collection(SQLModel, table=True):
     tasks: list["Study_Task"] = Relationship(back_populates="study_collection")
     created_at: datetime = Field(default_factory=datetime.now, nullable=True)
 
-    async def generate_vector(self, geminiClient: GeminiClient):
+    async def generate_vector(self, geminiClient=None):
         text = f"{self.description} \n"
         for task in self.tasks:
             text += f"{task.description} \n"
@@ -437,7 +437,7 @@ class Study_Task(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.now, nullable=True)
     updated_at: datetime = Field(default_factory=datetime.now, nullable=True)
 
-    async def generate_vector(self, geminiClient: GeminiClient):
+    async def generate_vector(self, geminiClient=None):
         self.description_vector = await geminiClient.generate_embedding(
             content=self.description
         )

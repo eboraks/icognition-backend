@@ -155,6 +155,7 @@ async def get_authenticated_user_context(
                 self.id = "test_user_12345"  # Simple test user ID
                 self.email = "test@example.com"
                 self.name = "Test User"
+                self.display_name = "Test User"  # Add display_name attribute
                 self.is_active = True
         
         mock_user = MockUser()
@@ -181,6 +182,7 @@ async def get_active_user_context(
                 self.id = "test_user_12345"  # Simple test user ID
                 self.email = "test@example.com"
                 self.name = "Test User"
+                self.display_name = "Test User"  # Add display_name attribute
                 self.is_active = True
         
         mock_user = MockUser()

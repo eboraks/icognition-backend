@@ -14,6 +14,7 @@ from collections import defaultdict, deque
 
 from app.services.base_service import DataIsolationValidator, SecurityError
 from app.utils.logging import get_logger
+from app.core.config import settings
 
 logger = get_logger(__name__)
 
@@ -134,6 +135,11 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         firebase_uid: Optional[str]
     ) -> None:
         """Perform comprehensive security checks"""
+        
+        # Skip security checks if auth is disabled (for testing)
+        if settings.DISABLE_AUTH:
+            logger.debug("Security checks skipped due to DISABLE_AUTH setting")
+            return
         
         # Check if IP is locked out
         if self._is_ip_locked(client_ip):

@@ -15,18 +15,14 @@ from app.core.user_context import UserContext, get_authenticated_user_context, g
 from app.services.bookmark_service import BookmarkService
 from app.api.models.user_models import UserProfileResponse
 from app.log import get_logger
-from app import app_logic, html_parser
-import app.getters as getter
 from app.services.content_analysis_service import get_content_analysis_service
-import app.embedding_handler as embedding_handler_module
-from app.models import Document, Bookmark, PagePayload
+from app.models import Document, Bookmark
 from app.services.document_service import DocumentService
 
 
 logger = get_logger(__name__)
 
-# Initialize embedding handler instance
-embedding_handler = embedding_handler_module.EmbeddingHandler()
+# Legacy embedding handler removed - using modern services instead
 
 
 async def _process_document_content(
@@ -236,7 +232,7 @@ async def create_bookmark(
                     existing_bookmark.title,
                     existing_bookmark.url
                 )
-                background_tasks.add_task(embedding_handler._find_documents_without_embeddings, user_context.user.id)
+                # Legacy embedding handler call removed - using modern services instead
 
             logger.info(f"Duplicate bookmark found for URL: {bookmark_data.url}, returning existing bookmark")
             return BookmarkResponse(
@@ -256,12 +252,12 @@ async def create_bookmark(
         
         logger.info(f"No duplicate found, proceeding with bookmark creation for URL: {bookmark_data.url}")
         
-        # Validate URL
-        if html_parser.unsupported_page_url(bookmark_data.url):
+        # Basic URL validation
+        if not bookmark_data.url or not bookmark_data.url.startswith(('http://', 'https://')):
             logger.warning(f"Invalid URL provided: {bookmark_data.url}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="I am sorry, I can't analyze home or search pages"
+                detail="Invalid URL provided"
             )
         
         # Check if we have clean text content (from iPhone app) or need to fetch HTML
@@ -275,28 +271,22 @@ async def create_bookmark(
             logger.info(f"Document created from clean text: {_doc.id if _doc else 'None'}")
         else:
             logger.info(f"Processing HTML content for URL: {bookmark_data.url}")
-            # Create page object from URL (this extracts content)
+            # Create document directly from URL using document service
+            document_service = DocumentService(session)
             
-            page_payload = PagePayload(
-                url=bookmark_data.url,
-                user_id=str(user_context.user.id),  # Convert to string for legacy compatibility
-                title=bookmark_data.title,
-                description=bookmark_data.description,
-                content=bookmark_data.content
-            )
-            
-            page = app_logic.create_page(page_payload)
-            
-            if page is None:
-                logger.warning(f"Page object not created for {bookmark_data.url}")
+            try:
+                _doc = await document_service.create_document_from_url(
+                    user_id=user_context.user.id,
+                    url=bookmark_data.url,
+                    title=bookmark_data.title
+                )
+                logger.info(f"Document created from URL: {_doc.id if _doc else 'None'}")
+            except Exception as e:
+                logger.warning(f"Failed to create document from URL {bookmark_data.url}: {e}")
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Hmm, I wasn't able to find information on this page. I sent a message to our engineers"
+                    detail="Unable to process the provided URL"
                 )
-            
-            # Create document from page
-            _doc = await _create_document_from_page(page, user_context, session)
-            logger.info(f"Document created from page: {_doc.id if _doc else 'None'}")
         
         logger.info(f"Final document status: {_doc.id if _doc else 'None'}")
         
@@ -327,7 +317,7 @@ async def create_bookmark(
             )
             
             # Find documents without embeddings
-            background_tasks.add_task(embedding_handler._find_documents_without_embeddings, user_context.user.id)
+            # Legacy embedding handler call removed - using modern services instead
         
         # Return bookmark response
         return BookmarkResponse(
@@ -741,46 +731,4 @@ async def _create_document_from_clean_text(
         raise
 
 
-async def _create_document_from_page(
-    page,
-    user_context: UserContext,
-    session: AsyncSession
-) -> Document:
-    """
-    Create Document from Page object (HTML content).
-    """
-    
-    logger.info(f"Creating document from page for URL: {page.clean_url}")
-    
-    # Check if document already exists for this URL
-    result = await session.execute(
-        select(Document).where(
-            Document.url == page.clean_url,
-            Document.user_id == user_context.user.id
-        )
-    )
-    existing_doc = result.scalar_one_or_none()
-    
-    if existing_doc:
-        logger.info(f"Document already exists for {page.clean_url}, returning existing document")
-        return existing_doc
-    
-    # Create new document from page
-    doc = Document(
-        title=page.title or "Untitled",
-        url=page.clean_url,
-        content_source="html",
-        raw_html=page.html_root_element,
-        content=page.full_text,
-        user_id=user_context.user.id,
-        created_at=datetime.now(),
-        updated_at=datetime.now()
-    )
-    
-    # Save to database
-    session.add(doc)
-    await session.commit()
-    await session.refresh(doc)
-    
-    logger.info(f"Created document {doc.id} from page")
-    return doc
+# Legacy _create_document_from_page function removed - using DocumentService instead
