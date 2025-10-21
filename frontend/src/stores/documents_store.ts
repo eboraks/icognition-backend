@@ -4,6 +4,7 @@ import { AskQuestionAnswerModel } from '@/components/models/AskQuestionAnswerMod
 import { DocModel } from '@/components/models/DocModel.ts';
 import { documentService } from '@/services/DocumentService';
 import { api } from '@/services/httpClient';
+import moment from 'moment';
 
 
 export const useDocumentStore = defineStore('documentStore', () => {
@@ -51,7 +52,16 @@ export const useDocumentStore = defineStore('documentStore', () => {
         try {
             // Use the new DocumentService to get documents
             const response = await documentService.getDocuments({ page_size: 100 });
-            docs.value = response.documents as DocModel[];
+            
+            // Map DocumentResponse to DocModel
+            docs.value = response.documents.map(docResponse => {
+                const docModel = new DocModel(docResponse.title, docResponse.url || '', docResponse.id.toString());
+                docModel.is_about = docResponse.ai_is_about;
+                docModel.tldr = docResponse.ai_bullet_points || [];
+                docModel.updateAt = docResponse.updated_at ? moment(docResponse.updated_at) : moment();
+                return docModel;
+            });
+            
             isPendingLibrary.value = false;
         } catch (err: any) {
             errorLibrary.value = err.message;
@@ -85,10 +95,10 @@ export const useDocumentStore = defineStore('documentStore', () => {
         isPendingLibrary.value = true;
         console.log("User id: ", user_id);
         try {
-            // This endpoint might not exist in the new backend, using placeholder
-            const response = await api.get(`/filter_nodes/${user_id}`);
-            tree_nodes.value = response.data;
-            console.log("Library Subtopics: ", tree_nodes.value);
+            // TODO: Implement /filter_nodes/ endpoint in backend for topic filtering
+            // For now, use empty array to avoid 404 errors
+            console.log("Topic filtering temporarily disabled - endpoint not implemented");
+            tree_nodes.value = [];
             isPendingLibrary.value = false;
         } catch (err: any) {
             errorLibrary.value = err.message;
@@ -101,10 +111,10 @@ export const useDocumentStore = defineStore('documentStore', () => {
         errorLibrary.value = null;
         isPendingLibrary.value = true;
         try {
-            // This endpoint might not exist in the new backend, using placeholder
-            const response = await api.get(`/entities_names/${user_id}`);
-            entities_names.value = response.data;
-            console.log("getEntitiesNames -> entities length: ", entities_names.value.length);
+            // TODO: Implement /entities_names/ endpoint in backend for entity filtering
+            // For now, use empty array to avoid 404 errors
+            console.log("Entity filtering temporarily disabled - endpoint not implemented");
+            entities_names.value = [];
             isPendingLibrary.value = false;
         } catch (err: any) {
             errorLibrary.value = err.message;
@@ -131,7 +141,7 @@ export const useDocumentStore = defineStore('documentStore', () => {
     // WebSocket setup
     const setupWebSocket = (user_id: string) => {
         const wsBaseUrl = import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:8000';
-        socket.value = new WebSocket(`${wsBaseUrl}/ws/${user_id}/app_documents`);
+        socket.value = new WebSocket(`${wsBaseUrl}/ws/${user_id}/extension`);
         
         socket.value.onopen = () => {
             console.log('WebSocket connection opened');

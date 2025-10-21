@@ -6,11 +6,26 @@ import json
 import re
 from typing import Optional, Dict, Any, List
 from datetime import datetime
+from pydantic import BaseModel, Field
 
 from app.services.gemini_service import get_gemini_service, GeminiModel, GeminiConfig
 from app.log import get_logger
 
 logger = get_logger(__name__)
+
+
+class DocumentSummary(BaseModel):
+    """Structured output for document summary"""
+    summary: str = Field(description="A concise 2-3 sentence summary of the document content")
+
+
+class DocumentBulletPoints(BaseModel):
+    """Structured output for document bullet points"""
+    bullet_points: List[str] = Field(
+        description="A list of 4-6 key bullet points summarizing the main topics",
+        min_items=4,
+        max_items=6
+    )
 
 
 class ContentAnalysisService:
@@ -110,11 +125,12 @@ class ContentAnalysisService:
         prompt = "\n".join(prompt_parts)
         
         try:
-            # Use Gemini Flash for fast summarization
+            # Use Gemini Flash for fast summarization with structured output
             config = GeminiConfig(
                 temperature=0.3,
                 max_output_tokens=200,
-                response_mime_type="text/plain"
+                response_mime_type="application/json",
+                response_schema=DocumentSummary
             )
             
             result = await self.gemini_service.generate_content(
@@ -123,7 +139,9 @@ class ContentAnalysisService:
                 config=config
             )
             
-            summary = result['content'].strip()
+            # Parse structured response
+            summary_data = json.loads(result['content'])
+            summary = summary_data['summary'].strip()
             logger.debug(f"Generated summary: {summary[:100]}...")
             return summary
             
@@ -167,11 +185,12 @@ class ContentAnalysisService:
         prompt = "\n".join(prompt_parts)
         
         try:
-            # Use Gemini Flash for bullet point extraction
+            # Use Gemini Flash for bullet point extraction with structured output
             config = GeminiConfig(
                 temperature=0.2,
                 max_output_tokens=500,
-                response_mime_type="application/json"
+                response_mime_type="application/json",
+                response_schema=DocumentBulletPoints
             )
             
             result = await self.gemini_service.generate_content(
@@ -180,29 +199,22 @@ class ContentAnalysisService:
                 config=config
             )
             
-            # Parse JSON response
-            try:
-                bullet_points = json.loads(result['content'])
-                if isinstance(bullet_points, list):
-                    # Clean and validate bullet points
-                    cleaned_points = []
-                    for point in bullet_points:
-                        if isinstance(point, str) and point.strip():
-                            cleaned_points.append(point.strip())
-                    
-                    # Ensure we have exactly 6 points
-                    while len(cleaned_points) < 6:
-                        cleaned_points.append("Additional information available in the full document.")
-                    
-                    logger.debug(f"Generated {len(cleaned_points)} bullet points")
-                    return cleaned_points[:6]  # Return max 6 points
-                else:
-                    raise ValueError("Response is not a list")
-                    
-            except (json.JSONDecodeError, ValueError) as e:
-                logger.warning(f"Failed to parse bullet points JSON: {str(e)}")
-                # Fallback: extract bullet points from text response
-                return self._extract_bullet_points_from_text(result['content'])
+            # Parse structured response
+            bullet_data = json.loads(result['content'])
+            bullet_points = bullet_data['bullet_points']
+            
+            # Clean and validate bullet points
+            cleaned_points = []
+            for point in bullet_points:
+                if isinstance(point, str) and point.strip():
+                    cleaned_points.append(point.strip())
+            
+            # Ensure we have at least 4 points
+            while len(cleaned_points) < 4:
+                cleaned_points.append("Additional information available in the full document.")
+            
+            logger.debug(f"Generated {len(cleaned_points)} bullet points")
+            return cleaned_points[:6]  # Return max 6 points
             
         except Exception as e:
             logger.error(f"Error generating bullet points: {str(e)}")

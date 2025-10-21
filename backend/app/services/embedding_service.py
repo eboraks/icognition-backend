@@ -74,7 +74,7 @@ class EmbeddingService:
         self,
         text: str,
         title: Optional[str] = None,
-        task_type: str = "SEMANTIC_SIMILARITY",
+        task_type: str = None,
         dimensions: int = None,
         model: GeminiModel = GeminiModel.FLASH
     ) -> EmbeddingResult:
@@ -84,7 +84,7 @@ class EmbeddingService:
         Args:
             text: Text to embed
             title: Optional title for context
-            task_type: Type of embedding task
+            task_type: Type of embedding task (auto-selected if None)
             dimensions: Embedding dimensions (default: 1536)
             model: Gemini model to use
             
@@ -92,6 +92,10 @@ class EmbeddingService:
             EmbeddingResult with embedding data
         """
         start_time = datetime.now()
+        
+        # Auto-select task type based on whether title is provided
+        if task_type is None:
+            task_type = "RETRIEVAL_DOCUMENT" if title else "SEMANTIC_SIMILARITY"
         
         if not text or not text.strip():
             return EmbeddingResult(
@@ -194,11 +198,10 @@ class EmbeddingService:
             # Combine text parts
             combined_text = "\n\n".join(text_parts)
             
-            # Generate embedding
+            # Generate embedding (task_type auto-selected based on title presence)
             return await self.generate_embedding(
                 text=combined_text,
-                title=document.title,
-                task_type="SEMANTIC_SIMILARITY"
+                title=document.title
             )
             
         except Exception as e:
@@ -259,7 +262,6 @@ class EmbeddingService:
             
             # Update document with embedding
             document.content_vector = embedding_result.embedding
-            document.status = "embedded"
             
             # Update document metadata
             if not document.document_metadata:

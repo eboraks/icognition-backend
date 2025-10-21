@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from enum import Enum
 
 import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from google.api_core import exceptions as gcp_exceptions
 
 from app.core.config import settings
@@ -22,9 +21,8 @@ logger = get_logger(__name__)
 
 class GeminiModel(Enum):
     """Available Gemini models"""
-    FLASH = "gemini-2.0-flash"
-    PRO = "gemini-1.5-pro-001"
-    EMBEDDING = "text-embedding-004"
+    FLASH = settings.GEMINI_FLASH_MODEL
+    EMBEDDING = settings.GEMINI_EMBEDDING_MODEL
 
 
 @dataclass
@@ -35,16 +33,7 @@ class GeminiConfig:
     top_k: int = 40
     max_output_tokens: int = 8192
     response_mime_type: str = "application/json"
-    safety_settings: Dict[str, Any] = None
-    
-    def __post_init__(self):
-        if self.safety_settings is None:
-            self.safety_settings = {
-                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            }
+    response_schema: Optional[Any] = None  # Pydantic model or schema for structured output
 
 
 @dataclass
@@ -87,12 +76,7 @@ class GeminiService:
             
             # Initialize models
             self.flash_model = genai.GenerativeModel(
-                model_name=GeminiModel.FLASH.value,
-                safety_settings=GeminiConfig().safety_settings
-            )
-            self.pro_model = genai.GenerativeModel(
-                model_name=GeminiModel.PRO.value,
-                safety_settings=GeminiConfig().safety_settings
+                model_name=GeminiModel.FLASH.value
             )
         
         # Rate limiting
@@ -155,20 +139,45 @@ class GeminiService:
             try:
                 logger.debug(f"Generating content with {model.value} (attempt {attempt + 1})")
                 
+                # Prepare generation config
+                generation_config_dict = {
+                    "temperature": config.temperature,
+                    "top_p": config.top_p,
+                    "top_k": config.top_k,
+                    "max_output_tokens": config.max_output_tokens,
+                    "response_mime_type": config.response_mime_type,
+                }
+                
+                # Add response schema if provided
+                if config.response_schema is not None:
+                    generation_config_dict["response_schema"] = config.response_schema
+                
                 # Generate content
                 response = await model_instance.generate_content_async(
                     prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=config.temperature,
-                        top_p=config.top_p,
-                        top_k=config.top_k,
-                        max_output_tokens=config.max_output_tokens,
-                        response_mime_type=config.response_mime_type,
-                    ),
-                    safety_settings=config.safety_settings
+                    generation_config=genai.types.GenerationConfig(**generation_config_dict)
                 )
                 
-                # Process response
+                # Check if response was blocked or incomplete
+                if not response.candidates or not response.candidates[0].content.parts:
+                    finish_reason = response.candidates[0].finish_reason if response.candidates else None
+                    
+                    # Different handling based on finish reason
+                    if finish_reason == 3:  # MAX_TOKENS
+                        logger.error(f"Response exceeded max tokens. Consider increasing max_output_tokens or reducing input size.")
+                        raise Exception(f"Response exceeded max output tokens. Finish reason: {finish_reason}")
+                    
+                    logger.warning(f"Response blocked or empty. Finish reason: {finish_reason}")
+                    
+                    # If this is not the last attempt, retry
+                    if attempt < retry_count - 1:
+                        logger.info(f"Retrying (attempt {attempt + 2}/{retry_count})...")
+                        await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                        continue
+                    else:
+                        raise Exception(f"Response blocked after all retries. Finish reason: {finish_reason}")
+                
+                # Process successful response
                 result = {
                     'content': response.text,
                     'model': model.value,
@@ -358,32 +367,14 @@ class GeminiService:
         """Get the appropriate model instance"""
         if model == GeminiModel.FLASH:
             return self.flash_model
-        elif model == GeminiModel.PRO:
-            return self.pro_model
         else:
             raise ValueError(f"Unsupported model: {model}")
     
     async def _check_rate_limits(self):
-        """Check and enforce rate limits"""
-        now = datetime.now()
-        
-        # Clean old request times (older than 1 minute)
-        self.request_times = [t for t in self.request_times if now - t < timedelta(minutes=1)]
-        
-        # Check requests per minute
-        if len(self.request_times) >= self.rate_limit_info.requests_per_minute:
-            sleep_time = 60 - (now - self.request_times[0]).seconds
-            if sleep_time > 0:
-                logger.warning(f"Rate limit reached, sleeping for {sleep_time} seconds")
-                await asyncio.sleep(sleep_time)
-        
-        # Check tokens per minute (rough estimation)
-        recent_tokens = sum(self.token_usage[-len(self.request_times):])
-        if recent_tokens >= self.rate_limit_info.tokens_per_minute:
-            sleep_time = 60 - (now - self.request_times[0]).seconds
-            if sleep_time > 0:
-                logger.warning(f"Token limit reached, sleeping for {sleep_time} seconds")
-                await asyncio.sleep(sleep_time)
+        """Check and enforce rate limits - simplified version"""
+        # Let Gemini API handle its own rate limiting
+        # We'll only add minimal delays if we get ResourceExhausted errors
+        pass
     
     def _update_rate_limits(self, input_tokens: int, output_tokens: int):
         """Update rate limiting information"""

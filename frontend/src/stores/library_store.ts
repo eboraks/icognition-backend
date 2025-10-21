@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia';
+import { useDocumentStore } from './documents_store';
 
 interface DocRow {
   id: string | number;
@@ -28,65 +29,28 @@ export const useLibraryStore = defineStore('library', {
   },
   actions: {
     async fetchDocuments() {
-      // Placeholder: integrate real API; keep stub for now
       this.loading = true;
       try {
-        if (this.documents.length === 0) {
-          this.documents = [
-            { 
-              id: 1, 
-              title: 'Elon Musk says AI will take all our jobs', 
-              updatedAt: '12/22/2024 08:34am', 
-              sourceUrl: 'https://newsorg.com', 
-              sourceHost: 'newsorg.com', 
-              type: 'web',
-              summary: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.', 
-              keyPoints: [
-                'AI will replace most human jobs in the next decade',
-                'Universal basic income may become necessary',
-                'Education systems need to adapt to new reality'
-              ] 
-            },
-            { 
-              id: 2, 
-              title: 'Essay', 
-              updatedAt: '12/22/2024 08:34am', 
-              sourceUrl: 'https://mediaite.com', 
-              sourceHost: 'mediaite.com',
-              type: 'web'
-            },
-            { 
-              id: 3, 
-              title: 'History of Persepolis', 
-              updatedAt: '12/22/2024 08:34am', 
-              sourceUrl: 'https://mediaite.com', 
-              sourceHost: 'mediaite.com',
-              type: 'web'
-            },
-            { 
-              id: 4, 
-              title: 'Another Web Article', 
-              updatedAt: '12/22/2024 08:34am', 
-              sourceUrl: 'https://mediaite.com', 
-              sourceHost: 'mediaite.com',
-              type: 'web'
-            },
-            { 
-              id: 5, 
-              title: 'Jane Goodall Once Walked Right Up to Most Dangerous Alpha Chimp', 
-              updatedAt: '12/21/2024 10:15am', 
-              sourceUrl: 'https://nationalgeographic.com', 
-              sourceHost: 'nationalgeographic.com',
-              type: 'web',
-              summary: 'Dr. Jane Goodall shares her remarkable experience approaching a dominant chimpanzee in the wild, demonstrating her deep understanding of primate behavior and her fearless dedication to research.',
-              keyPoints: [
-                'Goodall approached the alpha chimp without fear',
-                'Her understanding of chimp behavior was key to safety',
-                'This incident demonstrated her unique research methods'
-              ]
-            }
-          ];
-        }
+        // Get real documents from documentStore instead of using mock data
+        const documentStore = useDocumentStore();
+        
+        // Transform documentStore documents to library store format
+        this.documents = documentStore.docs.map(doc => ({
+          id: doc.id,
+          title: doc.title || 'Untitled',
+          updatedAt: doc.updateAt ? doc.updateAt.format('YYYY-MM-DD') : new Date().toISOString(),
+          sourceUrl: doc.url,
+          sourceHost: doc.url ? new URL(doc.url).hostname : undefined,
+          summary: doc.is_about,
+          keyPoints: doc.tldr || [],
+          type: 'web'
+        }));
+        
+        console.log('Library store updated with real documents:', this.documents.length);
+      } catch (error) {
+        console.error('Error fetching documents for library store:', error);
+        // Fallback to empty array if there's an error
+        this.documents = [];
       } finally {
         this.loading = false;
       }

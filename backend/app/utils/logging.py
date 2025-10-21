@@ -12,7 +12,7 @@ class LogConfig:
     """Logging configuration class"""
     
     LOGGER_NAME: str = "icognition"
-    LOG_FORMAT: str = "%(levelprefix)s | %(asctime)s | %(name)s | %(message)s"
+    LOG_FORMAT: str = "%(levelprefix)s | %(asctime)s | %(filename)s:%(lineno)d | %(name)s | %(message)s"
     LOG_LEVEL: str = settings.LOG_LEVEL
     
     # Logging config
@@ -27,7 +27,7 @@ class LogConfig:
         },
         "detailed": {
             "()": "uvicorn.logging.DefaultFormatter",
-            "fmt": "%(levelprefix)s | %(asctime)s | %(name)s | %(filename)s:%(lineno)d | %(message)s",
+            "fmt": "%(levelprefix)s | %(asctime)s | %(filename)s:%(lineno)d | %(name)s | %(message)s",
             "datefmt": "%Y-%m-%d %H:%M:%S",
         },
     }

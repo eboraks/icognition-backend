@@ -24,7 +24,7 @@ from app.api.errors import (
     validation_error_handler,
     APIError
 )
-from app.api.routes import users, bookmarks, documents
+from app.api.routes import users, bookmarks, documents, websocket, system
 from app.utils.logging import get_logger
 
 # Configure logging
@@ -123,8 +123,8 @@ app.add_middleware(
     enable_security_headers=security_config.enable_security_headers
 )
 
-# Add audit logging middleware
-app.add_middleware(AuditLoggingMiddleware)
+# Add audit logging middleware (disabled for development)
+# app.add_middleware(AuditLoggingMiddleware)
 app.add_middleware(SecurityAuditMiddleware)
 
 # Register exception handlers
@@ -136,6 +136,8 @@ app.add_exception_handler(RequestValidationError, validation_error_handler)
 app.include_router(users.router)
 app.include_router(bookmarks.router)
 app.include_router(documents.router)
+app.include_router(websocket.router)
+app.include_router(system.router)
 
 
 @app.get("/")

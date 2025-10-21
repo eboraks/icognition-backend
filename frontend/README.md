@@ -18,16 +18,12 @@ Vue.js 3 frontend application for the iCognition document analysis platform.
 ### Prerequisites
 
 - Node.js 18+
-- npm or yarn
+- npm
 - Backend server running (see backend README)
 
 ### 1. Install Dependencies
 
 ```bash
-# Using yarn (recommended)
-yarn install
-
-# Or using npm
 npm install
 ```
 
@@ -56,13 +52,13 @@ export const environment = {
 
 ```bash
 # For local development (no authentication)
-yarn local
+npm run local
 
 # For development with authentication
-yarn dev
+npm run dev
 
 # For staging environment
-yarn staging
+npm run staging
 ```
 
 ### 4. Access the Application
@@ -76,7 +72,7 @@ yarn staging
 ### Option 1: Disable Authentication (Recommended for Development)
 
 1. Set `DISABLE_AUTH=true` in your backend `.env` file
-2. Use `yarn local` to start the frontend
+2. Use `npm run local` to start the frontend
 3. No Firebase configuration needed
 
 ### Option 2: Enable Firebase Authentication
@@ -93,7 +89,7 @@ yarn staging
 
 3. **Configure Frontend**:
    - Update `src/config/environment.ts` with your Firebase config
-   - Use `yarn dev` instead of `yarn local`
+   - Use `npm run dev` instead of `npm run local`
 
 4. **Test Authentication**:
    - The app will show login/logout buttons
@@ -105,36 +101,36 @@ yarn staging
 
 ```bash
 # Run unit tests (if configured)
-yarn test
+npm test
 
 # Run tests in watch mode
-yarn test:watch
+npm run test:watch
 
 # Run tests with coverage
-yarn test:coverage
+npm run test:coverage
 ```
 
 ### Linting
 
 ```bash
 # Lint JavaScript/TypeScript files
-yarn lint:js
+npm run lint:js
 
 # Fix linting issues
-yarn lint:js --fix
+npm run lint:js -- --fix
 
 # Lint CSS/SCSS files
-yarn lint:css
+npm run lint:css
 ```
 
 ### Type Checking
 
 ```bash
 # Check TypeScript types
-yarn type-check
+npm run type-check
 
 # Build and check types
-yarn build
+npm run build
 ```
 
 ## 📚 Project Structure
@@ -188,21 +184,21 @@ frontend/
 
 ```bash
 # Development servers
-yarn local          # Local development (no auth)
-yarn dev            # Development with auth
-yarn staging        # Staging environment
+npm run local          # Local development (no auth)
+npm run dev            # Development with auth
+npm run staging        # Staging environment
 
 # Build
-yarn build          # Production build
-yarn preview        # Preview production build
+npm run build          # Production build
+npm run preview        # Preview production build
 
 # GCP deployment
-yarn gcp-dev        # GCP development mode
-yarn dev-build      # GCP development build
+npm run gcp-dev        # GCP development mode
+npm run dev-build      # GCP development build
 
 # Code quality
-yarn lint:js        # Lint JavaScript/TypeScript
-yarn type-check     # TypeScript type checking
+npm run lint:js        # Lint JavaScript/TypeScript
+npm run type-check     # TypeScript type checking
 ```
 
 ### Adding New Components
@@ -490,7 +486,7 @@ export default defineConfig({
    ```bash
    # Clear node_modules and reinstall
    rm -rf node_modules
-   yarn install
+   npm install
    
    # Clear Vite cache
    rm -rf .vite
@@ -499,7 +495,7 @@ export default defineConfig({
 4. **TypeScript Errors**:
    ```bash
    # Check TypeScript configuration
-   yarn type-check
+   npm run type-check
    
    # Update tsconfig.json if needed
    ```
@@ -508,7 +504,7 @@ export default defineConfig({
 
 ```bash
 # Run with debug logging
-DEBUG=vite:* yarn dev
+DEBUG=vite:* npm run dev
 
 # Check browser console for errors
 # Use Vue DevTools browser extension
@@ -520,17 +516,17 @@ DEBUG=vite:* yarn dev
 
 ```bash
 # Build for development
-yarn dev-build
+npm run dev-build
 
 # Preview build locally
-yarn preview
+npm run preview
 ```
 
 ### Production Build
 
 ```bash
 # Build for production
-yarn build
+npm run build
 
 # The dist/ folder contains the built application
 ```
@@ -555,14 +551,14 @@ firebase deploy
 FROM node:18-alpine
 
 WORKDIR /app
-COPY package.json yarn.lock ./
-RUN yarn install --frozen-lockfile
+COPY package.json package-lock.json ./
+RUN npm ci --only=production
 
 COPY . .
-RUN yarn build
+RUN npm run build
 
 EXPOSE 8080
-CMD ["yarn", "preview"]
+CMD ["npm", "run", "preview"]
 ```
 
 ## 📊 Performance
@@ -597,7 +593,7 @@ CMD ["yarn", "preview"]
 
 ```bash
 # Analyze bundle size
-yarn build --analyze
+npm run build -- --analyze
 
 # Check bundle composition
 npx vite-bundle-analyzer dist/

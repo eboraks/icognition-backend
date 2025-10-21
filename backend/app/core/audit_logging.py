@@ -257,8 +257,7 @@ class AuditLogger:
     def _log_to_console(self, event: AuditEvent) -> None:
         """Log event to console based on severity"""
         log_message = f"AUDIT: {event.event_type.value} - {event.action}"
-        if event.user_id:
-            log_message += f" (User: {event.user_id})"
+        # Don't log user_id to avoid printing JWT tokens
         if event.resource_type and event.resource_id:
             log_message += f" (Resource: {event.resource_type}:{event.resource_id})"
         if not event.success:

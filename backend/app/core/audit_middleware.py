@@ -233,10 +233,14 @@ class SecurityAuditMiddleware(BaseHTTPMiddleware):
     
     def _extract_firebase_uid(self, request: Request) -> Optional[str]:
         """Extract Firebase UID from request headers"""
+        # Try Authorization header first
         auth_header = request.headers.get("Authorization")
         if auth_header and auth_header.startswith("Bearer "):
+            # For now, assume the token contains the Firebase UID
+            # In production, this would validate the Firebase token
             return auth_header.split(" ")[1]
         
+        # Try custom header
         return request.headers.get("X-Firebase-UID")
 
 

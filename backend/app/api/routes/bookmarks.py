@@ -10,6 +10,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 import uuid as uuid_pkg
 from sqlmodel import select
+from asyncio import create_task
 from app.db.database import get_session
 from app.core.user_context import UserContext, get_authenticated_user_context, get_active_user_context
 from app.services.bookmark_service import BookmarkService
@@ -18,6 +19,10 @@ from app.log import get_logger
 from app.services.content_analysis_service import get_content_analysis_service
 from app.models import Document, Bookmark
 from app.services.document_service import DocumentService
+from app.services.entity_extraction_task_manager import get_entity_extraction_task_manager
+from app.services.embedding_service import get_embedding_service
+from app.core.config import settings
+from app.api.routes.websocket import get_connection_manager
 
 
 logger = get_logger(__name__)
@@ -25,23 +30,69 @@ logger = get_logger(__name__)
 # Legacy embedding handler removed - using modern services instead
 
 
+async def _send_document_ready_message(
+    document: Document,
+    user_id: str,
+    title: Optional[str] = None,
+    url: Optional[str] = None
+) -> None:
+    """
+    Send a document_ready WebSocket message for a processed document.
+    
+    Args:
+        document: The document to send
+        user_id: User ID to send the message to
+        title: Override title (optional)
+        url: Override URL (optional)
+    """
+    ws_manager = get_connection_manager()
+    
+    await ws_manager.send_personal_message({
+        "type": "document_ready",
+        "data": {
+            "id": str(document.id),
+            "title": title or document.title,
+            "url": url or document.url,
+            "ai_is_about": document.ai_is_about,
+            "ai_bullet_points": document.ai_bullet_points,
+            "created_at": document.created_at.isoformat() if document.created_at else None,
+            "updated_at": document.updated_at.isoformat() if document.updated_at else None
+        }
+    }, user_id)
+    
+    logger.info(f"Sent document_ready message for document {document.id} to user {user_id}")
+
+
 async def _process_document_content(
-    session: AsyncSession,
     document_id: str,
     title: Optional[str],
-    url: Optional[str]
+    url: Optional[str],
+    user_id: Optional[str] = None
 ):
     """
     Background task to process document content for summarization and bullet points
     
     Args:
-        session: Database session
         document_id: ID of the document to process
         title: Document title
         url: Document URL
+        user_id: User ID for WebSocket notifications
     """
+    ws_manager = get_connection_manager()
+    
     try:
         logger.info(f"Starting content processing for document {document_id}")
+        
+        # Get database session
+        session_gen = get_session()
+        session = await session_gen.__anext__()
+        
+        # Send initial progress update
+        if user_id:
+            await ws_manager.send_personal_message({
+                "type": "progress_percentage",
+                "data": 10
+            }, user_id)
         
         # Get the document
         result = await session.execute(
@@ -51,17 +102,37 @@ async def _process_document_content(
         
         if not document:
             logger.error(f"Document {document_id} not found")
+            if user_id:
+                await ws_manager.send_personal_message({
+                    "type": "error",
+                    "data": "Document not found"
+                }, user_id)
             return
+        
+        # Send progress update
+        if user_id:
+            await ws_manager.send_personal_message({
+                "type": "progress_percentage",
+                "data": 30
+            }, user_id)
         
         # Get content analysis service
         content_analysis_service = get_content_analysis_service()
         
         # Analyze the document content
+        logger.info(f"Analyzing document content for {document_id}")
         analysis_result = await content_analysis_service.analyze_document_content(
             content=document.content or "",
             title=title,
             url=url
         )
+        
+        # Send progress update
+        if user_id:
+            await ws_manager.send_personal_message({
+                "type": "progress_percentage",
+                "data": 80
+            }, user_id)
         
         # Update document with analysis results
         document.ai_is_about = analysis_result['summary']
@@ -70,14 +141,424 @@ async def _process_document_content(
         
         # Commit changes
         await session.commit()
+        await session.refresh(document)
         
         logger.info(f"Successfully processed document {document_id} with summary and bullet points")
+        
+        # Send completion update with document data
+        if user_id:
+            await _send_document_ready_message(document, user_id, title, url)
+            
+            # Send final progress
+            await ws_manager.send_personal_message({
+                "type": "progress_percentage",
+                "data": 100
+            }, user_id)
         
     except Exception as e:
         logger.error(f"Error processing document {document_id}: {str(e)}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
+        
+        # Send error notification
+        if user_id:
+            await ws_manager.send_personal_message({
+                "type": "error",
+                "data": f"Error processing document: {str(e)}"
+            }, user_id)
+        
+    finally:
+        # Clean up session
+        try:
+            await session.close()
+        except Exception as e:
+            logger.error(f"Error closing session for document {document_id}: {str(e)}")
+        
         # Don't re-raise to avoid breaking the background task
+
+
+async def _process_document_entities(
+    document_id: str,
+    user_id: str
+):
+    """
+    Background task to extract entities from document content
+    
+    Args:
+        document_id: ID of the document to process
+        user_id: User ID for entity extraction
+    """
+    try:
+        logger.info(f"Starting entity extraction for document {document_id}")
+        
+        # Get database session
+        session_gen = get_session()
+        session = await session_gen.__anext__()
+        
+        try:
+            # Get the document
+            result = await session.execute(
+                select(Document).where(Document.id == document_id)
+            )
+            document = result.scalar_one_or_none()
+            
+            if not document or not document.content:
+                logger.warning(f"Document {document_id} not found or has no content for entity extraction")
+                return
+            
+            # Get entity extraction task manager
+            task_manager = get_entity_extraction_task_manager()
+            
+            # Extract entities from document content
+            result = await task_manager.extract_entities_async(
+                firebase_uid=user_id,
+                document_id=int(document_id),
+                content=document.content
+            )
+            
+            logger.info(f"Entity extraction completed for document {document_id}: {result.get('entities_processed', 0)} entities processed")
+            
+        finally:
+            await session.close()
+            
+    except Exception as e:
+        logger.error(f"Error in entity extraction for document {document_id}: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        
+        # Don't re-raise to avoid breaking the background task
+
+
+async def _process_html_content_to_document(
+    bookmark_id: str,
+    user_id: str,
+    html_content: str,
+    title: Optional[str],
+    url: Optional[str]
+):
+    """
+    Background task to process HTML content and create document
+    
+    Args:
+        bookmark_id: ID of the bookmark to update
+        user_id: User ID for document creation
+        html_content: HTML content to process
+        title: Document title
+        url: Document URL
+    """
+    try:
+        logger.info(f"Starting HTML content processing for bookmark {bookmark_id}")
+        
+        # Get database session
+        session_gen = get_session()
+        session = await session_gen.__anext__()
+        
+        try:
+            # Get the bookmark
+            result = await session.execute(
+                select(Bookmark).where(Bookmark.id == bookmark_id)
+            )
+            bookmark = result.scalar_one_or_none()
+            
+            if not bookmark:
+                logger.error(f"Bookmark {bookmark_id} not found for HTML processing")
+                return
+            
+            # Create document from HTML content (no embeddings)
+            document_service = DocumentService(session)
+            document = await document_service.create_document_from_content(
+                user_id=user_id,
+                content=html_content,
+                content_type="html",
+                title=title,
+                url=url
+            )
+            
+            if document:
+                # Update bookmark with document ID
+                bookmark.document_id = document.id
+                bookmark.is_processed = True
+                bookmark.processing_status = "completed"
+                
+                await session.commit()
+                await session.refresh(bookmark)
+                
+                logger.info(f"Successfully created document {document.id} from HTML content for bookmark {bookmark_id}")
+                
+                # Launch 3 independent background tasks
+                logger.info(f"Launching 3 background tasks for document {document.id}")
+                
+                # Task 1: Summary & Bullet Points (critical for UX)
+                create_task(_process_document_content(
+                    document.id, title, url, user_id
+                ))
+                
+                # Task 2: Entity Extraction (for filtering)
+                create_task(_process_document_entities(
+                    document.id, user_id
+                ))
+                
+                # Task 3: Embedding Generation (for search)
+                create_task(_process_document_embeddings(
+                    document.id
+                ))
+                
+            else:
+                logger.error(f"Failed to create document from HTML content for bookmark {bookmark_id}")
+                bookmark.processing_status = "failed"
+                await session.commit()
+                
+        finally:
+            await session.close()
+            
+    except Exception as e:
+        logger.error(f"Error processing HTML content for bookmark {bookmark_id}: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        
+        # Don't re-raise to avoid breaking the background task
+
+
+async def _process_document_embeddings(
+    document_id: str
+):
+    """
+    Background task to generate embeddings for document content
+    
+    Args:
+        document_id: ID of the document to process
+    """
+    try:
+        logger.info(f"Starting embedding generation for document {document_id}")
+        
+        # Get database session
+        session_gen = get_session()
+        session = await session_gen.__anext__()
+        
+        try:
+            # Get the document
+            result = await session.execute(
+                select(Document).where(Document.id == document_id)
+            )
+            document = result.scalar_one_or_none()
+            
+            if not document:
+                logger.error(f"Document {document_id} not found for embedding generation")
+                return
+            
+            if not document.content:
+                logger.warning(f"Document {document_id} has no content for embedding generation")
+                return
+            
+            # Get embedding service
+            embedding_service = get_embedding_service()
+            
+            # Generate embeddings for the document
+            embedding_success = await embedding_service.update_document_embedding(
+                session=session,
+                document_id=document.id,
+                user_id=document.user_id,
+                force_regenerate=False
+            )
+            
+            if embedding_success:
+                logger.info(f"Successfully generated embeddings for document {document_id}")
+            else:
+                logger.warning(f"Failed to generate embeddings for document {document_id}")
+                
+        finally:
+            await session.close()
+            
+    except Exception as e:
+        logger.error(f"Error generating embeddings for document {document_id}: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        
+        # Don't re-raise to avoid breaking the background task
+
+
+async def _process_document_entities_batch(
+    document_ids: List[str],
+    user_id: str
+):
+    """
+    Background task to extract entities from multiple documents
+    
+    Args:
+        document_ids: List of document IDs to process
+        user_id: User ID for entity extraction
+    """
+    try:
+        logger.info(f"Starting batch entity extraction for {len(document_ids)} documents")
+        
+        # Get database session
+        session_gen = get_session()
+        session = await session_gen.__anext__()
+        
+        try:
+            # Get entity extraction task manager
+            task_manager = get_entity_extraction_task_manager()
+            
+            total_entities_processed = 0
+            successful_docs = 0
+            
+            for document_id in document_ids:
+                try:
+                    # Get the document
+                    result = await session.execute(
+                        select(Document).where(Document.id == document_id)
+                    )
+                    document = result.scalar_one_or_none()
+                    
+                    if not document or not document.content:
+                        logger.warning(f"Document {document_id} not found or has no content for entity extraction")
+                        continue
+                    
+                    # Extract entities from document content
+                    result = await task_manager.extract_entities_async(
+                        firebase_uid=user_id,
+                        document_id=document.id,  # Use document.id directly (already a UUID)
+                        content=document.content
+                    )
+                    
+                    entities_processed = result.get('entities_processed', 0)
+                    total_entities_processed += entities_processed
+                    successful_docs += 1
+                    
+                    logger.info(f"Entity extraction completed for document {document_id}: {entities_processed} entities processed")
+                    
+                except Exception as e:
+                    logger.error(f"Error processing document {document_id} in batch: {str(e)}")
+                    continue
+            
+            logger.info(f"Batch entity extraction completed: {successful_docs}/{len(document_ids)} documents processed, {total_entities_processed} total entities")
+            
+        finally:
+            await session.close()
+            
+    except Exception as e:
+        logger.error(f"Error in batch entity extraction: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+
+
+async def _process_document_embeddings_batch(
+    document_ids: List[str],
+    user_id: str
+):
+    """
+    Background task to generate embeddings for multiple documents
+    
+    Args:
+        document_ids: List of document IDs to process
+        user_id: User ID for embedding generation
+    """
+    try:
+        logger.info(f"Starting batch embedding generation for {len(document_ids)} documents")
+        
+        # Get database session
+        session_gen = get_session()
+        session = await session_gen.__anext__()
+        
+        try:
+            # Get embedding service
+            embedding_service = get_embedding_service()
+            
+            successful_docs = 0
+            
+            for document_id in document_ids:
+                try:
+                    # Get the document
+                    result = await session.execute(
+                        select(Document).where(Document.id == document_id)
+                    )
+                    document = result.scalar_one_or_none()
+                    
+                    if not document:
+                        logger.warning(f"Document {document_id} not found for embedding generation")
+                        continue
+                    
+                    if not document.content:
+                        logger.warning(f"Document {document_id} has no content for embedding generation")
+                        continue
+                    
+                    # Prepare enhanced content for embedding (chunk content and include metadata)
+                    content_parts = []
+                    
+                    # Add authors if available
+                    if document.authors and document.authors.strip():
+                        content_parts.append(f"Authors: {document.authors.strip()}")
+                    
+                    # Add URL if available
+                    if document.url and document.url.strip():
+                        content_parts.append(f"URL: {document.url.strip()}")
+                    
+                    # Add description if available
+                    if document.metadata_description and document.metadata_description.strip():
+                        content_parts.append(f"Description: {document.metadata_description.strip()}")
+                    
+                    # Add site name if available
+                    if document.site_name and document.site_name.strip():
+                        content_parts.append(f"Site: {document.site_name.strip()}")
+                    
+                    # Chunk the main content
+                    content = document.content.strip()
+                    chunk_size = 1000  # Adjust as needed
+                    content_chunks = [content[i:i+chunk_size] for i in range(0, len(content), chunk_size)]
+                    
+                    # Combine metadata and content chunks
+                    all_content_parts = content_parts + content_chunks
+                    enhanced_content = "\n\n".join(all_content_parts)
+                    
+                    # Temporarily update document content with enhanced version
+                    original_content = document.content
+                    document.content = enhanced_content
+                    
+                    try:
+                        # Generate embeddings using the enhanced content
+                        embedding_result = await embedding_service.generate_document_embedding(
+                            document=document,
+                            use_content=True,
+                            use_title=True,
+                            combine_strategy="title_content"
+                        )
+                        
+                        if embedding_result.success:
+                            # Save the embedding to database
+                            embedding_success = await embedding_service.update_document_embedding(
+                                session=session,
+                                document_id=document.id,
+                                user_id=user_id,
+                                force_regenerate=True
+                            )
+                        else:
+                            embedding_success = False
+                            logger.warning(f"Failed to generate embedding for document {document_id}: {embedding_result.error}")
+                    
+                    finally:
+                        # Restore original content
+                        document.content = original_content
+                    
+                    if embedding_success:
+                        logger.info(f"Successfully generated embeddings for document {document_id}")
+                        successful_docs += 1
+                    else:
+                        logger.warning(f"Failed to generate embeddings for document {document_id}")
+                        
+                except Exception as e:
+                    logger.error(f"Error processing document {document_id} in batch: {str(e)}")
+                    continue
+            
+            logger.info(f"Batch embedding generation completed: {successful_docs}/{len(document_ids)} documents processed")
+            
+        finally:
+            await session.close()
+            
+    except Exception as e:
+        logger.error(f"Error in batch embedding generation: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+
 
 router = APIRouter(prefix="/bookmarks", tags=["bookmarks"])
 
@@ -117,10 +598,17 @@ async def re_analyze_bookmark(
         content_analysis_service = get_content_analysis_service()
         background_tasks.add_task(
             _process_document_content,
-            session,
             bookmark.document_id,
             bookmark.title,
-            bookmark.url
+            bookmark.url,
+            user_context.user.id
+        )
+        
+        # Add entity extraction as separate background task
+        background_tasks.add_task(
+            _process_document_entities,
+            bookmark.document_id,
+            user_context.user.id
         )
         
         return {
@@ -143,8 +631,6 @@ async def re_analyze_bookmark(
 @router.get("/test-auth")
 async def test_auth_disabled():
     """Test endpoint to verify DISABLE_AUTH is working"""
-    from app.core.config import settings
-    
     return {
         "message": "Test endpoint working",
         "disable_auth": settings.DISABLE_AUTH
@@ -227,14 +713,78 @@ async def create_bookmark(
             if document is not None and (document.ai_is_about is None or document.ai_bullet_points is None):
                 background_tasks.add_task(
                     _process_document_content,
-                    session,
                     document.id,
                     existing_bookmark.title,
+                    existing_bookmark.url,
+                    user_context.user.id
+                )
+                # Add entity extraction as separate background task
+                background_tasks.add_task(
+                    _process_document_entities,
+                    document.id,
+                    user_context.user.id
+                )
+                # Add embedding generation as separate background task
+                background_tasks.add_task(
+                    _process_document_embeddings,
+                    document.id
+                )
+            elif document is None:
+                # Bookmark exists but no document - create document and process it
+                logger.info(f"Bookmark {existing_bookmark.id} exists but has no document, creating document")
+                
+                # Create document from bookmark data
+                document = await document_service.create_document_from_content(
+                    user_id=user_context.user.id,
+                    content=existing_bookmark.content or "",
+                    content_type="html",
+                    title=existing_bookmark.title,
+                    url=existing_bookmark.url
+                )
+                
+                if document:
+                    # Update bookmark with document ID
+                    existing_bookmark.document_id = document.id
+                    await session.commit()
+                    
+                    # Launch 3 background tasks for the new document
+                    background_tasks.add_task(
+                        _process_document_content,
+                        document.id,
+                        existing_bookmark.title,
+                        existing_bookmark.url,
+                        user_context.user.id
+                    )
+                    background_tasks.add_task(
+                        _process_document_entities,
+                        document.id,
+                        user_context.user.id
+                    )
+                    background_tasks.add_task(
+                        _process_document_embeddings,
+                        document.id
+                    )
+                    
+                    logger.info(f"Created document {document.id} for existing bookmark {existing_bookmark.id}")
+                else:
+                    logger.error(f"Failed to create document for existing bookmark {existing_bookmark.id}")
+                    
+            elif document is not None and document.ai_is_about and document.ai_bullet_points:
+                # Document already has AI content, broadcast it immediately
+                await _send_document_ready_message(
+                    document, 
+                    user_context.user.id, 
+                    existing_bookmark.title, 
                     existing_bookmark.url
                 )
-                # Legacy embedding handler call removed - using modern services instead
+                
+                logger.info(f"Broadcasted existing document {document.id} for duplicate bookmark")
 
             logger.info(f"Duplicate bookmark found for URL: {bookmark_data.url}, returning existing bookmark")
+            
+            # Refresh bookmark to ensure all attributes are loaded
+            await session.refresh(existing_bookmark)
+            
             return BookmarkResponse(
                 id=existing_bookmark.id,
                 url=existing_bookmark.url,
@@ -260,7 +810,7 @@ async def create_bookmark(
                 detail="Invalid URL provided"
             )
         
-        # Check if we have clean text content (from iPhone app) or need to fetch HTML
+        # Check if we have content provided or need to fetch HTML
         _doc = None
         
         if bookmark_data.content and _is_clean_text_content(bookmark_data.content):
@@ -269,9 +819,55 @@ async def create_bookmark(
                 bookmark_data, user_context, session
             )
             logger.info(f"Document created from clean text: {_doc.id if _doc else 'None'}")
+        elif bookmark_data.content:
+            logger.info(f"Processing HTML content provided by client for URL: {bookmark_data.url}")
+            
+            # Create bookmark first without document
+            bookmark = Bookmark(
+                url=bookmark_data.url,
+                title=bookmark_data.title,
+                description=bookmark_data.description,
+                content=bookmark_data.content,  # Store the HTML content
+                bookmark_metadata=bookmark_data.metadata,  # Fixed: use 'metadata' not 'bookmark_metadata'
+                user_id=user_context.user.id,
+                is_processed=False,
+                processing_status="pending_html_processing"
+            )
+            
+            session.add(bookmark)
+            await session.commit()
+            await session.refresh(bookmark)
+            
+            # Process HTML content in background task
+            background_tasks.add_task(
+                _process_html_content_to_document,
+                bookmark.id,
+                user_context.user.id,
+                bookmark_data.content,
+                bookmark_data.title,
+                bookmark_data.url
+            )
+            
+            logger.info(f"Bookmark created with HTML content, processing in background: {bookmark.id}")
+            
+            # Return bookmark response immediately
+            return BookmarkResponse(
+                id=bookmark.id,
+                url=bookmark.url,
+                title=bookmark.title,
+                description=bookmark.description,
+                content=bookmark.content,
+                bookmark_metadata=bookmark.bookmark_metadata,
+                is_processed=bookmark.is_processed,
+                processing_status=bookmark.processing_status,
+                created_at=bookmark.created_at,
+                updated_at=bookmark.updated_at,
+                user_id=bookmark.user_id,
+                document_id=bookmark.document_id  # Will be None initially, updated in background task
+            )
         else:
-            logger.info(f"Processing HTML content for URL: {bookmark_data.url}")
-            # Create document directly from URL using document service
+            logger.info(f"No content provided, fetching HTML content for URL: {bookmark_data.url}")
+            # Create document by fetching URL content
             document_service = DocumentService(session)
             
             try:
@@ -280,7 +876,7 @@ async def create_bookmark(
                     url=bookmark_data.url,
                     title=bookmark_data.title
                 )
-                logger.info(f"Document created from URL: {_doc.id if _doc else 'None'}")
+                logger.info(f"Document created from URL fetch: {_doc.id if _doc else 'None'}")
             except Exception as e:
                 logger.warning(f"Failed to create document from URL {bookmark_data.url}: {e}")
                 raise HTTPException(
@@ -310,10 +906,17 @@ async def create_bookmark(
             # Start background processing tasks
             background_tasks.add_task(
                 _process_document_content,
-                session,
                 _doc.id,
                 bookmark.title,
-                bookmark.url
+                bookmark.url,
+                user_context.user.id
+            )
+            
+            # Add entity extraction as separate background task
+            background_tasks.add_task(
+                _process_document_entities,
+                _doc.id,
+                user_context.user.id
             )
             
             # Find documents without embeddings

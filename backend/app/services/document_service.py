@@ -7,12 +7,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from sqlalchemy.orm import selectinload
 import logging
+from datetime import datetime
 
 from app.models import Document, User
 from app.services.base_service import UserIsolatedService
 from app.services.web_fetcher import WebPageFetcher, fetch_web_page
 from app.services.user_service import UserService
 from app.utils.logging import get_logger
+from bs4 import BeautifulSoup
+from app.services.content_validation_service import get_content_validation_service
 
 logger = get_logger(__name__)
 
@@ -87,7 +90,6 @@ class DocumentService(UserIsolatedService[Document]):
             
             if success and html_content:
                 # Extract enhanced metadata and main content from HTML
-                from app.services.web_fetcher import WebPageFetcher
                 async with WebPageFetcher() as fetcher:
                     enhanced_metadata = fetcher.extract_enhanced_metadata(html_content)
                     content_extraction = fetcher.extract_main_content(html_content)
@@ -121,7 +123,6 @@ class DocumentService(UserIsolatedService[Document]):
                 if enhanced_metadata.get('publication_date'):
                     # Parse publication date if it's a string
                     try:
-                        from datetime import datetime
                         if isinstance(enhanced_metadata['publication_date'], str):
                             # Try to parse ISO format first
                             document.publication_date = datetime.fromisoformat(
@@ -219,40 +220,11 @@ class DocumentService(UserIsolatedService[Document]):
         
         logger.info(f"Created document {document.id} from {content_type} content for user {user.id}")
         
-        # Validate content
-        await self._validate_document_content(document)
-        await self.session.commit()
-        await self.session.refresh(document)
-        
-        # Trigger embedding generation for direct content
-        try:
-            from app.services.embedding_service import get_embedding_service
-            embedding_service = get_embedding_service()
-            
-            # Generate embedding for the document
-            embedding_success = await embedding_service.update_document_embedding(
-                session=self.session,
-                document_id=document.id,
-                user_id=user.id,
-                force_regenerate=False
-            )
-            
-            if embedding_success:
-                logger.info(f"Successfully generated embedding for direct content document {document.id}")
-            else:
-                logger.warning(f"Failed to generate embedding for direct content document {document.id}")
-                
-        except Exception as e:
-            logger.error(f"Error generating embedding for direct content document {document.id}: {str(e)}")
-            # Don't fail the document creation if embedding generation fails
-        
         return document
 
     def _extract_text_from_html(self, html_content: str) -> str:
         """Extract clean text from HTML content"""
         try:
-            from bs4 import BeautifulSoup
-            
             soup = BeautifulSoup(html_content, 'html.parser')
             
             # Remove script and style elements
@@ -277,8 +249,6 @@ class DocumentService(UserIsolatedService[Document]):
     def _extract_title_from_html(self, html_content: str) -> str:
         """Extract title from HTML content"""
         try:
-            from bs4 import BeautifulSoup
-            
             soup = BeautifulSoup(html_content, 'html.parser')
             
             # Try to find title tag first
@@ -322,7 +292,6 @@ class DocumentService(UserIsolatedService[Document]):
             
             if success and html_content:
                 # Extract enhanced metadata and main content from HTML
-                from app.services.web_fetcher import WebPageFetcher
                 async with WebPageFetcher() as fetcher:
                     enhanced_metadata = fetcher.extract_enhanced_metadata(html_content)
                     content_extraction = fetcher.extract_main_content(html_content)
@@ -358,7 +327,6 @@ class DocumentService(UserIsolatedService[Document]):
                 if enhanced_metadata.get('publication_date'):
                     # Parse publication date if it's a string
                     try:
-                        from datetime import datetime
                         if isinstance(enhanced_metadata['publication_date'], str):
                             # Try to parse ISO format first
                             document.publication_date = datetime.fromisoformat(
@@ -563,8 +531,6 @@ class DocumentService(UserIsolatedService[Document]):
     async def _validate_document_content(self, document: Document) -> None:
         """Validate document content"""
         try:
-            from app.services.content_validation_service import get_content_validation_service
-            
             if not document.content:
                 logger.warning(f"Document {document.id} has no content to validate")
                 return
