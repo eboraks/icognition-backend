@@ -17,6 +17,7 @@ coverage
 .env
 .env.*
 *.cache
+.vite
 
 /cypress/videos/
 /cypress/screenshots/
