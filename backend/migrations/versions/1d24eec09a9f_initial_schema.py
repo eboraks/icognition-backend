@@ -1,21 +1,21 @@
-"""create_consolidated_models
+"""Initial schema
 
-Revision ID: 06103d45605f
-Revises: 536a8e623cb0
-Create Date: 2025-09-19 11:55:56.711177
+Revision ID: 1d24eec09a9f
+Revises: 
+Create Date: 2025-10-21 20:18:22.732286
 
 """
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
 import sqlmodel
+from sqlalchemy.dialects import postgresql
 import pgvector.sqlalchemy
 
 # revision identifiers, used by Alembic.
-revision: str = '06103d45605f'
-down_revision: Union[str, Sequence[str], None] = '536a8e623cb0'
+revision: str = '1d24eec09a9f'
+down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -27,7 +27,7 @@ def upgrade() -> None:
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('asked_by', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.Column('chat_id', sa.Uuid(), nullable=False),
+    sa.Column('chat_id', sa.Integer(), nullable=False),
     sa.Column('chat_type', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('user_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('user_prompt', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
@@ -53,31 +53,13 @@ def upgrade() -> None:
     sa.Column('text', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('search_vector', postgresql.TSVECTOR(), nullable=True),
     sa.Column('source_type', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.Column('source_id', sa.Uuid(), nullable=False),
+    sa.Column('source_id', sa.Integer(), nullable=False),
     sa.Column('vector', pgvector.sqlalchemy.vector.VECTOR(dim=768), nullable=True),
     sa.Column('update_at', sa.DateTime(), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index('index_embedding_search_vector_gin', 'embedding', ['search_vector'], unique=False, postgresql_using='gin')
     op.create_index('index_embedding_search_vector_hnsw', 'embedding', ['vector'], unique=False, postgresql_using='hnsw', postgresql_with={'m': 16, 'ef_construction': 64}, postgresql_ops={'vector': 'vector_cosine_ops'})
-    op.create_table('entity',
-    sa.Column('id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.Column('name', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.Column('normalized_label', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('verbatim_text', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('description', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('source', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('type', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.Column('wikidata_id', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('wikidata_label', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('wikidata_description', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('wikidata_pageviews', sa.Integer(), nullable=True),
-    sa.Column('wikidata_instance_of', postgresql.ARRAY(sa.String()), nullable=True),
-    sa.Column('update_at', sa.DateTime(), nullable=True),
-    sa.Column('aliases', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-    sa.Column('description_vector', pgvector.sqlalchemy.vector.VECTOR(dim=3072), nullable=True),
-    sa.PrimaryKeyConstraint('id')
-    )
     op.create_table('entity_type',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('name', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
@@ -85,24 +67,12 @@ def upgrade() -> None:
     sa.Column('follow_up_questions', sa.JSON(), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_table('source',
-    sa.Column('id', sa.Uuid(), nullable=False),
-    sa.Column('url', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('update_at', sa.DateTime(), nullable=False),
-    sa.Column('document_id', sa.Uuid(), nullable=True),
-    sa.Column('user_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.Column('filepath', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('filename', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('cloned_documents', postgresql.ARRAY(sa.Integer()), nullable=True),
-    sa.Column('html_root_element', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.PrimaryKeyConstraint('id')
-    )
     op.create_table('study_collection',
-    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('name', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('description', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('ai_explanation', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('user_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('user_id', sa.Integer(), nullable=False),
     sa.Column('status', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('objective_tasks_vector', pgvector.sqlalchemy.vector.VECTOR(dim=768), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=True),
@@ -130,17 +100,10 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_test_entities_name'), 'test_entities', ['name'], unique=False)
-    op.create_table('user',
-    sa.Column('id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.Column('first_name', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('last_name', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.PrimaryKeyConstraint('id')
-    )
     op.create_table('users',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
-    sa.Column('firebase_uid', sqlmodel.sql.sqltypes.AutoString(length=128), nullable=False),
     sa.Column('email', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=True),
     sa.Column('display_name', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=True),
     sa.Column('photo_url', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=True),
@@ -153,26 +116,8 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_users_email'), 'users', ['email'], unique=False)
-    op.create_index(op.f('ix_users_firebase_uid'), 'users', ['firebase_uid'], unique=True)
-    op.create_table('bookmarks',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
-    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
-    sa.Column('user_id', sa.Integer(), nullable=False),
-    sa.Column('url', sqlmodel.sql.sqltypes.AutoString(length=2048), nullable=False),
-    sa.Column('title', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=False),
-    sa.Column('description', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('content', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('bookmark_metadata', sa.JSON(), nullable=True),
-    sa.Column('is_processed', sa.Boolean(), nullable=False),
-    sa.Column('processing_status', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=True),
-    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index(op.f('ix_bookmarks_url'), 'bookmarks', ['url'], unique=False)
-    op.create_index(op.f('ix_bookmarks_user_id'), 'bookmarks', ['user_id'], unique=False)
     op.create_table('document',
-    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
     sa.Column('user_id', sa.Integer(), nullable=True),
@@ -196,11 +141,11 @@ def upgrade() -> None:
     sa.Column('ai_citations', sa.JSON(), nullable=True),
     sa.Column('publication_date', sa.DateTime(), nullable=True),
     sa.Column('update_at', sa.DateTime(), nullable=True),
-    sa.Column('status', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('llm_service_meta', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.Column('types_and_concepts', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.Column('cosine_similarity', sa.Float(), nullable=True),
     sa.Column('document_metadata', sa.JSON(), nullable=True),
+    sa.Column('extracted_content', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
@@ -225,43 +170,63 @@ def upgrade() -> None:
     op.create_index(op.f('ix_entities_type'), 'entities', ['type'], unique=False)
     op.create_index(op.f('ix_entities_user_id'), 'entities', ['user_id'], unique=False)
     op.create_index(op.f('ix_entities_wikidata_id'), 'entities', ['wikidata_id'], unique=False)
-    op.create_table('entity_user_link',
-    sa.Column('entity_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.Column('user_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.ForeignKeyConstraint(['entity_id'], ['entity.id'], ),
-    sa.ForeignKeyConstraint(['user_id'], ['user.id'], ),
-    sa.PrimaryKeyConstraint('entity_id', 'user_id')
-    )
     op.create_table('study_task',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('description', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('ai_explanation', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('status', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('description_vector', pgvector.sqlalchemy.vector.VECTOR(dim=768), nullable=True),
-    sa.Column('collection_id', sa.Uuid(), nullable=True),
+    sa.Column('collection_id', sa.Integer(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=True),
     sa.Column('updated_at', sa.DateTime(), nullable=True),
     sa.ForeignKeyConstraint(['collection_id'], ['study_collection.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_table('document_entity_link',
-    sa.Column('document_id', sa.Uuid(), nullable=False),
-    sa.Column('entity_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    op.create_table('bookmarks',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.Column('user_id', sa.Integer(), nullable=False),
+    sa.Column('document_id', sa.Integer(), nullable=True),
+    sa.Column('url', sqlmodel.sql.sqltypes.AutoString(length=2048), nullable=False),
+    sa.Column('title', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=False),
+    sa.Column('description', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+    sa.Column('content', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+    sa.Column('bookmark_metadata', sa.JSON(), nullable=True),
+    sa.Column('is_processed', sa.Boolean(), nullable=False),
+    sa.Column('processing_status', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=True),
     sa.ForeignKeyConstraint(['document_id'], ['document.id'], ),
-    sa.ForeignKeyConstraint(['entity_id'], ['entity.id'], ),
+    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_bookmarks_document_id'), 'bookmarks', ['document_id'], unique=False)
+    op.create_index(op.f('ix_bookmarks_url'), 'bookmarks', ['url'], unique=False)
+    op.create_index(op.f('ix_bookmarks_user_id'), 'bookmarks', ['user_id'], unique=False)
+    op.create_table('document_entity_link',
+    sa.Column('document_id', sa.Integer(), nullable=False),
+    sa.Column('entity_id', sa.Integer(), nullable=False),
+    sa.ForeignKeyConstraint(['document_id'], ['document.id'], ),
+    sa.ForeignKeyConstraint(['entity_id'], ['entities.id'], ),
     sa.PrimaryKeyConstraint('document_id', 'entity_id')
     )
     op.create_table('entity_documents',
     sa.Column('entity_id', sa.Integer(), nullable=False),
-    sa.Column('document_id', sa.Uuid(), nullable=False),
+    sa.Column('document_id', sa.Integer(), nullable=False),
     sa.Column('relevance', sa.Float(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
     sa.ForeignKeyConstraint(['document_id'], ['document.id'], ),
     sa.ForeignKeyConstraint(['entity_id'], ['entities.id'], ),
     sa.PrimaryKeyConstraint('entity_id', 'document_id')
     )
+    op.create_table('entity_user_link',
+    sa.Column('entity_id', sa.Integer(), nullable=False),
+    sa.Column('user_id', sa.Integer(), nullable=False),
+    sa.ForeignKeyConstraint(['entity_id'], ['entities.id'], ),
+    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
+    sa.PrimaryKeyConstraint('entity_id', 'user_id')
+    )
     op.create_table('question_answer',
-    sa.Column('uuid', sa.Uuid(), nullable=False),
+    sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('question', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('answer', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('citations', sa.JSON(), nullable=True),
@@ -269,13 +234,13 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), nullable=True),
     sa.Column('created_by', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('deleted', sa.Boolean(), nullable=True),
-    sa.Column('document_id', sa.Uuid(), nullable=True),
+    sa.Column('document_id', sa.Integer(), nullable=True),
     sa.ForeignKeyConstraint(['document_id'], ['document.id'], ),
-    sa.PrimaryKeyConstraint('uuid')
+    sa.PrimaryKeyConstraint('id')
     )
     op.create_table('study_collection_document_link',
-    sa.Column('collection_id', sa.Uuid(), nullable=False),
-    sa.Column('document_id', sa.Uuid(), nullable=False),
+    sa.Column('collection_id', sa.Integer(), nullable=False),
+    sa.Column('document_id', sa.Integer(), nullable=False),
     sa.ForeignKeyConstraint(['collection_id'], ['study_collection.id'], ),
     sa.ForeignKeyConstraint(['document_id'], ['document.id'], ),
     sa.PrimaryKeyConstraint('collection_id', 'document_id')
@@ -283,7 +248,7 @@ def upgrade() -> None:
     op.create_table('study_task_citation',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('text_reference', sa.JSON(), nullable=True),
-    sa.Column('document_id', sa.Uuid(), nullable=True),
+    sa.Column('document_id', sa.Integer(), nullable=True),
     sa.Column('task_id', sa.Integer(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=True),
     sa.ForeignKeyConstraint(['task_id'], ['study_task.id'], ),
@@ -298,10 +263,14 @@ def downgrade() -> None:
     op.drop_table('study_task_citation')
     op.drop_table('study_collection_document_link')
     op.drop_table('question_answer')
+    op.drop_table('entity_user_link')
     op.drop_table('entity_documents')
     op.drop_table('document_entity_link')
+    op.drop_index(op.f('ix_bookmarks_user_id'), table_name='bookmarks')
+    op.drop_index(op.f('ix_bookmarks_url'), table_name='bookmarks')
+    op.drop_index(op.f('ix_bookmarks_document_id'), table_name='bookmarks')
+    op.drop_table('bookmarks')
     op.drop_table('study_task')
-    op.drop_table('entity_user_link')
     op.drop_index(op.f('ix_entities_wikidata_id'), table_name='entities')
     op.drop_index(op.f('ix_entities_user_id'), table_name='entities')
     op.drop_index(op.f('ix_entities_type'), table_name='entities')
@@ -309,20 +278,13 @@ def downgrade() -> None:
     op.drop_table('entities')
     op.drop_index(op.f('ix_document_user_id'), table_name='document')
     op.drop_table('document')
-    op.drop_index(op.f('ix_bookmarks_user_id'), table_name='bookmarks')
-    op.drop_index(op.f('ix_bookmarks_url'), table_name='bookmarks')
-    op.drop_table('bookmarks')
-    op.drop_index(op.f('ix_users_firebase_uid'), table_name='users')
     op.drop_index(op.f('ix_users_email'), table_name='users')
     op.drop_table('users')
-    op.drop_table('user')
     op.drop_index(op.f('ix_test_entities_name'), table_name='test_entities')
     op.drop_table('test_entities')
     op.drop_table('test_documents')
     op.drop_table('study_collection')
-    op.drop_table('source')
     op.drop_table('entity_type')
-    op.drop_table('entity')
     op.drop_index('index_embedding_search_vector_hnsw', table_name='embedding', postgresql_using='hnsw', postgresql_with={'m': 16, 'ef_construction': 64}, postgresql_ops={'vector': 'vector_cosine_ops'})
     op.drop_index('index_embedding_search_vector_gin', table_name='embedding', postgresql_using='gin')
     op.drop_table('embedding')

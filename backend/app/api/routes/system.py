@@ -48,7 +48,7 @@ class DocumentProcessingResponse(BaseModel):
     message: str
     documents_processed: int
     tasks_triggered: int
-    document_ids: List[str]
+    document_ids: List[int]
 
 
 @router.get("/documents/stats", response_model=DocumentProcessingStats)

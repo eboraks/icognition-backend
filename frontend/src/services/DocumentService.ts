@@ -25,7 +25,7 @@ export interface DocumentResponse {
   document_metadata?: Record<string, any>;
   created_at: string;
   updated_at: string;
-  user_id: number;
+  user_id: string;
   ai_is_about?: string;
   ai_bullet_points?: string[];
 }

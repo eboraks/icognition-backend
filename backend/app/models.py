@@ -23,6 +23,36 @@ logging.basicConfig(
 )
 
 
+# Content Extraction Models
+class PageType(str, Enum):
+    """Types of web pages that can be identified during content extraction"""
+    BLOG_POST = "blog_post"
+    NEWS_ARTICLE = "news_article"
+    PRODUCT_PAGE = "product_page"
+    DOCUMENTATION = "documentation"
+    LANDING_PAGE = "landing_page"
+    SOCIAL_MEDIA = "social_media"
+    FORUM_POST = "forum_post"
+    WIKI = "wiki"
+    OTHER = "other"
+    NOT_CLEAR = "not_clear"
+
+
+
+class ContentExtraction(BaseModel):
+    """Complete content extraction result from LLM"""
+    page_type: str
+    title: str
+    content: str  # Main extracted content
+    author: str
+    publication_date: str
+    tags: list[str]
+    metadata: dict
+    extraction_confidence: float  # 0.0 to 1.0
+    extraction_notes: str
+    image_url: str
+
+
 class QuestionAnswerStatus(Enum):
     PENDING = "PENDING"
     IN_PROGRESS = "IN_PROGRESS"
@@ -48,10 +78,10 @@ class Document_Entity_Link(SQLModel, table=True):
     """
     __table_args__ = {'extend_existing': True}
 
-    document_id: Optional[uuid_pkg.UUID] = Field(
+    document_id: Optional[int] = Field(
         default=None, foreign_key="document.id", primary_key=True
     )
-    entity_id: Optional[str] = Field(
+    entity_id: Optional[int] = Field(
         default=None, foreign_key="entities.id", primary_key=True
     )
 
@@ -61,7 +91,7 @@ class Entity_User_Link(SQLModel, table=True):
     Represents a link between a document and an entity.
     """
 
-    entity_id: Optional[str] = Field(
+    entity_id: Optional[int] = Field(
         default=None, foreign_key="entities.id", primary_key=True
     )
     user_id: Optional[str] = Field(
@@ -115,7 +145,7 @@ class Document(SQLModel, table=True):
     Combines features from both legacy and new Document models.
     """
 
-    id: uuid_pkg.UUID = Field(default_factory=uuid_pkg.uuid4, primary_key=True)
+    id: Optional[int] = Field(default=None, primary_key=True)
     
     # Timestamps
     created_at: Optional[datetime] = Field(
@@ -167,6 +197,13 @@ class Document(SQLModel, table=True):
     types_and_concepts: Optional[List[Dict]] = Field(default=[], sa_column=Column(JSONB))
     cosine_similarity: float = Field(default=0.0, nullable=True)
     document_metadata: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))  # New field
+    
+    # Content extraction results
+    extracted_content: Optional[Dict[str, Any]] = Field(
+        default=None, 
+        sa_column=Column(JSONB),
+        description="LLM-extracted content with page type, confidence, and structured data"
+    )
     
     # Remove original_text, html_elements, and raw_answer as they're stored elsewhere
     # These fields will be migrated out later
@@ -343,7 +380,7 @@ class Question_Answer(SQLModel, table=True):
     Represents a question answer with its ID, question, answer, and document ID.
     """
 
-    uuid: uuid_pkg.UUID = Field(default_factory=uuid_pkg.uuid4, primary_key=True)
+    id: Optional[int] = Field(default=None, primary_key=True)
     question: str = Field(default=None, nullable=True)
     answer: str = Field(default=None, nullable=True)
     citations: List[dict] = Field(default=[], sa_column=Column(JSON))
@@ -352,7 +389,7 @@ class Question_Answer(SQLModel, table=True):
     created_by: str = Field(default="AI", nullable=True)
     deleted: bool = Field(default=False, nullable=True)
 
-    document_id: Optional[uuid_pkg.UUID] = Field(
+    document_id: Optional[int] = Field(
         default=None, foreign_key="document.id"
     )
     document: Document = Relationship(back_populates="qans")
@@ -360,7 +397,7 @@ class Question_Answer(SQLModel, table=True):
     def to_public(self) -> RagAnswerPublic:
 
         return RagAnswerPublic(
-            uuid=str(self.uuid),
+            uuid=str(self.id),
             status=QuestionAnswerStatus.COMPLETED_SAVE.value,
             question=self.question,
             answer=self.answer,
@@ -372,10 +409,10 @@ class Question_Answer(SQLModel, table=True):
 
 
 class Collection(SQLModel, table=False):
-    id: str = Field(primary_key=True)
+    id: int = Field(primary_key=True)
     name: Optional[str] = Field(default=None, nullable=True)
     description: Optional[str] = Field(default=None, nullable=True)
-    user_id: str = Field(nullable=False)
+    user_id: int = Field(nullable=False)
     status: str = Field(default="PENDING", nullable=True)
     created_at: datetime = Field(default_factory=datetime.now, nullable=True)
     documents_ids: List[str] = Field(default=[], sa_column=Column(ARRAY(String)))
@@ -386,11 +423,11 @@ class Study_Collection(SQLModel, table=True):
     Represents a study collection with its ID, name, description, and user ID.
     """
 
-    id: uuid_pkg.UUID = Field(default_factory=uuid_pkg.uuid4, primary_key=True)
+    id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(nullable=False)
     description: str = Field(default=None, nullable=True)
     ai_explanation: str = Field(default=None, nullable=True)
-    user_id: str = Field(nullable=False)
+    user_id: int = Field(nullable=False)
     status: str = Field(default="PENDING", nullable=True)
     objective_tasks_vector: List[float] = Field(sa_column=Column(Vector(768)))
     # documents: list["Document"] = Relationship(back_populates="study_collection", link_model="Study_Collection_Document_Link", sa_relationship_kwargs={"cascade": "delete"})
@@ -429,7 +466,7 @@ class Study_Task(SQLModel, table=True):
     ai_explanation: str = Field(default=None, nullable=True)
     status: str = Field(default="PENDING", nullable=True)
     description_vector: List[float] = Field(sa_column=Column(Vector(768)))
-    collection_id: Optional[uuid_pkg.UUID] = Field(
+    collection_id: Optional[int] = Field(
         default=None, foreign_key="study_collection.id"
     )
     study_collection: Study_Collection = Relationship(back_populates="tasks")
@@ -463,7 +500,7 @@ class Study_Task_Citation(SQLModel, table=True):
     text_reference: Optional[List[Dict]] = Field(default=[], sa_column=Column(JSON))
     ## Intentially I didn't created relationship with Document because that will require a many to many relationship table
     ## and code to manage creation, update and deletion of the relationship.
-    document_id: Optional[uuid_pkg.UUID] = Field(default=None, nullable=True)
+    document_id: Optional[int] = Field(default=None, nullable=True)
     task_id: Optional[int] = Field(default=None, foreign_key="study_task.id")
     task: Study_Task = Relationship(back_populates="citations")
     created_at: datetime = Field(default_factory=datetime.now, nullable=True)
@@ -483,10 +520,10 @@ class Study_Collection_Document_Link(SQLModel, table=True):
     Represents a link between a study collection and a document.
     """
 
-    collection_id: uuid_pkg.UUID = Field(
+    collection_id: int = Field(
         default=None, foreign_key="study_collection.id", primary_key=True
     )
-    document_id: uuid_pkg.UUID = Field(
+    document_id: int = Field(
         default=None, foreign_key="document.id", primary_key=True
     )
 
@@ -501,8 +538,8 @@ class CollectionDocumentlinkPayload(SQLModel, table=False):
     Represents the payload for linking a collection and a document.
     """
 
-    collection_id: Optional[uuid_pkg.UUID] = Field(default=None)
-    document_id: Optional[uuid_pkg.UUID] = Field(default=None)
+    collection_id: Optional[int] = Field(default=None)
+    document_id: Optional[int] = Field(default=None)
 
 
 class StudyTaskCitationPublic(SQLModel, table=False):
@@ -512,7 +549,7 @@ class StudyTaskCitationPublic(SQLModel, table=False):
 
     id: Optional[int] = Field(default=None)
     text_reference: Optional[List[Dict]] = Field(default=[])
-    document_id: Optional[uuid_pkg.UUID] = Field(default=None)
+    document_id: Optional[int] = Field(default=None)
     document_title: Optional[str] = Field(default=None)
     task_id: Optional[int] = Field(default=None)
     created_at: Optional[datetime] = Field(default=None)
@@ -527,7 +564,7 @@ class StudyTaskPublic(SQLModel, table=False):
     description: Optional[str] = Field(default=None)
     ai_explanation: Optional[str] = Field(default=None)
     status: Optional[str] = Field(default=None)
-    collection_id: Optional[uuid_pkg.UUID] = Field(default=None)
+    collection_id: Optional[int] = Field(default=None)
     citations: Optional[list[StudyTaskCitationPublic]] = Field(default=[])
     created_at: Optional[datetime] = Field(default=None)
 
@@ -549,9 +586,9 @@ class QuestionPlayload(SQLModel, table=False):
     """
 
     question: Optional[str] = Field(default=None)
-    document_id: Optional[uuid_pkg.UUID] = Field(default=None)
-    collection_id: Optional[uuid_pkg.UUID] = Field(default=None)
-    documents_ids: Optional[List[uuid_pkg.UUID]] = Field(default=None)
+    document_id: Optional[int] = Field(default=None)
+    collection_id: Optional[int] = Field(default=None)
+    documents_ids: Optional[List[int]] = Field(default=None)
     user_id: Optional[str] = Field(default=None)
 
 
@@ -570,7 +607,7 @@ class SearchPayload(SQLModel, table=False):
 
     query: Optional[str] = Field(default=None)
     user_id: Optional[str] = Field(default=None)
-    collection_id: Optional[uuid_pkg.UUID] = Field(default=None)
+    collection_id: Optional[int] = Field(default=None)
 
 
 class Page(SQLModel, table=False):
@@ -603,7 +640,7 @@ class Embedding(SQLModel, table=True):
     text: str = Field(default=None, nullable=True)
     search_vector: List[int] = Field(sa_column=Column(TSVECTOR))
     source_type: str = Field(default=None, nullable=False)
-    source_id: uuid_pkg.UUID = Field(default=None, nullable=False)
+    source_id: int = Field(default=None, nullable=False)
     vector: List[float] = Field(sa_column=Column(Vector(768)))
     update_at: datetime = Field(default_factory=datetime.now, nullable=True)
     
@@ -645,7 +682,7 @@ class StudyCollectionPublic(SQLModel, table=False):
     Represents a study collection with its ID, name, description, and user ID.
     """
 
-    id: Optional[uuid_pkg.UUID] = Field(default=None)
+    id: Optional[int] = Field(default=None)
     name: str = Field(nullable=False)
     description: Optional[str] = Field(default=None)
     ai_explanation: Optional[str] = Field(default=None)
@@ -691,7 +728,7 @@ class Chat_Message(SQLModel, table=True):
     id: int = Field(default=None, primary_key=True)
     created_at: datetime = Field(default_factory=datetime.now, nullable=False)
     asked_by: str = Field(nullable=False)  # system, user, initial_summary
-    chat_id: uuid_pkg.UUID = Field(nullable=False)
+    chat_id: int = Field(nullable=False)
     chat_type: str = Field(nullable=False)
     user_id: str = Field(nullable=False)
     user_prompt: str = Field(nullable=False)
@@ -940,7 +977,7 @@ class Bookmark(SQLModel, table=True):
 
     __tablename__ = "bookmarks"
 
-    id: uuid_pkg.UUID = Field(default_factory=uuid_pkg.uuid4, primary_key=True)
+    id: Optional[int] = Field(default=None, primary_key=True)
     created_at: Optional[datetime] = Field(
         default_factory=datetime.utcnow,
         sa_column=Column(DateTime(timezone=True), server_default=func.now())
@@ -954,7 +991,7 @@ class Bookmark(SQLModel, table=True):
     user_id: str = Field(foreign_key="users.id", index=True)
 
     # Document association
-    document_id: Optional[uuid_pkg.UUID] = Field(foreign_key="document.id", index=True)
+    document_id: Optional[int] = Field(foreign_key="document.id", index=True)
 
     # Bookmark content
     url: str = Field(max_length=2048, index=True)
@@ -987,7 +1024,7 @@ class Entity(SQLModel, table=True):
     vector: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(768)))
     user_id: str = Field(foreign_key="users.id", index=True)
     created_at: Optional[datetime] = Field(
-        default_factory=datetime.utcnow,
+        default_factory=datetime.now,   
         sa_column=Column(DateTime(timezone=True), server_default=func.now())
     )
     updated_at: Optional[datetime] = Field(
@@ -1001,8 +1038,8 @@ class EntityDocument(SQLModel, table=True):
     
     __tablename__ = "entity_documents"
     
-    entity_id: str = Field(foreign_key="entities.id", primary_key=True)
-    document_id: uuid_pkg.UUID = Field(foreign_key="document.id", primary_key=True)  # Changed to reference document table
+    entity_id: int = Field(foreign_key="entities.id", primary_key=True)
+    document_id: int = Field(foreign_key="document.id", primary_key=True)  # Changed to reference document table
     relevance: float = Field(default=0.0)
     created_at: Optional[datetime] = Field(
         default_factory=datetime.utcnow,

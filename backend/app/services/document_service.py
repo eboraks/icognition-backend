@@ -9,10 +9,11 @@ from sqlalchemy.orm import selectinload
 import logging
 from datetime import datetime
 
-from app.models import Document, User
+from app.models import Document, User, ContentExtraction, PageType
 from app.services.base_service import UserIsolatedService
 from app.services.web_fetcher import WebPageFetcher, fetch_web_page
 from app.services.user_service import UserService
+from app.services.gemini_service import get_gemini_service, GeminiModel, GeminiConfig
 from app.utils.logging import get_logger
 from bs4 import BeautifulSoup
 from app.services.content_validation_service import get_content_validation_service
@@ -175,12 +176,12 @@ class DocumentService(UserIsolatedService[Document]):
         
         # Process content based on type
         if content_type == "html":
-            # Extract text and title from HTML
-            extracted_text = self._extract_text_from_html(content)
+            # Extract text and metadata from HTML using LLM-first approach
+            extracted_text, extraction_metadata = await self._extract_text_from_html(content)
             extracted_title = self._extract_title_from_html(content)
             
-            # Use provided title or extracted title
-            final_title = title or extracted_title or "Untitled Document"
+            # Use provided title or extracted title or title from extraction
+            final_title = title or extraction_metadata.get('title') or extracted_title or "Untitled Document"
             
             document_data = {
                 "user_id": user.id,
@@ -189,6 +190,7 @@ class DocumentService(UserIsolatedService[Document]):
                 "raw_html": content,
                 "content": extracted_text,
                 "content_source": "html",
+                "extracted_content": extraction_metadata,  # Store full extraction as JSONB
                 # Document processed
             }
             
@@ -222,8 +224,28 @@ class DocumentService(UserIsolatedService[Document]):
         
         return document
 
-    def _extract_text_from_html(self, html_content: str) -> str:
-        """Extract clean text from HTML content"""
+    async def _extract_text_from_html(self, html_content: str) -> Tuple[str, Optional[Dict]]:
+        """Extract clean text from HTML content using LLM-first approach"""
+        try:
+            # Try LLM extraction first
+            extraction_result = await self._extract_content_with_llm(html_content)
+            
+            if extraction_result and extraction_result.extraction_confidence >= 0.5:
+                logger.info(f"LLM extraction successful: {extraction_result.page_type}, confidence: {extraction_result.extraction_confidence}")
+                # Return content and full extraction metadata
+                return extraction_result.content, extraction_result.model_dump()
+            else:
+                logger.warning(f"LLM extraction low confidence or failed, falling back to BeautifulSoup")
+                content = self._extract_text_with_beautifulsoup(html_content)
+                return content, {"extraction_method": "beautifulsoup", "extraction_confidence": 0.0, "page_type": "other"}
+                
+        except Exception as e:
+            logger.error(f"Error in LLM extraction, falling back to BeautifulSoup: {str(e)}")
+            content = self._extract_text_with_beautifulsoup(html_content)
+            return content, {"extraction_method": "beautifulsoup_fallback", "extraction_confidence": 0.0, "error": str(e), "page_type": "other"}
+
+    def _extract_text_with_beautifulsoup(self, html_content: str) -> str:
+        """Extract clean text from HTML content using BeautifulSoup"""
         try:
             soup = BeautifulSoup(html_content, 'html.parser')
             
@@ -242,9 +264,91 @@ class DocumentService(UserIsolatedService[Document]):
             return text
             
         except Exception as e:
-            logger.error(f"Error extracting text from HTML: {str(e)}")
+            logger.error(f"Error extracting text from HTML with BeautifulSoup: {str(e)}")
             # Fallback: return the HTML content as-is
             return html_content
+
+    async def _extract_content_with_llm(self, html_content: str) -> Optional[ContentExtraction]:
+        """Extract content from HTML using Gemini Flash Lite LLM"""
+        try:
+            # Create extraction prompt
+            prompt = f"""Analyze this HTML page and extract its core content intelligently.
+
+1. Identify the page type from these exact options:
+   - blog_post: Personal or company blog articles
+   - news_article: News stories and journalistic content
+   - product_page: Product listings, e-commerce pages
+   - documentation: Technical docs, API docs, help pages
+   - landing_page: Marketing pages, homepage, promotional content
+   - social_media: Social media posts, tweets, updates
+   - forum_post: Discussion forum posts and threads
+   - wiki: Wikipedia-style informational pages
+   - other: Any other type of content
+   - not_clear: When page type cannot be determined or content is confusing
+
+2. Extract ONLY the main content, excluding:
+   - Navigation menus, sidebars, footers, headers
+   - Advertisements and promotional content
+   - Related articles/products lists
+   - Comments sections (unless page type is forum_post/social_media)
+   - Cookie notices, popups, banners
+   - Social media share buttons
+
+3. For social_media: Include post content, author, tags, images
+4. For product_page: Include name, description, price, key features
+5. For news_article/blog_post: Include article text, author, publication date
+6. For documentation: Include the main topic and content
+
+If the page is confusing (e.g., landing page with no clear content), use page_type "not_clear" and explain why extraction isn't possible in extraction_notes.
+
+HTML Content:
+{html_content}
+
+Return structured data with high confidence (0.7-1.0) only if you can clearly identify and extract meaningful content. Use medium confidence (0.4-0.7) if content is present but unclear. Use low confidence (0.0-0.4) if extraction failed or page has no clear content.
+
+Return your response as JSON in this exact format, if the fields are not present, return an empty string.
+{{
+  "page_type": "one_of_the_types_above",
+  "title": "extracted_title",
+  "content": "main_content_text",
+  "author": "author_name_or_empty_string",
+  "publication_date": "date_or_empty_string", 
+  "tags": ["tag1", "tag2"],
+  "metadata": {{}},
+  "extraction_confidence": 0.8,
+  "extraction_notes": "any_notes_or_empty_string"
+}}"""
+
+            # Initialize Gemini service
+            gemini_service = get_gemini_service()
+            
+            # Configure for structured output
+            config = GeminiConfig(
+                temperature=0.0,
+                response_mime_type="application/json"
+            )
+            
+            # Get response from Gemini AI
+            response = await gemini_service.generate_content(
+                prompt=prompt,
+                model=GeminiModel.FLASH_LITE,
+                config=config
+            )
+            
+            # Parse the structured response
+            import json
+            try:
+                response_data = json.loads(response['content'])
+                extraction_result = ContentExtraction(**response_data)
+                logger.info(f"LLM extraction completed: page_type={extraction_result.page_type}, confidence={extraction_result.extraction_confidence}")
+                return extraction_result
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON response from LLM: {e}")
+                return None
+            
+        except Exception as e:
+            logger.error(f"Error in LLM content extraction: {str(e)}")
+            return None
 
     def _extract_title_from_html(self, html_content: str) -> str:
         """Extract title from HTML content"""

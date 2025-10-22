@@ -51,7 +51,7 @@ class DocumentCreateRequest(BaseModel):
 class DocumentResponse(BaseModel):
     """Response model for document data"""
     
-    id: uuid_pkg.UUID
+    id: int
     updated_at: datetime
     user_id: str
     url: Optional[str] = None
@@ -99,7 +99,7 @@ class DocumentUpdateRequest(BaseModel):
 class DocumentProcessingStatusResponse(BaseModel):
     """Response model for document processing status"""
     
-    id: uuid_pkg.UUID
+    id: int
     status: str
     updated_at: datetime
     document_metadata: Optional[Dict[str, Any]] = None
@@ -110,7 +110,7 @@ class DocumentProcessingStatusResponse(BaseModel):
 class DocumentContentResponse(BaseModel):
     """Response model for document content (for analysis)"""
     
-    id: uuid_pkg.UUID
+    id: int
     title: str
     content: str
     author: Optional[str] = None

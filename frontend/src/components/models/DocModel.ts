@@ -2,7 +2,7 @@ import { Moment } from "moment";
 import { Citation } from "./Citation.ts";
 
 export class DocModel {
-    id?: string;
+    id?: number;
     authors?: any[];
     title: string;
     url: string;
@@ -21,7 +21,7 @@ export class DocModel {
     html_elements?: [Object];
     source_type?: string;
 
-    constructor(title: string, url: string, id?: string, updateAt?: Moment) {
+    constructor(title: string, url: string, id?: number, updateAt?: Moment) {
         this.title = title;
         this.url = url;
         this.id = id;

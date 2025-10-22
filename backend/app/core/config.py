@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: Optional[str] = os.getenv("GOOGLE_API_KEY")
     GCP_AI_KEY: Optional[str] = os.getenv("GCP_AI_KEY")
     GEMINI_FLASH_MODEL: str = os.getenv("GEMINI_FLASH_MODEL", "models/gemini-2.0-flash")
+    GEMINI_FLASH_LITE_MODEL: str = os.getenv("GEMINI_FLASH_LITE", "models/gemini-2.5-flash-lite")
     GEMINI_EMBEDDING_MODEL: str = os.getenv("GEMINI_EMBEDDING_MODEL", "models/text-embedding-004")
     
     # Google Cloud Storage Configuration

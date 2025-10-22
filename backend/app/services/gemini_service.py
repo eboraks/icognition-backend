@@ -22,6 +22,7 @@ logger = get_logger(__name__)
 class GeminiModel(Enum):
     """Available Gemini models"""
     FLASH = settings.GEMINI_FLASH_MODEL
+    FLASH_LITE = settings.GEMINI_FLASH_LITE_MODEL
     EMBEDDING = settings.GEMINI_EMBEDDING_MODEL
 
 
@@ -63,9 +64,6 @@ class GeminiService:
         
         if mock_mode:
             logger.info("GeminiService initialized in mock mode")
-            # Initialize mock models
-            self.flash_model = None
-            self.pro_model = None
         else:
             self.api_key = api_key or settings.GOOGLE_API_KEY
             if not self.api_key:
@@ -73,11 +71,6 @@ class GeminiService:
             
             # Configure the API
             genai.configure(api_key=self.api_key)
-            
-            # Initialize models
-            self.flash_model = genai.GenerativeModel(
-                model_name=GeminiModel.FLASH.value
-            )
         
         # Rate limiting
         self.rate_limit_info = RateLimitInfo()
@@ -130,7 +123,9 @@ class GeminiService:
         await self._check_rate_limits()
         
         config = config or GeminiConfig()
-        model_instance = self._get_model_instance(model)
+        
+        # Create model instance directly using the enum value
+        model_instance = genai.GenerativeModel(model_name=model.value)
         
         backoff = 1
         last_error = None
@@ -362,13 +357,6 @@ class GeminiService:
         except Exception as e:
             logger.error(f"Error analyzing content: {str(e)}")
             raise
-    
-    def _get_model_instance(self, model: GeminiModel):
-        """Get the appropriate model instance"""
-        if model == GeminiModel.FLASH:
-            return self.flash_model
-        else:
-            raise ValueError(f"Unsupported model: {model}")
     
     async def _check_rate_limits(self):
         """Check and enforce rate limits - simplified version"""

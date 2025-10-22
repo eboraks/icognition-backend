@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import datetime
 from pydantic import BaseModel, Field
-import uuid as uuid_pkg
 from sqlmodel import select
 from asyncio import create_task
 from app.db.database import get_session
@@ -24,8 +23,24 @@ from app.services.embedding_service import get_embedding_service
 from app.core.config import settings
 from app.api.routes.websocket import get_connection_manager
 
-
 logger = get_logger(__name__)
+
+def sanitize_content_for_db(content: str) -> str:
+    """Ensure content is valid UTF-8 and database-safe"""
+    if not content:
+        return content
+    
+    # Remove problematic characters for database storage
+    content = content.replace('\x00', '')  # Null bytes
+    content = content.replace('\x1a', '')  # SUB character
+    
+    # Ensure valid UTF-8 encoding
+    try:
+        content.encode('utf-8')
+        return content
+    except UnicodeEncodeError:
+        # Replace invalid characters with replacement character
+        return content.encode('utf-8', errors='replace').decode('utf-8')
 
 # Legacy embedding handler removed - using modern services instead
 
@@ -564,7 +579,7 @@ router = APIRouter(prefix="/bookmarks", tags=["bookmarks"])
 
 @router.post("/{bookmark_id}/re-analyze")
 async def re_analyze_bookmark(
-    bookmark_id: uuid_pkg.UUID,
+    bookmark_id: int,
     background_tasks: BackgroundTasks,
     user_context: UserContext = Depends(get_authenticated_user_context),
     session: AsyncSession = Depends(get_session)
@@ -659,7 +674,7 @@ class BookmarkUpdateRequest(BaseModel):
 class BookmarkResponse(BaseModel):
     """Bookmark response model"""
     
-    id: uuid_pkg.UUID
+    id: int
     url: str
     title: str
     description: Optional[str] = None
@@ -670,7 +685,7 @@ class BookmarkResponse(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     user_id: str
-    document_id: Optional[uuid_pkg.UUID] = None
+    document_id: Optional[int] = None
 
 class BookmarkListResponse(BaseModel):
     """Bookmark list response model"""
@@ -827,7 +842,7 @@ async def create_bookmark(
                 url=bookmark_data.url,
                 title=bookmark_data.title,
                 description=bookmark_data.description,
-                content=bookmark_data.content,  # Store the HTML content
+                content=sanitize_content_for_db(bookmark_data.content),  # Sanitize content before storing
                 bookmark_metadata=bookmark_data.metadata,  # Fixed: use 'metadata' not 'bookmark_metadata'
                 user_id=user_context.user.id,
                 is_processed=False,
@@ -891,7 +906,7 @@ async def create_bookmark(
             url=bookmark_data.url,
             title=bookmark_data.title or "Untitled",
             description=bookmark_data.description,
-            content=bookmark_data.content,
+            content=sanitize_content_for_db(bookmark_data.content),
             bookmark_metadata=bookmark_data.metadata or {},
             user_id=user_context.user.id,
             document_id=_doc.id if _doc else None
@@ -1072,7 +1087,7 @@ async def get_user_bookmarks(
 
 @router.get("/{bookmark_id}", response_model=BookmarkResponse)
 async def get_bookmark(
-    bookmark_id: uuid_pkg.UUID,
+    bookmark_id: int,
     user_context: UserContext = Depends(get_authenticated_user_context),
     session: AsyncSession = Depends(get_session)
 ):
@@ -1117,7 +1132,7 @@ async def get_bookmark(
 
 @router.put("/{bookmark_id}", response_model=BookmarkResponse)
 async def update_bookmark(
-    bookmark_id: uuid_pkg.UUID,
+    bookmark_id: int,
     bookmark_update: BookmarkUpdateRequest,
     user_context: UserContext = Depends(get_authenticated_user_context),
     session: AsyncSession = Depends(get_session)
@@ -1180,7 +1195,7 @@ async def update_bookmark(
 
 @router.delete("/{bookmark_id}")
 async def delete_bookmark(
-    bookmark_id: uuid_pkg.UUID,
+    bookmark_id: int,
     user_context: UserContext = Depends(get_authenticated_user_context),
     session: AsyncSession = Depends(get_session)
 ):
@@ -1313,7 +1328,7 @@ async def _create_document_from_clean_text(
         title=bookmark_data.title or "Untitled",
         url=clean_url,
         content_source="text",
-        content=bookmark_data.content,
+        content=sanitize_content_for_db(bookmark_data.content),
         user_id=user_context.user.id,
         created_at=datetime.now(),
         updated_at=datetime.now()

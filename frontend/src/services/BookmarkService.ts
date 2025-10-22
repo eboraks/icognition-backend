@@ -32,7 +32,7 @@ export interface BookmarkResponse {
   processing_status?: string;
   created_at?: string;
   updated_at?: string;
-  user_id: number;
+  user_id: string;
 }
 
 export interface BookmarkListResponse {
