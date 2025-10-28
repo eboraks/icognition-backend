@@ -3,7 +3,12 @@ iCognition Backend API
 Modern FastAPI application with async support and proper structure
 """
 
-import logging
+from app.utils.logging import get_logger
+
+# Configure logging
+logger = get_logger(__name__)
+
+
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Depends, HTTPException, status
@@ -25,11 +30,6 @@ from app.api.errors import (
     APIError
 )
 from app.api.routes import users, bookmarks, documents, websocket, system
-from app.utils.logging import get_logger
-
-# Configure logging
-logger = get_logger(__name__)
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

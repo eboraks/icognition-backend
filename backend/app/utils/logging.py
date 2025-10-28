@@ -8,94 +8,71 @@ from typing import Optional
 from app.core.config import settings
 
 
-class LogConfig:
-    """Logging configuration class"""
-    
-    LOGGER_NAME: str = "icognition"
-    LOG_FORMAT: str = "%(levelprefix)s | %(asctime)s | %(filename)s:%(lineno)d | %(name)s | %(message)s"
-    LOG_LEVEL: str = settings.LOG_LEVEL
-    
-    # Logging config
-    version: int = 1
-    disable_existing_loggers: bool = False
-    
-    formatters: dict = {
-        "default": {
-            "()": "uvicorn.logging.DefaultFormatter",
-            "fmt": LOG_FORMAT,
-            "datefmt": "%Y-%m-%d %H:%M:%S",
-        },
-        "detailed": {
-            "()": "uvicorn.logging.DefaultFormatter",
-            "fmt": "%(levelprefix)s | %(asctime)s | %(filename)s:%(lineno)d | %(name)s | %(message)s",
-            "datefmt": "%Y-%m-%d %H:%M:%S",
-        },
-    }
-    
-    handlers: dict = {
-        "default": {
-            "formatter": "default",
-            "class": "logging.StreamHandler",
-            "stream": sys.stderr,
-        },
-        "detailed": {
-            "formatter": "detailed",
-            "class": "logging.StreamHandler",
-            "stream": sys.stderr,
-        },
-    }
-    
-    loggers: dict = {
-        LOGGER_NAME: {
-            "handlers": ["default"],
-            "level": LOG_LEVEL,
-            "propagate": False,
-        },
-        "uvicorn": {
-            "handlers": ["default"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "uvicorn.error": {
-            "handlers": ["detailed"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "uvicorn.access": {
-            "handlers": ["default"],
-            "level": "INFO",
-            "propagate": False,
-        },
-    }
-
-
 def get_logger(name: Optional[str] = None) -> logging.Logger:
     """
-    Get a logger instance
+    Get a logger instance with consistent formatting
     
     Args:
-        name: Logger name. If None, uses the default logger name
+        name: Logger name. If None, uses the module name
         
     Returns:
         Logger instance
     """
     if name is None:
-        name = LogConfig.LOGGER_NAME
+        name = "icognition"
     
-    # Ensure the logger name starts with our main logger name
-    if not name.startswith(LogConfig.LOGGER_NAME):
-        name = f"{LogConfig.LOGGER_NAME}.{name}"
+    logger = logging.getLogger(name)
     
-    return logging.getLogger(name)
+    # Only configure if not already configured
+    if not logger.handlers:
+        # Create console handler
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setLevel(logging.INFO)
+        
+        # Create formatter
+        formatter = logging.Formatter(
+            '%(asctime)s - %(filename)s - %(lineno)d - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        
+        # Add formatter to handler
+        handler.setFormatter(formatter)
+        
+        # Add handler to logger
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+    
+    return logger
 
 
 def configure_logging():
-    """Configure logging for the application"""
-    import logging.config
+    """Configure root logging for the application"""
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
     
-    logging.config.dictConfig(LogConfig().__dict__)
+    # Remove existing handlers to avoid duplicates
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
     
-    # Set up additional loggers
+    # Create console handler
+    console_handler = logging.StreamHandler(sys.stderr)
+    console_handler.setLevel(logging.INFO)
+    
+    # Create formatter
+    formatter = logging.Formatter(
+        '%(asctime)s - %(filename)s - %(lineno)d - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # Add formatter to handler
+    console_handler.setFormatter(formatter)
+    
+    # Add handler to root logger
+    root_logger.addHandler(console_handler)
+    
+    # Get logger and log success
     logger = get_logger()
     logger.info("Logging configured successfully")
     

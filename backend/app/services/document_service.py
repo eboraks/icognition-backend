@@ -176,18 +176,17 @@ class DocumentService(UserIsolatedService[Document]):
         
         # Process content based on type
         if content_type == "html":
-            # Extract text and metadata from HTML using LLM-first approach
+            # Extract text and metadata from HTML using BeautifulSoup-first approach
             extracted_text, extraction_metadata = await self._extract_text_from_html(content)
-            extracted_title = self._extract_title_from_html(content)
             
-            # Use provided title or extracted title or title from extraction
-            final_title = title or extraction_metadata.get('title') or extracted_title or "Untitled Document"
+            # Use provided title or extracted title from metadata
+            final_title = title or extraction_metadata.get('title') or "Untitled Document"
             
             document_data = {
                 "user_id": user.id,
                 "url": url,
                 "title": final_title,
-                "raw_html": content,
+                "raw_html": content,  # Content is already sanitized from bookmark
                 "content": extracted_text,
                 "content_source": "html",
                 "extracted_content": extraction_metadata,  # Store full extraction as JSONB
@@ -205,8 +204,8 @@ class DocumentService(UserIsolatedService[Document]):
                 "user_id": user.id,
                 "url": url,
                 "title": final_title,
-                "raw_html": wrapped_html,
-                "content": content,
+                "raw_html": wrapped_html,  # Content is already sanitized from bookmark
+                "content": content,  # Content is already sanitized from bookmark
                 "content_source": "text",
                 # Document processed
             }
@@ -225,27 +224,36 @@ class DocumentService(UserIsolatedService[Document]):
         return document
 
     async def _extract_text_from_html(self, html_content: str) -> Tuple[str, Optional[Dict]]:
-        """Extract clean text from HTML content using LLM-first approach"""
+        """Extract clean text from HTML content using BeautifulSoup-first approach with LLM fallback"""
         try:
-            # Try LLM extraction first
-            extraction_result = await self._extract_content_with_llm(html_content)
+            # 1. Try BeautifulSoup extraction first
+            extraction_result = self._extract_content_with_beautifulsoup(html_content)
             
-            if extraction_result and extraction_result.extraction_confidence >= 0.5:
-                logger.info(f"LLM extraction successful: {extraction_result.page_type}, confidence: {extraction_result.extraction_confidence}")
-                # Return content and full extraction metadata
+            # 2. If confidence >= 0.7, use it
+            if extraction_result.extraction_confidence >= 0.7:
+                logger.info(f"BeautifulSoup extraction successful with confidence {extraction_result.extraction_confidence}")
                 return extraction_result.content, extraction_result.model_dump()
-            else:
-                logger.warning(f"LLM extraction low confidence or failed, falling back to BeautifulSoup")
-                content = self._extract_text_with_beautifulsoup(html_content)
-                return content, {"extraction_method": "beautifulsoup", "extraction_confidence": 0.0, "page_type": "other"}
+            
+            # 3. Otherwise, use LLM
+            logger.info(f"BeautifulSoup confidence too low ({extraction_result.extraction_confidence}), using LLM")
+            llm_result = await self._extract_content_with_llm(html_content)
+            
+            if llm_result and llm_result.extraction_confidence >= 0.5:
+                logger.info(f"LLM extraction successful with confidence {llm_result.extraction_confidence}")
+                return llm_result.content, llm_result.model_dump()
+            
+            # 4. Final fallback: return BeautifulSoup result anyway
+            logger.warning("LLM extraction also failed, using BeautifulSoup result")
+            return extraction_result.content, extraction_result.model_dump()
                 
         except Exception as e:
-            logger.error(f"Error in LLM extraction, falling back to BeautifulSoup: {str(e)}")
+            logger.error(f"Error in content extraction, falling back to basic BeautifulSoup: {str(e)}")
+            # Ultimate fallback: basic text extraction
             content = self._extract_text_with_beautifulsoup(html_content)
             return content, {"extraction_method": "beautifulsoup_fallback", "extraction_confidence": 0.0, "error": str(e), "page_type": "other"}
 
     def _extract_text_with_beautifulsoup(self, html_content: str) -> str:
-        """Extract clean text from HTML content using BeautifulSoup"""
+        """Basic text extraction fallback method"""
         try:
             soup = BeautifulSoup(html_content, 'html.parser')
             
@@ -267,6 +275,374 @@ class DocumentService(UserIsolatedService[Document]):
             logger.error(f"Error extracting text from HTML with BeautifulSoup: {str(e)}")
             # Fallback: return the HTML content as-is
             return html_content
+
+    def _extract_content_with_beautifulsoup(self, html_content: str) -> ContentExtraction:
+        """Extract structured content from HTML using BeautifulSoup with intelligent parsing"""
+        try:
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # Find main content container
+            main_container = self._find_main_content_container(soup)
+            
+            # Extract all fields
+            title = self._extract_title_from_html(soup)
+            author = self._extract_author_from_html(soup)
+            publication_date = self._extract_date_from_html(soup)
+            page_type = self._extract_page_type_from_html(soup, "")
+            image_url = self._extract_image_url_from_html(soup)
+            tags = self._extract_tags_from_html(soup)
+            metadata = self._extract_metadata_from_html(soup)
+            content = self._extract_content_text(soup, main_container, page_type)
+            
+            # Calculate confidence
+            confidence = self._calculate_extraction_confidence(
+                content, title, author, publication_date, image_url, tags, page_type
+            )
+            
+            return ContentExtraction(
+                page_type=page_type,
+                title=title,
+                content=content,
+                author=author,
+                publication_date=publication_date,
+                tags=tags,
+                metadata=metadata,
+                extraction_confidence=confidence,
+                extraction_notes="BeautifulSoup extraction",
+                image_url=image_url
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in BeautifulSoup content extraction: {str(e)}")
+            # Return minimal extraction on error
+            return ContentExtraction(
+                page_type="other",
+                title="",
+                content="",
+                author="",
+                publication_date="",
+                tags=[],
+                metadata={},
+                extraction_confidence=0.0,
+                extraction_notes=f"BeautifulSoup extraction failed: {str(e)}",
+                image_url=""
+            )
+
+    def _find_main_content_container(self, soup: BeautifulSoup):
+        """Find the main content container using semantic HTML5 and common patterns"""
+        # Priority order: article > main > div with main/content/article in id/class
+        selectors = [
+            'article',
+            'main',
+            'div[id*="main"]',
+            'div[class*="main"]',
+            'div[id*="content"]',
+            'div[class*="content"]',
+            'div[id*="article"]',
+            'div[class*="article"]',
+            'div[id*="post"]',
+            'div[class*="post"]',
+            'div[id*="entry"]',
+            'div[class*="entry"]',
+            'div[id*="body"]',
+            'div[class*="body"]'
+        ]
+        
+        for selector in selectors:
+            container = soup.select_one(selector)
+            if container:
+                return container
+        
+        # Fallback to body if nothing found
+        return soup.find('body') or soup
+
+    def _extract_title_from_html(self, soup: BeautifulSoup) -> str:
+        """Extract title using multiple strategies"""
+        # Priority order
+        selectors = [
+            'meta[property="og:title"]',
+            'meta[name="twitter:title"]',
+            'meta[name="title"]',
+            'h1',
+            'title'
+        ]
+        
+        for selector in selectors:
+            element = soup.select_one(selector)
+            if element:
+                if element.name == 'meta':
+                    title = element.get('content', '').strip()
+                else:
+                    title = element.get_text().strip()
+                
+                if title and len(title) > 0:
+                    return title
+        
+        return ""
+
+    def _extract_author_from_html(self, soup: BeautifulSoup) -> str:
+        """Extract author using multiple strategies"""
+        # Priority order
+        selectors = [
+            'meta[name="author"]',
+            'meta[property="article:author"]',
+            'a[rel="author"]',
+            'span[itemprop="author"]',
+            '[class*="author"]',
+            '[id*="author"]',
+            '[class*="byline"]',
+            '[class*="writer"]'
+        ]
+        
+        for selector in selectors:
+            element = soup.select_one(selector)
+            if element:
+                if element.name == 'meta':
+                    author = element.get('content', '').strip()
+                else:
+                    author = element.get_text().strip()
+                
+                if author and len(author) > 0:
+                    return author
+        
+        return ""
+
+    def _extract_date_from_html(self, soup: BeautifulSoup) -> str:
+        """Extract publication date using multiple strategies"""
+        # Priority order
+        selectors = [
+            'meta[property="article:published_time"]',
+            'time[datetime]',
+            'time[pubdate]',
+            'meta[itemprop="datePublished"]',
+            '[class*="date"]',
+            '[id*="date"]',
+            '[class*="published"]',
+            '[class*="timestamp"]'
+        ]
+        
+        for selector in selectors:
+            element = soup.select_one(selector)
+            if element:
+                if element.name == 'meta':
+                    date = element.get('content', '').strip()
+                elif element.name == 'time':
+                    date = element.get('datetime', '').strip() or element.get_text().strip()
+                else:
+                    date = element.get_text().strip()
+                
+                if date and len(date) > 0:
+                    return date
+        
+        return ""
+
+    def _extract_page_type_from_html(self, soup: BeautifulSoup, url: str) -> str:
+        """Detect page type from HTML and URL patterns"""
+        # Check Open Graph type first
+        og_type = soup.select_one('meta[property="og:type"]')
+        if og_type:
+            og_value = og_type.get('content', '').lower()
+            if og_value == 'article':
+                # Distinguish between news and blog based on site
+                site_name = self._extract_site_name(soup)
+                if any(news_site in site_name.lower() for news_site in ['news', 'cnn', 'bbc', 'reuters', 'yahoo', 'finance']):
+                    return "news_article"
+                else:
+                    return "blog_post"
+            elif og_value == 'website':
+                return "landing_page"
+            elif og_value == 'product':
+                return "product_page"
+        
+        # Check URL patterns
+        if '/wiki/' in url.lower():
+            return "wiki"
+        elif '/docs/' in url.lower() or '/documentation/' in url.lower():
+            return "documentation"
+        elif 'reddit.com' in url.lower():
+            return "social_media"
+        elif 'medium.com' in url.lower():
+            return "blog_post"
+        
+        # Check site name heuristics
+        site_name = self._extract_site_name(soup)
+        if any(social_site in site_name.lower() for social_site in ['reddit', 'twitter', 'facebook', 'instagram']):
+            return "social_media"
+        elif any(doc_site in site_name.lower() for doc_site in ['docs', 'documentation', 'api', 'guide']):
+            return "documentation"
+        
+        return "other"
+
+    def _extract_site_name(self, soup: BeautifulSoup) -> str:
+        """Extract site name from HTML"""
+        selectors = [
+            'meta[property="og:site_name"]',
+            'meta[name="application-name"]'
+        ]
+        
+        for selector in selectors:
+            element = soup.select_one(selector)
+            if element:
+                site_name = element.get('content', '').strip()
+                if site_name:
+                    return site_name
+        
+        return ""
+
+    def _extract_image_url_from_html(self, soup: BeautifulSoup) -> str:
+        """Extract primary image URL"""
+        # Priority order
+        selectors = [
+            'meta[property="og:image"]',
+            'meta[name="twitter:image"]',
+            'img'
+        ]
+        
+        for selector in selectors:
+            element = soup.select_one(selector)
+            if element:
+                if element.name == 'meta':
+                    image_url = element.get('content', '').strip()
+                else:
+                    image_url = element.get('src', '').strip()
+                
+                if image_url and len(image_url) > 0:
+                    return image_url
+        
+        return ""
+
+    def _extract_tags_from_html(self, soup: BeautifulSoup) -> list[str]:
+        """Extract tags/keywords from HTML"""
+        tags = []
+        
+        # Meta keywords
+        keywords_meta = soup.select_one('meta[name="keywords"]')
+        if keywords_meta:
+            keywords = keywords_meta.get('content', '')
+            if keywords:
+                tags.extend([tag.strip() for tag in keywords.split(',') if tag.strip()])
+        
+        # Article tags
+        article_tags = soup.select('meta[property="article:tag"]')
+        for tag_meta in article_tags:
+            tag = tag_meta.get('content', '').strip()
+            if tag:
+                tags.append(tag)
+        
+        # Elements with tag-related classes
+        tag_elements = soup.select('[class*="tag"], [class*="label"], [class*="category"]')
+        for element in tag_elements:
+            tag_text = element.get_text().strip()
+            if tag_text and tag_text not in tags:
+                tags.append(tag_text)
+        
+        return tags[:10]  # Limit to 10 tags
+
+    def _extract_metadata_from_html(self, soup: BeautifulSoup) -> dict:
+        """Extract additional metadata"""
+        metadata = {}
+        
+        # Site name
+        site_name = self._extract_site_name(soup)
+        if site_name:
+            metadata['site_name'] = site_name
+        
+        # Description
+        desc_selectors = [
+            'meta[property="og:description"]',
+            'meta[name="description"]',
+            'meta[name="twitter:description"]'
+        ]
+        
+        for selector in desc_selectors:
+            element = soup.select_one(selector)
+            if element:
+                description = element.get('content', '').strip()
+                if description:
+                    metadata['description'] = description
+                    break
+        
+        return metadata
+
+    def _extract_content_text(self, soup: BeautifulSoup, container, page_type: str) -> str:
+        """Extract clean text content from the main container"""
+        if not container:
+            return ""
+        
+        # Remove unwanted elements based on page type
+        unwanted_selectors = [
+            'script', 'style', 'nav', 'header', 'footer', 'aside',
+            '[class*="nav"]', '[class*="menu"]', '[class*="sidebar"]',
+            '[class*="footer"]', '[class*="header"]', '[class*="ad"]',
+            '[class*="advertisement"]', '[class*="related"]'
+        ]
+        
+        # For forum/social media, keep comments
+        if page_type not in ['forum_post', 'social_media']:
+            unwanted_selectors.extend(['[class*="comment"]', '[id*="comment"]'])
+        
+        for selector in unwanted_selectors:
+            for element in container.select(selector):
+                element.decompose()
+        
+        # Extract text from content elements
+        content_elements = container.select('h1, h2, h3, h4, h5, h6, p, ul, ol, li, blockquote')
+        
+        if not content_elements:
+            # Fallback to all text
+            text = container.get_text()
+        else:
+            # Build content from structured elements
+            content_parts = []
+            for element in content_elements:
+                text = element.get_text().strip()
+                if text:
+                    content_parts.append(text)
+            text = '\n'.join(content_parts)
+        
+        # Clean up whitespace
+        lines = (line.strip() for line in text.splitlines())
+        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+        clean_text = '\n'.join(chunk for chunk in chunks if chunk)
+        
+        return clean_text
+
+    def _calculate_extraction_confidence(self, content: str, title: str, author: str, 
+                                       publication_date: str, image_url: str, 
+                                       tags: list, page_type: str) -> float:
+        """Calculate weighted confidence score"""
+        total_possible = 10  # Total weighted points
+        weighted_score = 0
+        
+        # Content: 3 points
+        if content and len(content.strip()) > 100:
+            weighted_score += 3
+        
+        # Title: 3 points  
+        if title and len(title.strip()) > 0:
+            weighted_score += 3
+        
+        # Author: 1 point
+        if author and author != "":
+            weighted_score += 1
+        
+        # Publication date: 1 point
+        if publication_date and publication_date != "":
+            weighted_score += 1
+        
+        # Image URL: 1 point
+        if image_url and image_url != "":
+            weighted_score += 1
+        
+        # Tags: 0.5 points (if any exist)
+        if tags and len(tags) > 0:
+            weighted_score += 0.5
+        
+        # Page type: 0.5 points (if not "other")
+        if page_type and page_type != "other":
+            weighted_score += 0.5
+        
+        return weighted_score / total_possible
 
     async def _extract_content_with_llm(self, html_content: str) -> Optional[ContentExtraction]:
         """Extract content from HTML using Gemini Flash Lite LLM"""
@@ -349,32 +725,6 @@ Return your response as JSON in this exact format, if the fields are not present
         except Exception as e:
             logger.error(f"Error in LLM content extraction: {str(e)}")
             return None
-
-    def _extract_title_from_html(self, html_content: str) -> str:
-        """Extract title from HTML content"""
-        try:
-            soup = BeautifulSoup(html_content, 'html.parser')
-            
-            # Try to find title tag first
-            title_tag = soup.find('title')
-            if title_tag and title_tag.string:
-                return title_tag.string.strip()
-            
-            # Fallback to h1 tag
-            h1_tag = soup.find('h1')
-            if h1_tag:
-                return h1_tag.get_text().strip()
-            
-            # Fallback to h2 tag
-            h2_tag = soup.find('h2')
-            if h2_tag:
-                return h2_tag.get_text().strip()
-            
-            return "Untitled Document"
-            
-        except Exception as e:
-            logger.error(f"Error extracting title from HTML: {str(e)}")
-            return "Untitled Document"
 
     async def fetch_and_update_document(
         self,
@@ -505,7 +855,7 @@ Return your response as JSON in this exact format, if the fields are not present
     async def get_document_by_id(
         self,
         user_id: str,
-        document_id: str  # Changed from int to str for UUID
+        document_id: int  # Document ID is now int
     ) -> Optional[Document]:
         """Get a specific document by ID for a user"""
         
@@ -519,7 +869,7 @@ Return your response as JSON in this exact format, if the fields are not present
     async def update_document(
         self,
         user_id: str,
-        document_id: str,  # Changed from int to str for UUID
+        document_id: int,  # Document ID is now int
         **update_data
     ) -> Optional[Document]:
         """Update document metadata"""

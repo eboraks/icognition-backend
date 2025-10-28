@@ -14,7 +14,7 @@ import uuid
 from app.core.user_context import get_active_user_context, UserContext
 from app.db.database import get_session
 from app.models import Document, Entity, EntityDocument, Embedding
-from app.log import get_logger
+from app.utils.logging import get_logger
 from app.api.routes.bookmarks import _process_document_entities, _process_document_embeddings, _process_document_content, _process_document_entities_batch, _process_document_embeddings_batch
 from asyncio import create_task
 

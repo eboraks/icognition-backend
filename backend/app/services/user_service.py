@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 import logging
+import asyncio
 
 from app.models import User
 from app.utils.logging import get_logger
@@ -77,8 +78,9 @@ class UserService:
             
         except IntegrityError as e:
             await session.rollback()
-            logger.warning(f"User with Firebase UID {firebase_uid} already exists: {e}")
-            return None
+            logger.warning(f"User with Firebase UID {firebase_uid} already exists, attempting to retrieve: {e}")
+            # User already exists, try to get it
+            return await UserService.get_user_by_firebase_uid(session, firebase_uid)
         except Exception as e:
             await session.rollback()
             logger.error(f"Error creating user with Firebase UID {firebase_uid}: {e}")
@@ -99,13 +101,18 @@ class UserService:
         This is the main function for automatic user creation on first bookmark.
         """
         try:
-            # First, try to get existing user
-            user = await UserService.get_user_by_firebase_uid(session, firebase_uid)
-            
-            if user:
-                # Update last_active timestamp
-                await UserService.update_last_active(session, user.id)
-                return user
+            # First, try to get existing user with retry logic
+            for attempt in range(3):  # Try up to 3 times
+                user = await UserService.get_user_by_firebase_uid(session, firebase_uid)
+                
+                if user:
+                    # Update last_active timestamp
+                    await UserService.update_last_active(session, user.id)
+                    return user
+                
+                # If not found on first attempt, try once more with a small delay
+                if attempt < 2:
+                    await asyncio.sleep(0.1)  # Brief delay for race condition
             
             # User doesn't exist, create new one
             logger.info(f"User with Firebase UID {firebase_uid} not found, creating new user")

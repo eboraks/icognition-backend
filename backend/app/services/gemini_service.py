@@ -14,7 +14,7 @@ import google.generativeai as genai
 from google.api_core import exceptions as gcp_exceptions
 
 from app.core.config import settings
-from app.log import get_logger
+from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
 

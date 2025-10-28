@@ -19,7 +19,7 @@ from app.api.models.document_models import (
     DocumentContentResponse
 )
 from app.api.errors import NotFoundError, ValidationError
-from app.log import get_logger
+from app.utils.logging import get_logger
 from app.models import Document
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -191,7 +191,7 @@ async def get_all_documents(
 
 @router.get("/{document_id}", response_model=DocumentResponse)
 async def get_document(
-    document_id: str,  # Changed from int to str for UUID
+    document_id: int,  # Document ID is now int
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
 ):
@@ -310,7 +310,7 @@ async def get_documents_by_url(
 
 @router.get("/{document_id}/content", response_model=DocumentContentResponse)
 async def get_document_content(
-    document_id: str,  # Changed from int to str for UUID
+    document_id: int,  # Document ID is now int
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
 ):

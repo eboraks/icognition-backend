@@ -1,5 +1,14 @@
 """
-Entity Extraction Service for extracting entities from document content using Gemini AI
+DEPRECATED: Entity Extraction Service for extracting entities from document content using Gemini AI
+
+This service has been replaced by dspy_entity_service.py which uses DSPy for faster,
+more consistent entity extraction.
+
+Use: from app.services.dspy_entity_service import get_dspy_entity_service
+
+Migration completed: 2025-10-26
+Scheduled for removal: After 1 week validation period
+Note: Database logic (_find_or_create_entity, etc.) has been moved to dspy_entity_adapter.py
 """
 
 import asyncio
@@ -266,6 +275,10 @@ Return ONLY the 15 most relevant entities to the main subject matter.
         """Find existing entity or create new one"""
         try:
             user = await UserService.get_or_create_user(self.session, firebase_uid)
+            
+            if not user:
+                logger.error(f"Failed to get or create user for Firebase UID: {firebase_uid}")
+                return None
             
             # Try to find existing entity by name and type
             query = select(Entity).where(

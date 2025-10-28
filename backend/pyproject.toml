@@ -83,6 +83,8 @@ dependencies = [
     "firebase-admin==6.5.0",
     "aiosqlite>=0.21.0",
     "pytest-cov>=7.0.0",
+    "dspy-ai>=3.0.3",
+    "thefuzz>=0.22.1",
 ]
 
 [project.optional-dependencies]

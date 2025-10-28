@@ -9,7 +9,7 @@ from typing import Optional, Dict, Any
 import firebase_admin
 from firebase_admin import credentials, auth
 from fastapi import HTTPException, status
-from app.log import get_logger
+from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
 

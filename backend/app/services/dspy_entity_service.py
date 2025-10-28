@@ -1,0 +1,163 @@
+"""
+DSPy-based entity extraction service for iCognition
+Uses DSPy with Google Gemini Flash Lite for fast entity extraction
+"""
+
+from typing import Optional, List, Dict, Any
+import dspy
+from datetime import datetime
+
+from app.core.config import settings
+from app.utils.logging import get_logger
+from app.services.dspy_models_entities_only import EntityExtractionResult, Entity
+from app.models import Document
+
+logger = get_logger(__name__)
+
+
+# --- DSPy Signature for Entity Extraction ---
+class ExtractEntities(dspy.Signature):
+    """
+You are an expert entity extraction engine. Your sole task is to extract 
+the 10-15 MOST IMPORTANT entities from the provided text.
+
+Return a valid JSON object with a list of entities.
+
+### Entity Extraction Rules:
+
+1.  **Focus on Main Entities:**
+    - Extract only entities CENTRAL to understanding the content
+    - IGNORE: photographers, bylines, publication details, photo credits, dates
+    - INCLUDE: Main people, organizations, locations, events, concepts, products, technologies
+
+2.  **Entity Types:**
+    - organization: Companies, institutions, government bodies
+    - person: Key individuals mentioned (not authors/photographers)
+    - topic: Main subjects or themes
+    - location: Important places
+    - event: Specific events or happenings
+    - technology: Technologies or technical concepts
+    - product: Products or services
+    - institution: Academic or governmental institutions
+
+3.  **Quality over Quantity:**
+    - Extract 10-15 entities maximum
+    - Each entity must be relevant to the main content
+    - Provide a brief 1-sentence description for each
+
+4.  **Description Format:**
+    - Keep descriptions under 15 words
+    - Focus on the entity's role in THIS content
+    - Example: "The company announcing the product recall"
+"""
+    
+    content_text: str = dspy.InputField(
+        desc="The full text to extract entities from."
+    )
+    
+    extracted_entities: EntityExtractionResult = dspy.OutputField(
+        desc="The list of extracted entities with names, types, and descriptions."
+    )
+
+
+# --- DSPy Program ---
+class EntityExtractorProgram(dspy.Module):
+    """DSPy program for entity extraction"""
+    
+    def __init__(self):
+        super().__init__()
+        self.predict = dspy.Predict(ExtractEntities)
+
+    def forward(self, text):
+        result = self.predict(content_text=text)
+        return result.extracted_entities
+
+
+class DspyEntityService:
+    """
+    Service for extracting entities using DSPy and Google Gemini Flash Lite.
+    """
+    
+    def __init__(self, api_key: Optional[str] = None):
+        """
+        Initialize the DSPy entity service
+        
+        Args:
+            api_key: Google API key. If None, uses settings.GOOGLE_API_KEY
+        """
+        self.api_key = api_key or settings.GOOGLE_API_KEY
+        if not self.api_key:
+            raise ValueError("Google API key is required for DSPy entity extraction")
+        
+        # Store LM configuration but don't configure globally yet
+        gemini_model_name = settings.GEMINI_FLASH_LITE_MODEL.replace("models/", "")
+        self.model_name = f'gemini/{gemini_model_name}'
+        
+        logger.info("DspyEntityService initialized successfully with Flash Lite model")
+    
+    async def extract_entities_from_content(
+        self,
+        content: str,
+        document_id: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Extract entities from document content using DSPy.
+        
+        Args:
+            content: Document content text
+            document_id: Optional document ID for logging
+            
+        Returns:
+            List of entity dictionaries with name, type, description
+        """
+        if not content or not content.strip():
+            logger.warning(f"Empty content for document {document_id}, skipping entity extraction")
+            return []
+        
+        logger.info(f"Starting DSPy entity extraction for document {document_id or 'unknown'}")
+        
+        try:
+            # Use dspy.context for async task execution
+            lm = dspy.LM(self.model_name, api_key=self.api_key)
+            
+            with dspy.context(lm=lm):
+                # Initialize program in context
+                program = EntityExtractorProgram()
+                # Extract entities using DSPy
+                extracted = program(text=content)
+            
+            # Convert to dictionary format
+            entities = []
+            for entity in extracted.entities:
+                entities.append({
+                    'name': entity.name,
+                    'type': entity.type,
+                    'description': entity.description
+                })
+            
+            logger.info(f"Extracted {len(entities)} entities from document {document_id or 'unknown'}")
+            return entities
+            
+        except Exception as e:
+            logger.error(f"Error extracting entities from document {document_id}: {str(e)}")
+            return []
+
+
+# Global service instance
+_dspy_entity_service: Optional[DspyEntityService] = None
+
+
+def get_dspy_entity_service() -> DspyEntityService:
+    """Get the global DSPy entity service instance"""
+    global _dspy_entity_service
+    if _dspy_entity_service is None:
+        _dspy_entity_service = DspyEntityService()
+    return _dspy_entity_service
+
+
+def initialize_dspy_entity_service(api_key: Optional[str] = None) -> DspyEntityService:
+    """Initialize the global DSPy entity service instance"""
+    global _dspy_entity_service
+    _dspy_entity_service = DspyEntityService(api_key)
+    return _dspy_entity_service
+

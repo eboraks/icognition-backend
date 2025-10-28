@@ -1,5 +1,13 @@
 """
-Simple Content Analysis Service for document summarization and bullet point extraction
+DEPRECATED: Simple Content Analysis Service for document summarization and bullet point extraction
+
+This service has been replaced by dspy_content_service.py which uses DSPy for faster,
+more structured content extraction.
+
+Use: from app.services.dspy_content_service import get_dspy_content_service
+
+Migration completed: 2025-10-26
+Scheduled for removal: After 1 week validation period
 """
 
 import json
@@ -9,7 +17,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from app.services.gemini_service import get_gemini_service, GeminiModel, GeminiConfig
-from app.log import get_logger
+from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -22,9 +30,7 @@ class DocumentSummary(BaseModel):
 class DocumentBulletPoints(BaseModel):
     """Structured output for document bullet points"""
     bullet_points: List[str] = Field(
-        description="A list of 4-6 key bullet points summarizing the main topics",
-        min_items=4,
-        max_items=6
+        description="A list of 4-6 key bullet points summarizing the main topics"
     )
 
 
@@ -90,6 +96,41 @@ class ContentAnalysisService:
         except Exception as e:
             logger.error(f"Error analyzing document content: {str(e)}")
             raise
+    
+    def _clean_content(self, content: str) -> str:
+        """
+        Clean HTML content to plain text
+        
+        Args:
+            content: HTML or text content
+            
+        Returns:
+            Clean text content
+        """
+        if not content:
+            return ""
+        
+        # If content doesn't look like HTML, return as is
+        if not content.strip().startswith('<') and '</' not in content:
+            return content.strip()
+        
+        # Basic HTML to text conversion
+        # Remove HTML tags
+        import re
+        text = re.sub(r'<[^>]+>', '', content)
+        
+        # Decode HTML entities (basic ones)
+        text = text.replace('&nbsp;', ' ')
+        text = text.replace('&amp;', '&')
+        text = text.replace('&lt;', '<')
+        text = text.replace('&gt;', '>')
+        text = text.replace('&quot;', '"')
+        text = text.replace('&#39;', "'")
+        
+        # Normalize whitespace
+        text = ' '.join(text.split())
+        
+        return text.strip()
     
     async def _generate_summary(
         self,
@@ -221,27 +262,6 @@ class ContentAnalysisService:
             # Fallback to simple content extraction
             return self._extract_fallback_bullet_points(content)
     
-    def _clean_content(self, content: str) -> str:
-        """
-        Clean content by removing HTML tags and normalizing whitespace
-        
-        Args:
-            content: Raw content (may be HTML or plain text)
-            
-        Returns:
-            Cleaned text content
-        """
-        # Check if content looks like HTML
-        if '<' in content and '>' in content:
-            # Simple HTML tag removal
-            # Remove HTML tags
-            clean_text = re.sub(r'<[^>]+>', '', content)
-            # Normalize whitespace
-            clean_text = re.sub(r'\s+', ' ', clean_text)
-            return clean_text.strip()
-        else:
-            # Already clean text, just normalize whitespace
-            return re.sub(r'\s+', ' ', content).strip()
     
     def _extract_bullet_points_from_text(self, text: str) -> List[str]:
         """

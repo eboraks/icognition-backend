@@ -9,7 +9,7 @@ import json
 import asyncio
 from datetime import datetime
 
-from app.log import get_logger
+from app.utils.logging import get_logger
 from app.core.config import settings
 
 logger = get_logger(__name__)

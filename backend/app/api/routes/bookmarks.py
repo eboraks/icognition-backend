@@ -14,11 +14,14 @@ from app.db.database import get_session
 from app.core.user_context import UserContext, get_authenticated_user_context, get_active_user_context
 from app.services.bookmark_service import BookmarkService
 from app.api.models.user_models import UserProfileResponse
-from app.log import get_logger
+from app.utils.logging import get_logger
 from app.services.content_analysis_service import get_content_analysis_service
+from app.services.dspy_content_service import get_dspy_content_service
 from app.models import Document, Bookmark
 from app.services.document_service import DocumentService
 from app.services.entity_extraction_task_manager import get_entity_extraction_task_manager
+from app.services.dspy_entity_service import get_dspy_entity_service
+from app.services.dspy_entity_adapter import DspyEntityAdapter
 from app.services.embedding_service import get_embedding_service
 from app.core.config import settings
 from app.api.routes.websocket import get_connection_manager
@@ -124,6 +127,30 @@ async def _process_document_content(
                 }, user_id)
             return
         
+        # Check if content is NOT_AVAILABLE or empty and skip processing
+        if document.content_type == "not_available" or not document.content or not document.content.strip():
+            logger.info(f"Skipping content analysis for document {document_id} - content is NOT_AVAILABLE or empty")
+            
+            # Mark as processed without AI analysis
+            document.ai_is_about = "Content not available for analysis"
+            document.ai_bullet_points = []
+            document.updated_at = datetime.now()
+            await session.commit()
+            await session.refresh(document)
+            
+            if user_id:
+                await ws_manager.send_personal_message({
+                    "type": "document_ready",
+                    "data": {
+                        "bookmark_id": title,
+                        "document_id": document.id,
+                        "status": "not_available"
+                    }
+                }, user_id)
+            
+            await session.close()
+            return
+        
         # Send progress update
         if user_id:
             await ws_manager.send_personal_message({
@@ -131,12 +158,12 @@ async def _process_document_content(
                 "data": 30
             }, user_id)
         
-        # Get content analysis service
-        content_analysis_service = get_content_analysis_service()
+        # Get DSPy content service (NEW: using DSPy instead of old ContentAnalysisService)
+        dspy_content_service = get_dspy_content_service()
         
-        # Analyze the document content
-        logger.info(f"Analyzing document content for {document_id}")
-        analysis_result = await content_analysis_service.analyze_document_content(
+        # Analyze the document content using DSPy
+        logger.info(f"Analyzing document content with DSPy for {document_id}")
+        analysis_result = await dspy_content_service.analyze_document_content(
             content=document.content or "",
             title=title,
             url=url
@@ -149,9 +176,11 @@ async def _process_document_content(
                 "data": 80
             }, user_id)
         
-        # Update document with analysis results
+        # Update document with DSPy analysis results
         document.ai_is_about = analysis_result['summary']
         document.ai_bullet_points = analysis_result['bullet_points']
+        document.extracted_content = analysis_result['extracted_content']
+        document.source_type = analysis_result['extracted_content']['source_type']
         document.updated_at = datetime.now()
         
         # Commit changes
@@ -197,14 +226,14 @@ async def _process_document_entities(
     user_id: str
 ):
     """
-    Background task to extract entities from document content
+    Background task to extract entities from document content using DSPy
     
     Args:
         document_id: ID of the document to process
         user_id: User ID for entity extraction
     """
     try:
-        logger.info(f"Starting entity extraction for document {document_id}")
+        logger.info(f"Starting DSPy entity extraction for document {document_id}")
         
         # Get database session
         session_gen = get_session()
@@ -221,23 +250,38 @@ async def _process_document_entities(
                 logger.warning(f"Document {document_id} not found or has no content for entity extraction")
                 return
             
-            # Get entity extraction task manager
-            task_manager = get_entity_extraction_task_manager()
+            # Skip if content is NOT_AVAILABLE
+            if document.content_type == "not_available":
+                logger.info(f"Skipping entity extraction for document {document_id} - content is NOT_AVAILABLE")
+                return
             
-            # Extract entities from document content
-            result = await task_manager.extract_entities_async(
-                firebase_uid=user_id,
-                document_id=int(document_id),
-                content=document.content
+            # Get DSPy entity service
+            dspy_entity_service = get_dspy_entity_service()
+            
+            # Extract entities using DSPy
+            entities = await dspy_entity_service.extract_entities_from_content(
+                content=document.content,
+                document_id=int(document_id)
             )
             
-            logger.info(f"Entity extraction completed for document {document_id}: {result.get('entities_processed', 0)} entities processed")
+            # Process and store entities using adapter
+            adapter = DspyEntityAdapter(session)
+            result = await adapter.process_document_entities(
+                firebase_uid=user_id,
+                document_id=int(document_id),
+                entities=entities
+            )
+            
+            # Commit changes
+            await session.commit()
+            
+            logger.info(f"DSPy entity extraction completed for document {document_id}: {result.get('entities_processed', 0)} entities processed")
             
         finally:
             await session.close()
             
     except Exception as e:
-        logger.error(f"Error in entity extraction for document {document_id}: {str(e)}")
+        logger.error(f"Error in DSPy entity extraction for document {document_id}: {str(e)}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
         
@@ -279,49 +323,60 @@ async def _process_html_content_to_document(
                 logger.error(f"Bookmark {bookmark_id} not found for HTML processing")
                 return
             
-            # Create document from HTML content (no embeddings)
-            document_service = DocumentService(session)
-            document = await document_service.create_document_from_content(
-                user_id=user_id,
-                content=html_content,
-                content_type="html",
-                title=title,
-                url=url
-            )
-            
-            if document:
+            # Check if bookmark already has a document
+            if bookmark.document_id:
+                logger.info(f"Bookmark {bookmark_id} already has document {bookmark.document_id}, using existing document")
+                document = await session.get(Document, bookmark.document_id)
+                if not document:
+                    logger.error(f"Document {bookmark.document_id} not found for bookmark {bookmark_id}")
+                    return
+            else:
+                # Create document from HTML content (no embeddings)
+                logger.info(f"Creating new document for bookmark {bookmark_id}")
+                document_service = DocumentService(session)
+                document = await document_service.create_document_from_content(
+                    user_id=user_id,
+                    content=html_content,
+                    content_type="html",
+                    title=title,
+                    url=url
+                )
+                
+                if not document:
+                    logger.error(f"Failed to create document from HTML content for bookmark {bookmark_id}")
+                    bookmark.processing_status = "failed"
+                    await session.commit()
+                    return
+                
                 # Update bookmark with document ID
                 bookmark.document_id = document.id
-                bookmark.is_processed = True
-                bookmark.processing_status = "completed"
-                
                 await session.commit()
                 await session.refresh(bookmark)
-                
                 logger.info(f"Successfully created document {document.id} from HTML content for bookmark {bookmark_id}")
-                
-                # Launch 3 independent background tasks
-                logger.info(f"Launching 3 background tasks for document {document.id}")
-                
-                # Task 1: Summary & Bullet Points (critical for UX)
-                create_task(_process_document_content(
-                    document.id, title, url, user_id
-                ))
-                
-                # Task 2: Entity Extraction (for filtering)
-                create_task(_process_document_entities(
-                    document.id, user_id
-                ))
-                
-                # Task 3: Embedding Generation (for search)
-                create_task(_process_document_embeddings(
-                    document.id
-                ))
-                
-            else:
-                logger.error(f"Failed to create document from HTML content for bookmark {bookmark_id}")
-                bookmark.processing_status = "failed"
-                await session.commit()
+            
+            # Update bookmark processing status
+            bookmark.is_processed = True
+            bookmark.processing_status = "completed"
+            await session.commit()
+            await session.refresh(bookmark)
+            
+            # Launch 3 independent background tasks
+            logger.info(f"Launching 3 background tasks for document {document.id}")
+            
+            # Task 1: Summary & Bullet Points (critical for UX)
+            create_task(_process_document_content(
+                document.id, title, url, user_id
+            ))
+            
+            # Task 2: Entity Extraction (for filtering)
+            create_task(_process_document_entities(
+                document.id, user_id
+            ))
+            
+            # Task 3: Embedding Generation (for search)
+            create_task(_process_document_embeddings(
+                document.id
+            ))
                 
         finally:
             await session.close()
@@ -828,7 +883,25 @@ async def create_bookmark(
         # Check if we have content provided or need to fetch HTML
         _doc = None
         
-        if bookmark_data.content and _is_clean_text_content(bookmark_data.content):
+        # Handle NOT_AVAILABLE content case - create bookmark and document without AI analysis
+        if bookmark_data.content == "NOT_AVAILABLE":
+            logger.info(f"Content NOT_AVAILABLE for URL: {bookmark_data.url}, creating bookmark and document without AI analysis")
+            
+            # Create document without content for NOT_AVAILABLE case
+            _doc = await document_service.create_document_from_content(
+                user_id=user_context.user.id,
+                content="",  # Empty content
+                content_type="not_available",
+                title=bookmark_data.title,
+                url=bookmark_data.url
+            )
+            
+            if _doc:
+                logger.info(f"Created document {_doc.id} for NOT_AVAILABLE content")
+            else:
+                logger.error(f"Failed to create document for NOT_AVAILABLE content")
+        
+        elif bookmark_data.content and _is_clean_text_content(bookmark_data.content):
             logger.info(f"Processing clean text content for URL: {bookmark_data.url}")
             _doc = await _create_document_from_clean_text(
                 bookmark_data, user_context, session
@@ -837,12 +910,15 @@ async def create_bookmark(
         elif bookmark_data.content:
             logger.info(f"Processing HTML content provided by client for URL: {bookmark_data.url}")
             
+            # Sanitize content once for both bookmark and document creation
+            sanitized_content = sanitize_content_for_db(bookmark_data.content)
+            
             # Create bookmark first without document
             bookmark = Bookmark(
                 url=bookmark_data.url,
                 title=bookmark_data.title,
                 description=bookmark_data.description,
-                content=sanitize_content_for_db(bookmark_data.content),  # Sanitize content before storing
+                content=sanitized_content,  # Use sanitized content
                 bookmark_metadata=bookmark_data.metadata,  # Fixed: use 'metadata' not 'bookmark_metadata'
                 user_id=user_context.user.id,
                 is_processed=False,
@@ -853,12 +929,12 @@ async def create_bookmark(
             await session.commit()
             await session.refresh(bookmark)
             
-            # Process HTML content in background task
+            # Process HTML content in background task using sanitized content
             background_tasks.add_task(
                 _process_html_content_to_document,
                 bookmark.id,
                 user_context.user.id,
-                bookmark_data.content,
+                sanitized_content,  # Use sanitized content instead of original
                 bookmark_data.title,
                 bookmark_data.url
             )
@@ -917,7 +993,10 @@ async def create_bookmark(
         await session.commit()
         await session.refresh(bookmark)
         
-        if _doc is not None and (_doc.ai_is_about is None or _doc.ai_bullet_points is None):
+        # Skip AI processing for NOT_AVAILABLE content
+        if bookmark_data.content == "NOT_AVAILABLE":
+            logger.info(f"Skipping AI processing for NOT_AVAILABLE content - bookmark {bookmark.id} created with document {_doc.id if _doc else 'None'}")
+        elif _doc is not None and (_doc.ai_is_about is None or _doc.ai_bullet_points is None):
             # Start background processing tasks
             background_tasks.add_task(
                 _process_document_content,
@@ -938,6 +1017,8 @@ async def create_bookmark(
             # Legacy embedding handler call removed - using modern services instead
         
         # Return bookmark response
+        processing_status = "not_available" if bookmark_data.content == "NOT_AVAILABLE" else ("pending" if _doc else "not_processed")
+        
         return BookmarkResponse(
             id=bookmark.id,
             url=bookmark.url,
@@ -946,7 +1027,7 @@ async def create_bookmark(
             content=bookmark.content,
             bookmark_metadata=bookmark.bookmark_metadata,
             is_processed=_doc is not None,
-            processing_status="pending" if _doc else "not_processed",
+            processing_status=processing_status,
             created_at=bookmark.created_at,
             updated_at=bookmark.updated_at,
             user_id=bookmark.user_id,
