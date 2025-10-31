@@ -68,7 +68,7 @@
                 <div class="col-6 text-center py-1 flex align-content-center flex-wrap">
                     <div class="app-header-routing flex flex-row text-white" data-animation-role="header-element">
                         <p :class="[router.currentRoute.value.name == 'library' || router.currentRoute.value.name == 'docxray' ? 'selectedRoute': '']" class="mr-3 text-lg cursor-pointer text-400" @click="router.push('/library')">My Library</p>
-                        <p :class="[router.currentRoute.value.name == 'collections' || router.currentRoute.value.name == 'collectiondetails' ? 'selectedRoute': '']" class="mr-3 text-lg cursor-pointer text-400" @click="router.push('/collections')" >My Collections</p>
+                        <p :class="[router.currentRoute.value.name == 'learning-qa' ? 'selectedRoute': '']" class="mr-3 text-lg cursor-pointer text-400" @click="router.push('/learning-qa')" >Learning Q&A</p>
                     </div>
                 </div>
 

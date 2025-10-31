@@ -29,7 +29,7 @@ from app.api.errors import (
     validation_error_handler,
     APIError
 )
-from app.api.routes import users, bookmarks, documents, websocket, system
+from app.api.routes import users, bookmarks, documents, websocket, system, chat
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -138,6 +138,7 @@ app.include_router(bookmarks.router)
 app.include_router(documents.router)
 app.include_router(websocket.router)
 app.include_router(system.router)
+app.include_router(chat.router)
 
 
 @app.get("/")

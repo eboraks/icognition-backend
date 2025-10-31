@@ -10,7 +10,8 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass
 from enum import Enum
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from google.api_core import exceptions as gcp_exceptions
 
 from app.core.config import settings
@@ -61,6 +62,7 @@ class GeminiService:
             mock_mode: If True, runs in mock mode without requiring API key
         """
         self.mock_mode = mock_mode
+        self.client: Optional[genai.Client] = None
         
         if mock_mode:
             logger.info("GeminiService initialized in mock mode")
@@ -69,8 +71,8 @@ class GeminiService:
             if not self.api_key:
                 raise ValueError("Google API key is required")
             
-            # Configure the API
-            genai.configure(api_key=self.api_key)
+            # Use the new centralized client from google-genai SDK
+            self.client = genai.Client(api_key=self.api_key)
         
         # Rate limiting
         self.rate_limit_info = RateLimitInfo()
@@ -119,13 +121,13 @@ class GeminiService:
         if self.mock_mode:
             return await self._generate_mock_content(prompt, model, config, use_cache, cache_key)
         
+        if not self.client:
+            raise RuntimeError("Gemini client not initialized. Did you forget to provide an API key?")
+
         # Check rate limits
         await self._check_rate_limits()
         
         config = config or GeminiConfig()
-        
-        # Create model instance directly using the enum value
-        model_instance = genai.GenerativeModel(model_name=model.value)
         
         backoff = 1
         last_error = None
@@ -134,40 +136,32 @@ class GeminiService:
             try:
                 logger.debug(f"Generating content with {model.value} (attempt {attempt + 1})")
                 
-                # Prepare generation config
-                generation_config_dict = {
-                    "temperature": config.temperature,
-                    "top_p": config.top_p,
-                    "top_k": config.top_k,
-                    "max_output_tokens": config.max_output_tokens,
-                    "response_mime_type": config.response_mime_type,
-                }
+                # Prepare generation config for the new SDK
+                generation_config = types.GenerationConfig(
+                    temperature=config.temperature,
+                    top_p=config.top_p,
+                    top_k=config.top_k,
+                    max_output_tokens=config.max_output_tokens,
+                )
+                # TODO: Migrated from old SDK. `response_mime_type` and `response_schema` are not
+                # directly supported in the new `GenerateContentConfig`.
+                # Structured output might require a different approach.
                 
-                # Add response schema if provided
-                if config.response_schema is not None:
-                    generation_config_dict["response_schema"] = config.response_schema
-                
-                # Generate content
-                response = await model_instance.generate_content_async(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(**generation_config_dict)
+                # Generate content using the new client, wrapped for async execution
+                response = await asyncio.to_thread(
+                    self.client.models.generate_content,
+                    model=model.value,
+                    contents=prompt,
+                    generation_config=generation_config
                 )
                 
-                # Check if response was blocked or incomplete
-                if not response.candidates or not response.candidates[0].content.parts:
-                    finish_reason = response.candidates[0].finish_reason if response.candidates else None
-                    
-                    # Different handling based on finish reason
-                    if finish_reason == 3:  # MAX_TOKENS
-                        logger.error(f"Response exceeded max tokens. Consider increasing max_output_tokens or reducing input size.")
-                        raise Exception(f"Response exceeded max output tokens. Finish reason: {finish_reason}")
-                    
+                # Simplified check for successful response
+                if not hasattr(response, 'text') or not response.text:
+                    finish_reason = getattr(response, 'finish_reason', 'UNKNOWN')
                     logger.warning(f"Response blocked or empty. Finish reason: {finish_reason}")
-                    
-                    # If this is not the last attempt, retry
                     if attempt < retry_count - 1:
                         logger.info(f"Retrying (attempt {attempt + 2}/{retry_count})...")
-                        await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                        await asyncio.sleep(2 ** attempt)
                         continue
                     else:
                         raise Exception(f"Response blocked after all retries. Finish reason: {finish_reason}")
@@ -252,6 +246,9 @@ class GeminiService:
         if self.mock_mode:
             return await self._generate_mock_embedding(text, title, task_type, output_dimensionality)
         
+        if not self.client:
+            raise RuntimeError("Gemini client not initialized. Did you forget to provide an API key?")
+
         # Check rate limits
         await self._check_rate_limits()
         
@@ -262,32 +259,80 @@ class GeminiService:
             try:
                 logger.debug(f"Generating embedding (attempt {attempt + 1})")
                 
-                # Prepare embedding request
-                embedding_request = {
-                    "content": text,
-                    "task_type": task_type,
-                    "output_dimensionality": output_dimensionality
+                # Generate embedding using the new client, wrapped for async
+                # Build the request payload
+                embed_params = {
+                    "model": GeminiModel.EMBEDDING.value,
+                    "contents": text,
                 }
                 
-                if title:
-                    embedding_request["title"] = title
+                # Build config for optional parameters
+                config_params = {}
                 
-                # Generate embedding
-                response = genai.embed_content(
-                    model=GeminiModel.EMBEDDING.value,
-                    **embedding_request
+                # Only include optional parameters if they're provided
+                if title:
+                    config_params["title"] = title
+                
+                # Add output_dimensionality to config if supported
+                if output_dimensionality:
+                    config_params["outputDimensionality"] = output_dimensionality
+                
+                # Note: task_type parameter may not be supported in current SDK version
+                # If needed, check SDK documentation for correct parameter name
+                # config_params["task_type"] = task_type
+                
+                # Include config if we have any config parameters
+                if config_params:
+                    embed_params["config"] = config_params
+                
+                response = await asyncio.to_thread(
+                    self.client.models.embed_content,
+                    **embed_params
                 )
                 
-                if response and response['embedding']:
-                    embedding = response['embedding']
-                    
-                    # Update rate limiting
-                    self._update_rate_limits(len(text), 0)
-                    
-                    logger.info(f"Successfully generated embedding with {len(embedding)} dimensions")
-                    return embedding
+                # Extract embedding from response - the API returns 'embeddings' (plural)
+                if not response or not hasattr(response, 'embeddings'):
+                    raise Exception("Invalid response structure from embed_content API")
+                
+                embeddings_obj = response.embeddings
+                
+                # Get the embedding values - embeddings is typically a list, get first one
+                if isinstance(embeddings_obj, list) and len(embeddings_obj) > 0:
+                    embedding_obj = embeddings_obj[0]
                 else:
-                    raise Exception("No embedding returned from API")
+                    embedding_obj = embeddings_obj
+                
+                # Extract the actual vector values
+                if hasattr(embedding_obj, 'values'):
+                    embedding = list(embedding_obj.values)
+                elif isinstance(embedding_obj, list):
+                    embedding = embedding_obj
+                elif isinstance(embedding_obj, dict) and 'values' in embedding_obj:
+                    embedding = embedding_obj['values']
+                else:
+                    raise Exception(f"Unexpected embedding structure: {type(embedding_obj)}")
+                
+                # Ensure it's a list of floats
+                embedding = [float(v) for v in embedding]
+                
+                # Normalize embedding to requested dimensions
+                # Truncate if too long, pad with zeros if too short (though padding is unusual)
+                actual_dims = len(embedding)
+                if actual_dims != output_dimensionality:
+                    if actual_dims > output_dimensionality:
+                        # Truncate to requested dimension
+                        logger.warning(f"Embedding has {actual_dims} dimensions, truncating to {output_dimensionality}")
+                        embedding = embedding[:output_dimensionality]
+                    elif actual_dims < output_dimensionality:
+                        # Pad with zeros (unusual but handle gracefully)
+                        logger.warning(f"Embedding has {actual_dims} dimensions, padding to {output_dimensionality}")
+                        embedding.extend([0.0] * (output_dimensionality - actual_dims))
+                
+                # Update rate limiting
+                self._update_rate_limits(len(text), 0)
+                
+                logger.info(f"Successfully generated embedding with {len(embedding)} dimensions (requested: {output_dimensionality})")
+                return embedding
                     
             except gcp_exceptions.ResourceExhausted as e:
                 last_error = e

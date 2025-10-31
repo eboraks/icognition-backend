@@ -1,0 +1,13 @@
+---
+globs: *.vue,*.ts,*.js,*.css
+alwaysApply: false
+---
+
+## Frontend development rules
+- When possible Vue.js 3, PrimeVue and PrimeFlex. See docs:
+-- https://vuejs.org/guide/introduction
+-- https://primevue.org/
+-- https://primeflex.org/installation
+- Keep code as simple as possible, and ask for verification if the code become too complex. 
+
+

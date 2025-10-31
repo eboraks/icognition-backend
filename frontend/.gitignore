@@ -18,6 +18,7 @@ coverage
 .env.*
 *.cache
 .vite
+.npm-cache
 
 /cypress/videos/
 /cypress/screenshots/

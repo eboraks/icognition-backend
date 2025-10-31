@@ -13,7 +13,7 @@
   "type": "module",
   "scripts": {
     "local": "vite --mode=none --port 8080",
-    "dev": "vite --mode dev --port 8080",
+    "dev": "vite --mode development --port 8080",
     "staging": "vite --mode staging --port 8080",
     "build": "vite build",
     "preview": "vite preview",
@@ -45,6 +45,7 @@
     "talkify-tts": "^4.0.0",
     "talkify-tts-api": "^1.1.0",
     "vue": "^3.4.31",
+    "vue-advanced-chat": "^2.1.0",
     "vue-eslint-parser": "^9.4.3",
     "vue-router": "^4.3.0",
     "ws": "^8.18.0"

@@ -1,0 +1,11 @@
+---
+globs: *.py
+alwaysApply: false
+---
+# File patten: *.py
+
+## Python Coding Guideline
+- DON'T INSERT IMPORT WITHIN FUNCTION OR CLASS, ALL IMPORTS MUST BE AT THE TOP OF THE PAGE
+- Use uv to manage packages installation
+- DON'T GUESS packages version, either ask for the package version or search https://pypi.org/
+- Keep the code as simple and concise as possible, if the CODE YOU WRITE IS COMPLEX, as for review

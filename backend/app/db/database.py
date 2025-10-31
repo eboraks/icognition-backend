@@ -3,7 +3,7 @@ Database connection and session management for iCognition Backend
 """
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import text
+from sqlalchemy import text, create_engine
 from typing import AsyncGenerator
 import os
 
@@ -61,6 +61,22 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
             raise
         finally:
             await session.close()
+
+
+def get_sync_connection():
+    """Get a synchronous database connection."""
+    async_url = get_database_url()
+    # Prefer psycopg (v3) driver for sync engine to avoid psycopg2 dependency
+    if "+asyncpg" in async_url:
+        sync_db_url = async_url.replace("+asyncpg", "+psycopg")
+    else:
+        # If no explicit driver, ensure we set psycopg
+        sync_db_url = async_url
+        if sync_db_url.startswith("postgresql://"):
+            sync_db_url = sync_db_url.replace("postgresql://", "postgresql+psycopg://", 1)
+
+    engine = create_engine(sync_db_url)
+    return engine.connect()
 
 
 async def init_database():

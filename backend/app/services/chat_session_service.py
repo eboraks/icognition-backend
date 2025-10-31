@@ -1,0 +1,132 @@
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, delete
+from app.db.database import get_session
+from app.models import ChatSession, ChatMessage
+from typing import List, Optional
+from fastapi import Depends
+import logging
+
+logger = logging.getLogger(__name__)
+
+class ChatSessionService:
+    """
+    Service for managing chat sessions.
+    """
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def create_chat_session(self, user_id: str, title: str, scope_type: str, scope_id: Optional[int]) -> ChatSession:
+        """
+        Create a new chat session.
+        """
+        chat_session = ChatSession(
+            user_id=user_id,
+            title=title,
+            scope_type=scope_type,
+            scope_id=scope_id
+        )
+        self.session.add(chat_session)
+        await self.session.commit()
+        await self.session.refresh(chat_session)
+        return chat_session
+
+    async def get_user_sessions(self, user_id: str) -> List[ChatSession]:
+        """
+        Get all chat sessions for a user.
+        """
+        stmt = select(ChatSession).where(ChatSession.user_id == user_id)
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
+    async def get_session_messages(self, session_id: int, user_id: str) -> List[ChatMessage]:
+        """
+        Get all messages for a chat session.
+        """
+        stmt = select(ChatMessage).where(ChatMessage.session_id == session_id)
+        result = await self.session.execute(stmt)
+        # TODO: Add check to ensure user owns the session
+        return result.scalars().all()
+
+    async def get_session_by_id(self, session_id: int, user_id: str) -> Optional[ChatSession]:
+        stmt = (
+            select(ChatSession)
+            .where(ChatSession.id == session_id)
+            .where(ChatSession.user_id == user_id)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def save_message(self, session_id: int, role: str, content: str) -> ChatMessage:
+        """
+        Save a message to a chat session.
+        """
+        message = ChatMessage(
+            session_id=session_id,
+            role=role,  # "user" or "assistant"
+            content=content
+        )
+        self.session.add(message)
+        await self.session.commit()
+        await self.session.refresh(message)
+        logger.info(f"Saved {role} message to session {session_id}, message_id: {message.id}")
+        return message
+
+    async def delete_session(self, session_id: int, user_id: str):
+        """
+        Delete a chat session and all its messages.
+        """
+        try:
+            logger.info(f"Deleting chat session {session_id} for user {user_id}")
+            
+            # First delete all messages in the session using bulk delete
+            delete_messages_stmt = delete(ChatMessage).where(ChatMessage.session_id == session_id)
+            messages_result = await self.session.execute(delete_messages_stmt)
+            messages_deleted = messages_result.rowcount
+            logger.info(f"Deleted {messages_deleted} messages for session {session_id}")
+            
+            # Then delete the session itself using direct DELETE statement
+            # This is more reliable than session.delete() as it executes the SQL directly
+            delete_session_stmt = delete(ChatSession).where(
+                ChatSession.id == session_id,
+                ChatSession.user_id == user_id
+            )
+            session_result = await self.session.execute(delete_session_stmt)
+            sessions_deleted = session_result.rowcount
+            logger.info(f"Deleted {sessions_deleted} session(s) for session_id {session_id}")
+            
+            if sessions_deleted == 0:
+                logger.warning(f"No session was deleted - session {session_id} may have already been deleted or doesn't belong to user {user_id}")
+                await self.session.rollback()
+                return False
+            
+            # Commit the deletion
+            await self.session.commit()
+            logger.info(f"Successfully committed deletion of chat session {session_id} and {messages_deleted} messages")
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting chat session {session_id}: {e}", exc_info=True)
+            await self.session.rollback()
+            raise
+
+    async def update_session_title(self, session_id: int, user_id: str, title: str) -> Optional[ChatSession]:
+        stmt = (
+            select(ChatSession)
+            .where(ChatSession.id == session_id)
+            .where(ChatSession.user_id == user_id)
+        )
+        result = await self.session.execute(stmt)
+        chat_session = result.scalar_one_or_none()
+        if not chat_session:
+            return None
+        chat_session.title = title
+        await self.session.commit()
+        await self.session.refresh(chat_session)
+        return chat_session
+
+def get_chat_session_service(session: AsyncSession = Depends(get_session)) -> ChatSessionService:
+    """
+    Dependency injector for ChatSessionService.
+    """
+    return ChatSessionService(session)

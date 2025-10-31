@@ -721,42 +721,7 @@ class Entity_Type(SQLModel, table=True):
     description: str = Field(nullable=False)
     follow_up_questions: List[str] = Field(default=[], sa_column=Column(JSON))
     
-    
-class Chat_Message(SQLModel, table=True):
-    """Stores chat history for document interactions"""
-    
-    id: int = Field(default=None, primary_key=True)
-    created_at: datetime = Field(default_factory=datetime.now, nullable=False)
-    asked_by: str = Field(nullable=False)  # system, user, initial_summary
-    chat_id: int = Field(nullable=False)
-    chat_type: str = Field(nullable=False)
-    user_id: str = Field(nullable=False)
-    user_prompt: str = Field(nullable=False)
-    ai_prompt: str = Field(nullable=False)
-    event_name: str = Field(nullable=False)
-    response: str = Field(sa_column=Column(JSON), default="{}")  # Store as JSON string
-    response_model: str = Field(nullable=True)  # Store the model name as a string
-    
-    def to_dict(self) -> dict:
-        """Convert Chat_Message to a JSON-serializable dictionary"""
-        try:
-            # Parse the response JSON string if it's a string
-            response_data = json.loads(self.response) if isinstance(self.response, str) else self.response
-        except json.JSONDecodeError:
-            response_data = {}
-            
-        return {
-            "id": str(self.id),
-            "created_at": self.created_at.isoformat(),
-            "asked_by": self.asked_by,
-            "chat_id": str(self.chat_id),
-            "chat_type": self.chat_type,
-            "user_id": self.user_id,
-            "user_prompt": self.user_prompt,
-            "ai_prompt": self.ai_prompt,
-            "event_name": self.event_name,
-            "response": response_data
-        }
+
 
 
 class EventName(Enum):
@@ -1045,3 +1010,56 @@ class EntityDocument(SQLModel, table=True):
         default_factory=datetime.utcnow,
         sa_column=Column(DateTime(timezone=True), server_default=func.now())
     )
+
+
+class ChatSession(SQLModel, table=True):
+    """Stores chat sessions"""
+    
+    __tablename__ = "chat_sessions"
+    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: str = Field(foreign_key="users.id", index=True)
+    title: str = Field(max_length=255, default="New Chat")
+    
+    # Scope control
+    scope_type: str = Field(default="all_library", max_length=50)  # "all_library" or "collection"
+    scope_id: Optional[int] = Field(default=None) # collection_id if scope_type is "collection"
+    
+    # LangGraph checkpointer thread_id
+    thread_id: Optional[str] = Field(default=None, max_length=255, index=True)
+
+    is_active: bool = Field(default=True)
+    
+    created_at: Optional[datetime] = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), server_default=func.now())
+    )
+    updated_at: Optional[datetime] = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    )
+    
+    messages: List["ChatMessage"] = Relationship(back_populates="session")
+
+
+class ChatMessage(SQLModel, table=True):
+    """Stores a single message in a chat session"""
+    
+    __tablename__ = "chat_messages"
+    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    session_id: int = Field(foreign_key="chat_sessions.id")
+    
+    # who sent the message
+    role: str = Field(max_length=50) # "user" or "assistant"
+    content: str = Field(sa_column=Column(Text))
+    
+    # For langgraph
+    message_metadata: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSONB))
+    
+    created_at: Optional[datetime] = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), server_default=func.now())
+    )
+    
+    session: "ChatSession" = Relationship(back_populates="messages")

@@ -17,6 +17,8 @@ from app.services.gemini_service import get_gemini_service, GeminiModel, GeminiC
 from app.utils.logging import get_logger
 from bs4 import BeautifulSoup
 from app.services.content_validation_service import get_content_validation_service
+from app.services.embedding_service import get_embedding_service, EmbeddingService
+
 
 logger = get_logger(__name__)
 
@@ -1055,3 +1057,54 @@ Return your response as JSON in this exact format, if the fields are not present
                 'error': str(e),
                 'validation_timestamp': datetime.now().isoformat()
             }
+
+    async def get_relevant_documents_for_chat(
+        self,
+        user_id: str,
+        query: str,
+        scope_type: str,
+        scope_id: Optional[int] = None,
+        limit: int = 5
+    ) -> List[Document]:
+        """
+        Get relevant documents for a chat query using vector search.
+        """
+        logger.info(f"Getting relevant documents for user {user_id} with query '{query}'")
+
+        embedding_service: EmbeddingService = get_embedding_service()
+        
+        # 1. Generate embedding for the user's query
+        query_embedding_result = await embedding_service.generate_embedding(text=query)
+        if not query_embedding_result.success:
+            logger.error("Could not generate embedding for query.")
+            return []
+            
+        query_vector = query_embedding_result.embedding
+
+        # 2. Perform a vector search on the Document table's content_vector
+        # Base query for vector similarity search
+        similarity_clause = 1 - (Document.content_vector.cosine_distance(query_vector))
+        statement = select(Document, similarity_clause.label("similarity")).where(
+            Document.user_id == user_id,
+            Document.content_vector != None
+        )
+
+        # 4. If scope_type is 'collection', further filter by scope_id
+        if scope_type == 'collection' and scope_id is not None:
+            # This requires a join. Assuming a `CollectionDocumentLink` model exists.
+            # from app.models import CollectionDocumentLink
+            # statement = statement.join(CollectionDocumentLink, Document.id == CollectionDocumentLink.document_id)\
+            #                      .where(CollectionDocumentLink.collection_id == scope_id)
+            logger.warning("Collection-scoped search is not yet fully implemented.")
+
+
+        statement = statement.order_by(similarity_clause.desc()).limit(limit)
+        
+        results = await self.session.execute(statement)
+        
+        documents_with_similarity = results.all()
+        
+        # Extract documents from the result
+        documents = [doc for doc, sim in documents_with_similarity]
+        
+        return documents

@@ -48,15 +48,9 @@ const routes: Array<RouteRecordRaw> = [
     component: () => import("../views/DocumentContainer.vue")
   },
   {
-    path: '/collections',
-    name: 'collections',
-    component: () => import("../views/library/Collections.vue")
-  },
-  {
-    path: '/collectiondetails/:id',
-    name: 'collectiondetails',
-    component: () => import("../views/library/CollectionDetails.vue"),
-    props: true
+    path: '/learning-qa',
+    name: 'learning-qa',
+    component: () => import("../views/library/LearningQA.vue")
   },
   { 
     path: '/docxray/:id',

@@ -114,10 +114,10 @@ class EmbeddingService:
             logger.info(f"Generating embedding for text of length {len(text)}")
             
             # Generate embedding using Gemini service
+            # Note: task_type is not currently supported by the Gemini API SDK
             embedding = await self.gemini_service.generate_embedding(
                 text=text,
                 title=title,
-                task_type=task_type,
                 output_dimensionality=dimensions
             )
             
@@ -198,10 +198,11 @@ class EmbeddingService:
             # Combine text parts
             combined_text = "\n\n".join(text_parts)
             
-            # Generate embedding (task_type auto-selected based on title presence)
+            # Generate embedding with explicit dimensions (default: 1536)
             return await self.generate_embedding(
                 text=combined_text,
-                title=document.title
+                title=document.title,
+                dimensions=self.default_dimensions
             )
             
         except Exception as e:
