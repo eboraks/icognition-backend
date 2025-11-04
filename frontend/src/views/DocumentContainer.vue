@@ -12,12 +12,12 @@
                             <Button v-if="buttonToggleSplitterPanelLeft" class="bg-transparent border-transparent border-0 text-white" icon="pi pi-filter" @click="buttonToggleSplitterPanelLeft = !buttonToggleSplitterPanelLeft" rounded aria-label="Collapse Panel"/>
                         </div>
                         <div class="w-full" style="height: calc(100% - 3.75em);" v-if="buttonToggleSplitterPanelLeft">
-                            <div v-if="documentStore.isPendingLibrary" class="flex flex-flow justify-content-center">
+                            <div v-if="libraryStore.loading" class="flex flex-flow justify-content-center">
                                 <i class="text-white pi pi-spin pi-spinner" style="font-size: 2rem"></i>
                             </div>                         
                             <div class="w-full h-full" v-else>
                                 <div class="w-full border-round-lg h-full">
-                                    <LibraryFilters :nodes="documentStore.tree_nodes" @update:filters="onCheckedIds" />
+                                    <LibraryFilters :nodes="libraryStore.entityTree" @update:filters="onCheckedIds" />
                                 </div>
                             </div>
                         </div>
@@ -110,16 +110,12 @@
                 currentTab.value = '1';
             }
             
-            //await getDocuments(user_state.user?.uid as string);
+            // Fetch documents and entity tree
             await documentStore.fetchDocuments(user_state.user?.uid as string);
             await libraryStore.fetchDocuments();
+            await libraryStore.fetchEntityTree();
             console.log("Documents from document store: ", documentStore.getDocuments);
-            //await getSubtopics(user_state.user.uid);
-            await documentStore.getSubtopicsNodes(user_state.user?.uid as string);
-            //await getEntitiesNames(user_state.user.uid);
-            //console.log("Subtopics: ", subtopics.value);
-            console.log("Subtopics Nodes: ", documentStore.tree_nodes.length);
-            //console.log("Entities Names: ", entities_names.value);
+            console.log("Entity tree nodes: ", libraryStore.entityTree.length);
             isError = false;
         } catch (err) {
             isError = true;
@@ -152,7 +148,7 @@
 
     const onCheckedIds = (checkedIds: any) => {
         fitlerCheckedIds.value = checkedIds;
-        libraryStore.setFilters(checkedIds);
+        libraryStore.updateSelectedEntities(checkedIds);
     }
 
 

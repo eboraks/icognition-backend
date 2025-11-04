@@ -90,6 +90,7 @@ dependencies = [
     "langchain-postgres>=0.0.16",
     "langchain-google-genai>=2.0.0",
     "langchainhub>=0.1.20",
+    "langchain-text-splitters>=0.3.0",
     "langgraph-checkpoint-postgres>=3.0.0",
 ]
 

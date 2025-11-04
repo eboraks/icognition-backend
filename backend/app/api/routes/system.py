@@ -12,7 +12,7 @@ from datetime import datetime
 import uuid
 
 from app.core.user_context import get_active_user_context, UserContext
-from app.db.database import get_session
+from app.db.database import get_session, async_session
 from app.models import Document, Entity, EntityDocument, Embedding
 from app.utils.logging import get_logger
 from app.api.routes.bookmarks import _process_document_entities, _process_document_embeddings, _process_document_content, _process_document_entities_batch, _process_document_embeddings_batch
@@ -563,6 +563,247 @@ async def process_missing_embeddings(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to process missing embeddings: {str(e)}"
         )
+
+
+@router.post("/embeddings/generate-all")
+async def generate_all_embeddings(
+    background_tasks: BackgroundTasks,
+    user_context: UserContext = Depends(get_active_user_context),
+    session: AsyncSession = Depends(get_session),
+    force_regenerate: bool = Query(default=False, description="Force regenerate existing embeddings")
+):
+    """
+    Generate embeddings for ALL documents and entities for the current user.
+    
+    This endpoint processes:
+    - All documents (title and content chunks)
+    - All entities (name and description)
+    
+    Args:
+        force_regenerate: If True, deletes existing embeddings before generating new ones
+    """
+    try:
+        from app.services.embedding_service import get_embedding_service
+        
+        embedding_service = get_embedding_service()
+        
+        # Get all documents for the user
+        doc_query = select(Document).where(
+            Document.user_id == user_context.user.id,
+            Document.content.isnot(None),
+            Document.content != "",
+            func.length(Document.content) >= 10
+        )
+        doc_result = await session.execute(doc_query)
+        documents = doc_result.scalars().all()
+        
+        # Get all entities for the user
+        entity_query = select(Entity).where(
+            Entity.user_id == user_context.user.id
+        )
+        entity_result = await session.execute(entity_query)
+        entities = entity_result.scalars().all()
+        
+        if not documents and not entities:
+            return {
+                "message": "No documents or entities found to process",
+                "documents_found": 0,
+                "entities_found": 0,
+                "documents_processed": 0,
+                "entities_processed": 0
+            }
+        
+        # Process documents in batches
+        # Keep document IDs as integers (not strings) since Document.id is int
+        document_ids = [doc.id for doc in documents]
+        entity_ids = [ent.id for ent in entities]
+        
+        # Trigger background tasks
+        if document_ids:
+            background_tasks.add_task(
+                _process_all_document_embeddings,
+                document_ids,
+                user_context.user.id,
+                force_regenerate
+            )
+        
+        if entity_ids:
+            background_tasks.add_task(
+                _process_all_entity_embeddings,
+                entity_ids,
+                user_context.user.id,
+                force_regenerate
+            )
+        
+        logger.info(
+            f"Triggered embedding generation for {len(document_ids)} documents "
+            f"and {len(entity_ids)} entities (force_regenerate={force_regenerate})"
+        )
+        
+        return {
+            "message": f"Embedding generation triggered for {len(document_ids)} documents and {len(entity_ids)} entities",
+            "documents_found": len(document_ids),
+            "entities_found": len(entity_ids),
+            "documents_processed": len(document_ids),
+            "entities_processed": len(entity_ids),
+            "force_regenerate": force_regenerate
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating all embeddings: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate embeddings: {str(e)}"
+        )
+
+
+async def _process_all_document_embeddings(
+    document_ids: List[int],
+    user_id: str,
+    force_regenerate: bool = False
+):
+    """
+    Background task to generate embeddings for all documents
+    """
+    try:
+        logger.info(f"Starting embedding generation for {len(document_ids)} documents")
+        
+        # Use async session context manager directly
+        async with async_session() as session:
+            try:
+                from app.services.embedding_service import get_embedding_service
+                embedding_service = get_embedding_service()
+                
+                successful_docs = 0
+                failed_docs = 0
+                
+                for document_id in document_ids:
+                    try:
+                        result = await session.execute(
+                            select(Document).where(Document.id == document_id)
+                        )
+                        document = result.scalar_one_or_none()
+                        
+                        if not document:
+                            logger.warning(f"Document {document_id} not found")
+                            failed_docs += 1
+                            continue
+                        
+                        if not document.content:
+                            logger.warning(f"Document {document_id} has no content")
+                            failed_docs += 1
+                            continue
+                        
+                        # Generate and store embeddings
+                        embedding_success = await embedding_service.generate_and_store_document_embeddings(
+                            session=session,
+                            document=document,
+                            user_id=user_id,
+                            force_regenerate=force_regenerate
+                        )
+                        
+                        if embedding_success:
+                            successful_docs += 1
+                            await session.commit()
+                            logger.info(f"Successfully generated embeddings for document {document_id}")
+                        else:
+                            failed_docs += 1
+                            logger.warning(f"Failed to generate embeddings for document {document_id}")
+                            
+                    except Exception as e:
+                        failed_docs += 1
+                        logger.error(f"Error processing document {document_id}: {str(e)}")
+                        import traceback
+                        logger.error(f"Traceback: {traceback.format_exc()}")
+                        await session.rollback()
+                        continue
+                
+                logger.info(
+                    f"Completed embedding generation: {successful_docs} successful, {failed_docs} failed"
+                )
+                
+            except Exception as e:
+                logger.error(f"Error in batch document embedding generation: {str(e)}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                await session.rollback()
+            
+    except Exception as e:
+        logger.error(f"Error in batch document embedding generation: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+
+
+async def _process_all_entity_embeddings(
+    entity_ids: List[int],
+    user_id: str,
+    force_regenerate: bool = False
+):
+    """
+    Background task to generate embeddings for all entities
+    """
+    try:
+        logger.info(f"Starting embedding generation for {len(entity_ids)} entities")
+        
+        # Use async session context manager directly
+        async with async_session() as session:
+            try:
+                from app.services.embedding_service import get_embedding_service
+                embedding_service = get_embedding_service()
+                
+                successful_entities = 0
+                failed_entities = 0
+                
+                for entity_id in entity_ids:
+                    try:
+                        result = await session.execute(
+                            select(Entity).where(Entity.id == entity_id)
+                        )
+                        entity = result.scalar_one_or_none()
+                        
+                        if not entity:
+                            logger.warning(f"Entity {entity_id} not found")
+                            failed_entities += 1
+                            continue
+                        
+                        # Generate and store embeddings
+                        embedding_success = await embedding_service.generate_and_store_entity_embeddings(
+                            session=session,
+                            entity=entity,
+                            user_id=user_id,
+                            force_regenerate=force_regenerate
+                        )
+                        
+                        if embedding_success:
+                            successful_entities += 1
+                            await session.commit()
+                            logger.info(f"Successfully generated embeddings for entity {entity_id}")
+                        else:
+                            failed_entities += 1
+                            logger.warning(f"Failed to generate embeddings for entity {entity_id}")
+                            
+                    except Exception as e:
+                        failed_entities += 1
+                        logger.error(f"Error processing entity {entity_id}: {str(e)}")
+                        import traceback
+                        logger.error(f"Traceback: {traceback.format_exc()}")
+                        await session.rollback()
+                        continue
+                
+                logger.info(
+                    f"Completed entity embedding generation: {successful_entities} successful, {failed_entities} failed"
+                )
+                
+            except Exception as e:
+                logger.error(f"Error in batch entity embedding generation: {str(e)}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                await session.rollback()
+            
+    except Exception as e:
+        logger.error(f"Error in batch entity embedding generation: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
 
 
 @router.get("/health")

@@ -128,6 +128,24 @@ class DspyEntityAdapter:
             existing_entity = result.scalar_one_or_none()
             
             if existing_entity:
+                # Check if entity has embeddings, if not generate them
+                from app.models import Embedding
+                emb_check = select(Embedding).where(
+                    Embedding.source_type == "entity",
+                    Embedding.source_id == existing_entity.id,
+                    Embedding.user_id == user_id
+                )
+                emb_result = await self.session.execute(emb_check)
+                if not emb_result.scalar_one_or_none():
+                    # Entity exists but has no embeddings - generate them
+                    embedding_service = get_embedding_service()
+                    await embedding_service.generate_and_store_entity_embeddings(
+                        session=self.session,
+                        entity=existing_entity,
+                        user_id=user_id,
+                        force_regenerate=False
+                    )
+                    await self.session.flush()
                 return existing_entity
             
             # Create new entity
@@ -139,6 +157,16 @@ class DspyEntityAdapter:
             )
             
             self.session.add(new_entity)
+            await self.session.flush()
+            
+            # Generate embeddings for the new entity
+            embedding_service = get_embedding_service()
+            await embedding_service.generate_and_store_entity_embeddings(
+                session=self.session,
+                entity=new_entity,
+                user_id=user_id,
+                force_regenerate=False
+            )
             await self.session.flush()
             
             return new_entity

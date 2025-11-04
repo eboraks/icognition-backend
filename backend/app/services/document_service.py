@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 import logging
 from datetime import datetime
 
-from app.models import Document, User, ContentExtraction, PageType
+from app.models import Document, User, ContentExtraction, PageType, Entity, EntityDocument
 from app.services.base_service import UserIsolatedService
 from app.services.web_fetcher import WebPageFetcher, fetch_web_page
 from app.services.user_service import UserService
@@ -567,7 +567,7 @@ class DocumentService(UserIsolatedService[Document]):
         return metadata
 
     def _extract_content_text(self, soup: BeautifulSoup, container, page_type: str) -> str:
-        """Extract clean text content from the main container"""
+        """Extract content from the main container, preserving HTML structure wrapped in <article> tags"""
         if not container:
             return ""
         
@@ -587,27 +587,35 @@ class DocumentService(UserIsolatedService[Document]):
             for element in container.select(selector):
                 element.decompose()
         
-        # Extract text from content elements
+        # Extract content elements preserving HTML structure
         content_elements = container.select('h1, h2, h3, h4, h5, h6, p, ul, ol, li, blockquote')
         
         if not content_elements:
-            # Fallback to all text
-            text = container.get_text()
-        else:
-            # Build content from structured elements
-            content_parts = []
-            for element in content_elements:
-                text = element.get_text().strip()
-                if text:
-                    content_parts.append(text)
-            text = '\n'.join(content_parts)
+            # Fallback: wrap all text in article tag
+            text = container.get_text().strip()
+            if text:
+                # Wrap plain text in article with paragraph
+                return f"<article><p>{text}</p></article>"
+            return ""
         
-        # Clean up whitespace
-        lines = (line.strip() for line in text.splitlines())
-        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-        clean_text = '\n'.join(chunk for chunk in chunks if chunk)
+        # Create article wrapper
+        article = soup.new_tag('article')
         
-        return clean_text
+        # Add each content element to article, preserving structure
+        for element in content_elements:
+            element_text = element.get_text().strip()
+            if element_text:
+                # Extract the element's HTML string to preserve inner structure
+                # This preserves nested tags, lists, etc.
+                element_html = str(element)
+                # Parse it back to add to article (preserves structure)
+                temp_soup = BeautifulSoup(element_html, 'html.parser')
+                cloned_element = temp_soup.find(element.name)
+                if cloned_element:
+                    article.append(cloned_element)
+        
+        # Return the HTML string
+        return str(article)
 
     def _calculate_extraction_confidence(self, content: str, title: str, author: str, 
                                        publication_date: str, image_url: str, 
@@ -1059,52 +1067,176 @@ Return your response as JSON in this exact format, if the fields are not present
             }
 
     async def get_relevant_documents_for_chat(
-        self,
-        user_id: str,
-        query: str,
-        scope_type: str,
-        scope_id: Optional[int] = None,
-        limit: int = 5
+        self, user_id: str, query: str, scope_type: str, scope_id: Optional[int] = None, limit: int = 5, similarity_threshold: float = 0.6
     ) -> List[Document]:
         """
-        Get relevant documents for a chat query using vector search.
+        Get relevant documents for a chat query using vector search on the Embedding table.
         """
         logger.info(f"Getting relevant documents for user {user_id} with query '{query}'")
 
         embedding_service: EmbeddingService = get_embedding_service()
         
-        # 1. Generate embedding for the user's query
-        query_embedding_result = await embedding_service.generate_embedding(text=query)
-        if not query_embedding_result.success:
-            logger.error("Could not generate embedding for query.")
-            return []
-            
-        query_vector = query_embedding_result.embedding
-
-        # 2. Perform a vector search on the Document table's content_vector
-        # Base query for vector similarity search
-        similarity_clause = 1 - (Document.content_vector.cosine_distance(query_vector))
-        statement = select(Document, similarity_clause.label("similarity")).where(
-            Document.user_id == user_id,
-            Document.content_vector != None
+        # 1. Search the Embedding table for relevant content
+        # Use a lower threshold to get more results, then we'll deduplicate by document
+        embedding_results = await embedding_service.search_embeddings(
+            session=self.session,
+            query_text=query,
+            user_id=user_id,
+            source_types=['document'],  # Only search documents for chat
+            limit=limit * 5,  # Get more results to account for multiple chunks per document
+            similarity_threshold=similarity_threshold  # Use the provided threshold
         )
-
-        # 4. If scope_type is 'collection', further filter by scope_id
+        
+        if not embedding_results:
+            logger.info(f"No matching embeddings found for query '{query}'")
+            return []
+        
+        # 2. Group results by document_id and get the best match per document
+        document_scores = {}  # document_id -> best similarity score
+        for result in embedding_results:
+            doc_id = result['source_id']
+            score = result['similarity_score']
+            if doc_id not in document_scores or score > document_scores[doc_id]:
+                document_scores[doc_id] = score
+        
+        # 3. Sort documents by similarity score and get top results
+        sorted_doc_ids = sorted(document_scores.items(), key=lambda x: x[1], reverse=True)[:limit]
+        doc_ids = [doc_id for doc_id, _ in sorted_doc_ids]
+        
+        if not doc_ids:
+            return []
+        
+        # 4. Fetch the actual Document objects
+        stmt = select(Document).where(
+            Document.id.in_(doc_ids),
+            Document.user_id == user_id
+        )
+        
+        # If scope_type is 'collection', further filter by scope_id
+        # TODO: Implement collection filtering when CollectionDocumentLink is available
         if scope_type == 'collection' and scope_id is not None:
-            # This requires a join. Assuming a `CollectionDocumentLink` model exists.
-            # from app.models import CollectionDocumentLink
-            # statement = statement.join(CollectionDocumentLink, Document.id == CollectionDocumentLink.document_id)\
-            #                      .where(CollectionDocumentLink.collection_id == scope_id)
             logger.warning("Collection-scoped search is not yet fully implemented.")
-
-
-        statement = statement.order_by(similarity_clause.desc()).limit(limit)
         
-        results = await self.session.execute(statement)
+        results = await self.session.execute(stmt)
+        documents = list(results.scalars().all())
         
-        documents_with_similarity = results.all()
+        # Sort documents by the similarity scores we calculated
+        doc_score_map = dict(sorted_doc_ids)
+        documents.sort(key=lambda doc: doc_score_map.get(doc.id, 0), reverse=True)
         
-        # Extract documents from the result
-        documents = [doc for doc, sim in documents_with_similarity]
-        
+        logger.info(f"Found {len(documents)} relevant documents for query '{query}'")
         return documents
+
+    async def get_entity_tree(self, user_id: str) -> List[Dict[str, Any]]:
+        """
+        Build entity tree structure for filtering, grouped by entity type.
+        Returns tree in PrimeVue Tree format.
+        
+        Args:
+            user_id: Firebase user ID
+            
+        Returns:
+            List of tree nodes with structure:
+            [
+                {
+                    "key": "location",
+                    "label": "Location",
+                    "children": [
+                        {
+                            "key": "entity-location-1",
+                            "label": "London",
+                            "data": {"entity_id": 1, "document_ids": [1, 2, 3]}
+                        }
+                    ]
+                }
+            ]
+        """
+        # Entity type display name normalization
+        ENTITY_TYPE_DISPLAY = {
+            'person': 'People',
+            'location': 'Location',
+            'organization': 'Organization',
+            'topic': 'Topic',
+            'product': 'Product',
+            'company': 'Company',
+            'event': 'Event',
+            'technology': 'Technology',
+            'institution': 'Institution',
+        }
+        
+        # Get user by Firebase UID
+        user = await UserService.get_user_by_firebase_uid(self.session, user_id)
+        if not user:
+            return []
+        
+        # Query entities with their document relationships
+        # Get all entity-document mappings first
+        query = (
+            select(
+                Entity.id,
+                Entity.name,
+                Entity.type,
+                EntityDocument.document_id
+            )
+            .join(EntityDocument, Entity.id == EntityDocument.entity_id)
+            .where(Entity.user_id == user.id)
+            .order_by(Entity.type, Entity.name, Entity.id)
+        )
+        
+        result = await self.session.execute(query)
+        entity_doc_mappings = result.all()
+        
+        # Group document_ids by entity
+        entity_data_map: Dict[int, Dict[str, Any]] = {}
+        for entity_id, entity_name, entity_type, document_id in entity_doc_mappings:
+            if entity_id not in entity_data_map:
+                entity_data_map[entity_id] = {
+                    'id': entity_id,
+                    'name': entity_name,
+                    'type': entity_type,
+                    'document_ids': []
+                }
+            if document_id:
+                entity_data_map[entity_id]['document_ids'].append(document_id)
+        
+        # Group entities by type
+        entities_by_type: Dict[str, List[Dict[str, Any]]] = {}
+        for entity_data in entity_data_map.values():
+            entity_type_lower = entity_data['type'].lower() if entity_data['type'] else 'other'
+            if entity_type_lower not in entities_by_type:
+                entities_by_type[entity_type_lower] = []
+            
+            entities_by_type[entity_type_lower].append({
+                'id': entity_data['id'],
+                'name': entity_data['name'],
+                'document_ids': entity_data['document_ids']
+            })
+        
+        # Build tree structure
+        tree = []
+        for entity_type_key, entities in entities_by_type.items():
+            # Get normalized display name
+            display_name = ENTITY_TYPE_DISPLAY.get(entity_type_key, entity_type_key.title())
+            
+            # Build children nodes (entities)
+            children = []
+            for entity in entities:
+                entity_key = f"entity-{entity_type_key}-{entity['id']}"
+                children.append({
+                    'key': entity_key,
+                    'label': entity['name'],
+                    'data': {
+                        'entity_id': entity['id'],
+                        'document_ids': entity['document_ids']
+                    }
+                })
+            
+            # Only add type node if it has children
+            if children:
+                tree.append({
+                    'key': entity_type_key,
+                    'label': display_name,
+                    'children': children
+                })
+        
+        return tree

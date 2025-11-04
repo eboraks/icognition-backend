@@ -1259,6 +1259,7 @@ dependencies = [
     { name = "langchain" },
     { name = "langchain-google-genai" },
     { name = "langchain-postgres" },
+    { name = "langchain-text-splitters" },
     { name = "langchainhub" },
     { name = "langgraph" },
     { name = "langgraph-checkpoint-postgres" },
@@ -1333,6 +1334,7 @@ requires-dist = [
     { name = "langchain", specifier = ">=1.0.0" },
     { name = "langchain-google-genai", specifier = ">=2.0.0" },
     { name = "langchain-postgres", specifier = ">=0.0.16" },
+    { name = "langchain-text-splitters", specifier = ">=0.3.0" },
     { name = "langchainhub", specifier = ">=0.1.20" },
     { name = "langgraph", specifier = ">=1.0.0" },
     { name = "langgraph-checkpoint-postgres", specifier = ">=3.0.0" },
@@ -1619,6 +1621,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/6f/5e/00065782aa0ad7b5faa9ff6881bcf361f2a7741e39db8e2b3e86164f80c8/langchain_postgres-0.0.16.tar.gz", hash = "sha256:d09aa4ea77ee8600a9ff64de9c185fb558aa388c816c7be04dd4559c878530b7", size = 232526, upload-time = "2025-10-17T15:00:29.203Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5a/a2/516934f8be231e50bb2afda8112641850154b057f5c45d82f42d216bed3d/langchain_postgres-0.0.16-py3-none-any.whl", hash = "sha256:a7375cf9fc9b6965efc207dbcc959424e96b8ffe75d5ced6055676d2613f8d37", size = 46028, upload-time = "2025-10-17T15:00:27.772Z" },
+]
+
+[[package]]
+name = "langchain-text-splitters"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "langchain-core" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fa/2e/c833dcc379c1c086453708ef5eef7d4d1f808559ca4458bd6569d5d83ad7/langchain_text_splitters-1.0.0.tar.gz", hash = "sha256:d8580a20ad7ed10b432feb273e5758b2cc0902d094919629cec0e1ad691a6744", size = 264257, upload-time = "2025-10-17T14:33:41.743Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1e/97/d362353ab04f865af6f81d4d46e7aa428734aa032de0017934b771fc34b7/langchain_text_splitters-1.0.0-py3-none-any.whl", hash = "sha256:f00c8219d3468f2c5bd951b708b6a7dd9bc3c62d0cfb83124c377f7170f33b2e", size = 33851, upload-time = "2025-10-17T14:33:40.46Z" },
 ]
 
 [[package]]

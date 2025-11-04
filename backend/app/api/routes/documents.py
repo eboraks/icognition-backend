@@ -16,7 +16,8 @@ from app.api.models.document_models import (
     DocumentListResponse,
     DocumentUpdateRequest,
     DocumentProcessingStatusResponse,
-    DocumentContentResponse
+    DocumentContentResponse,
+    EntityTreeResponse
 )
 from app.api.errors import NotFoundError, ValidationError
 from app.utils.logging import get_logger
@@ -186,6 +187,62 @@ async def get_all_documents(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve all documents: {str(e)}"
+        )
+
+
+@router.get("/search", response_model=DocumentListResponse)
+async def search_documents(
+    query: str = Query(..., description="Search query text"),
+    limit: int = Query(20, ge=1, le=100, description="Maximum number of results"),
+    similarity_threshold: float = Query(0.6, ge=0.0, le=1.0, description="Minimum similarity score (0.0-1.0)"),
+    user_context: UserContext = Depends(get_active_user_context),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Search documents using embedding-based semantic search.
+    
+    This endpoint uses vector embeddings to find documents semantically related to the query text.
+    Results are ranked by similarity score and returned in the same format as the regular document list.
+    
+    **Query Parameters:**
+    - `query` (required): The search text to find related documents
+    - `limit` (optional, default=20): Maximum number of results to return (1-100)
+    - `similarity_threshold` (optional, default=0.6): Minimum similarity score (0.0-1.0)
+    
+    **Response:**
+    Returns a DocumentListResponse with documents ranked by semantic similarity to the query.
+    """
+    
+    try:
+        from app.services.embedding_service import get_embedding_service
+        
+        document_service = DocumentService(session)
+        embedding_service = get_embedding_service()
+        
+        # Use the existing method that searches embeddings and returns documents
+        documents = await document_service.get_relevant_documents_for_chat(
+            user_id=user_context.user_id,
+            query=query,
+            scope_type="all_library",
+            scope_id=None,
+            limit=limit,
+            similarity_threshold=similarity_threshold
+        )
+        
+        # Create response with same structure as get_documents
+        return DocumentListResponse(
+            documents=[DocumentResponse.model_validate(doc) for doc in documents],
+            total=len(documents),
+            page=1,
+            page_size=len(documents),
+            total_pages=1
+        )
+        
+    except Exception as e:
+        logger.error(f"Error searching documents: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to search documents: {str(e)}"
         )
 
 
@@ -400,22 +457,57 @@ async def fetch_document_content(
         )
 
 
+@router.get("/entities/tree", response_model=EntityTreeResponse)
+async def get_entity_tree(
+    user_context: UserContext = Depends(get_active_user_context),
+    session: AsyncSession = Depends(get_session)
+):
+    """Get entity tree structure for filtering, grouped by entity type"""
+    
+    try:
+        document_service = DocumentService(session)
+        
+        tree_data = await document_service.get_entity_tree(
+            user_id=user_context.user_id
+        )
+        
+        return EntityTreeResponse(tree=tree_data)
+        
+    except Exception as e:
+        logger.error(f"Failed to retrieve entity tree: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve entity tree: {str(e)}"
+        )
+
+
 @router.post("/{document_id}/embed", response_model=DocumentResponse)
 async def generate_document_embedding(
     document_id: str,  # Changed from int to str for UUID
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
 ):
-    """Generate embedding for a document"""
+    """Generate embedding for a document and store in Embedding table"""
     
     try:
         from app.services.embedding_service import get_embedding_service
         
         embedding_service = get_embedding_service()
         
-        success = await embedding_service.update_document_embedding(
+        # Get the document first
+        document_service = DocumentService(session)
+        document = await document_service.get_document_by_id(
+            user_id=user_context.user_id,
+            document_id=document_id
+        )
+        
+        if not document:
+            raise NotFoundError(f"Document {document_id} not found")
+        
+        # Generate and store embeddings in the Embedding table
+        success = await embedding_service.generate_and_store_document_embeddings(
             session=session,
-            document_id=document_id,
+            document=document,
             user_id=user_context.user_id,
             force_regenerate=False
         )
@@ -426,21 +518,14 @@ async def generate_document_embedding(
                 detail="Failed to generate document embedding"
             )
         
-        # Get updated document
-        document_service = DocumentService(session)
-        document = await document_service.get_document_by_id(
-            user_id=user_context.user_id,
-            document_id=document_id
-        )
-        
-        if not document:
-            raise NotFoundError(f"Document {document_id} not found")
+        await session.commit()
         
         return DocumentResponse.model_validate(document)
         
     except NotFoundError:
         raise
     except Exception as e:
+        await session.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate embedding: {str(e)}"

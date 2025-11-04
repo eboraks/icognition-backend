@@ -107,6 +107,22 @@ export interface DocumentEntities {
   count: number;
 }
 
+export interface EntityTreeNodeData {
+  entity_id: number;
+  document_ids: number[];
+}
+
+export interface EntityTreeNode {
+  key: string;
+  label: string;
+  children?: EntityTreeNode[];
+  data?: EntityTreeNodeData;
+}
+
+export interface EntityTreeResponse {
+  tree: EntityTreeNode[];
+}
+
 class DocumentService {
   /**
    * Create a new document from URL or content
@@ -309,6 +325,13 @@ class DocumentService {
    */
   async getEntityExtractionStatus(taskId: string): Promise<any> {
     return api.get<any>(`/documents/entity-extraction/${taskId}/status`);
+  }
+
+  /**
+   * Get entity tree structure for filtering
+   */
+  async getEntityTree(): Promise<EntityTreeResponse> {
+    return api.get<EntityTreeResponse>('/documents/entities/tree');
   }
 }
 

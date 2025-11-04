@@ -423,16 +423,17 @@ async def _process_document_embeddings(
             # Get embedding service
             embedding_service = get_embedding_service()
             
-            # Generate embeddings for the document
-            embedding_success = await embedding_service.update_document_embedding(
+            # Generate and store embeddings in the Embedding table
+            embedding_success = await embedding_service.generate_and_store_document_embeddings(
                 session=session,
-                document_id=document.id,
+                document=document,
                 user_id=document.user_id,
                 force_regenerate=False
             )
             
             if embedding_success:
                 logger.info(f"Successfully generated embeddings for document {document_id}")
+                await session.commit()
             else:
                 logger.warning(f"Failed to generate embeddings for document {document_id}")
                 
@@ -552,66 +553,18 @@ async def _process_document_embeddings_batch(
                         logger.warning(f"Document {document_id} has no content for embedding generation")
                         continue
                     
-                    # Prepare enhanced content for embedding (chunk content and include metadata)
-                    content_parts = []
-                    
-                    # Add authors if available
-                    if document.authors and document.authors.strip():
-                        content_parts.append(f"Authors: {document.authors.strip()}")
-                    
-                    # Add URL if available
-                    if document.url and document.url.strip():
-                        content_parts.append(f"URL: {document.url.strip()}")
-                    
-                    # Add description if available
-                    if document.metadata_description and document.metadata_description.strip():
-                        content_parts.append(f"Description: {document.metadata_description.strip()}")
-                    
-                    # Add site name if available
-                    if document.site_name and document.site_name.strip():
-                        content_parts.append(f"Site: {document.site_name.strip()}")
-                    
-                    # Chunk the main content
-                    content = document.content.strip()
-                    chunk_size = 1000  # Adjust as needed
-                    content_chunks = [content[i:i+chunk_size] for i in range(0, len(content), chunk_size)]
-                    
-                    # Combine metadata and content chunks
-                    all_content_parts = content_parts + content_chunks
-                    enhanced_content = "\n\n".join(all_content_parts)
-                    
-                    # Temporarily update document content with enhanced version
-                    original_content = document.content
-                    document.content = enhanced_content
-                    
-                    try:
-                        # Generate embeddings using the enhanced content
-                        embedding_result = await embedding_service.generate_document_embedding(
-                            document=document,
-                            use_content=True,
-                            use_title=True,
-                            combine_strategy="title_content"
-                        )
-                        
-                        if embedding_result.success:
-                            # Save the embedding to database
-                            embedding_success = await embedding_service.update_document_embedding(
-                                session=session,
-                                document_id=document.id,
-                                user_id=user_id,
-                                force_regenerate=True
-                            )
-                        else:
-                            embedding_success = False
-                            logger.warning(f"Failed to generate embedding for document {document_id}: {embedding_result.error}")
-                    
-                    finally:
-                        # Restore original content
-                        document.content = original_content
+                    # Generate and store embeddings in the Embedding table
+                    embedding_success = await embedding_service.generate_and_store_document_embeddings(
+                        session=session,
+                        document=document,
+                        user_id=user_id,
+                        force_regenerate=False
+                    )
                     
                     if embedding_success:
                         logger.info(f"Successfully generated embeddings for document {document_id}")
                         successful_docs += 1
+                        await session.commit()
                     else:
                         logger.warning(f"Failed to generate embeddings for document {document_id}")
                         

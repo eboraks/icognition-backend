@@ -181,7 +181,7 @@ class Document(SQLModel, table=True):
     source_text_in_html: str = Field(default=None, nullable=True)  # Legacy field
     raw_html: Optional[str] = Field(default=None, sa_column=Column(Text))  # New field
     content: Optional[str] = Field(default=None, sa_column=Column(Text))  # New field
-    content_vector: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(1536)))  # New field
+    # content_vector removed - embeddings now stored in centralized Embedding table
     
     # AI analysis fields (legacy model)
     ai_is_about: str = Field(default=None, nullable=True)
@@ -641,7 +641,7 @@ class Embedding(SQLModel, table=True):
     search_vector: List[int] = Field(sa_column=Column(TSVECTOR))
     source_type: str = Field(default=None, nullable=False)
     source_id: int = Field(default=None, nullable=False)
-    vector: List[float] = Field(sa_column=Column(Vector(768)))
+    vector: List[float] = Field(sa_column=Column(Vector(1536)))
     update_at: datetime = Field(default_factory=datetime.now, nullable=True)
     
 
@@ -986,7 +986,7 @@ class Entity(SQLModel, table=True):
     wikidata_label: Optional[str] = Field(default=None, max_length=255)
     wikidata_description: Optional[str] = Field(default=None, sa_column=Column(Text))
     aliases: Optional[List[str]] = Field(default=None, sa_column=Column(ARRAY(Text)))
-    vector: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(768)))
+    # vector removed - embeddings now stored in centralized Embedding table
     user_id: str = Field(foreign_key="users.id", index=True)
     created_at: Optional[datetime] = Field(
         default_factory=datetime.now,   

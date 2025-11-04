@@ -40,54 +40,7 @@ const emit = defineEmits(['update:filters']);
 const selectedKeys = ref<TreeSelectionKeys>({});
 const searchText = ref('');
 
-// Sample tree data if no nodes provided
-const sampleNodes: TreeNode[] = [
-  {
-    key: 'seinfeld',
-    label: "Jerry Seinfeld and Larry David's Seinfeld",
-    children: [
-      { key: 'jerry', label: 'Jerry Seinfeld (person)' },
-      { key: 'larry', label: 'Larry David (person)' },
-      { key: 'show', label: 'Seinfeld (concept)' }
-    ]
-  },
-  {
-    key: 'ai',
-    label: 'Optimizing Vector Databases for Retrieval - Augmented Generation (RAG) in AI',
-    children: [
-      { key: 'vector', label: 'Vector Databases' },
-      { key: 'rag', label: 'RAG Systems' },
-      { key: 'ai', label: 'Artificial Intelligence' }
-    ]
-  },
-  {
-    key: 'knowledge',
-    label: 'Knowledge Graph Construction and Retrieval with Neo4j and Longchain',
-    children: [
-      { key: 'neo4j', label: 'Neo4j' },
-      { key: 'longchain', label: 'Longchain' },
-      { key: 'graphs', label: 'Knowledge Graphs' }
-    ]
-  },
-  {
-    key: 'meetings',
-    label: 'Effective Virtual Meeting Management',
-    children: [
-      { key: 'virtual', label: 'Virtual Meetings' },
-      { key: 'management', label: 'Meeting Management' }
-    ]
-  },
-  {
-    key: 'nba',
-    label: 'NBA Teams',
-    children: [
-      { key: 'lakers', label: 'Los Angeles Lakers' },
-      { key: 'warriors', label: 'Golden State Warriors' }
-    ]
-  }
-];
-
-const displayNodes = computed(() => props.nodes && props.nodes.length > 0 ? props.nodes : sampleNodes);
+const displayNodes = computed(() => props.nodes || []);
 
 const filteredNodes = computed(() => {
   if (!searchText.value) return displayNodes.value;

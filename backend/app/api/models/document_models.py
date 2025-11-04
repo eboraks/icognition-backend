@@ -119,3 +119,27 @@ class DocumentContentResponse(BaseModel):
     keywords: Optional[List[str]] = None
     
     model_config = ConfigDict(from_attributes=True)
+
+
+class EntityTreeNodeData(BaseModel):
+    """Data payload for entity tree leaf nodes"""
+    entity_id: int
+    document_ids: List[int]
+
+
+class EntityTreeNode(BaseModel):
+    """Tree node structure for PrimeVue Tree component"""
+    key: str
+    label: str
+    children: Optional[List['EntityTreeNode']] = None
+    data: Optional[EntityTreeNodeData] = None
+
+
+class EntityTreeResponse(BaseModel):
+    """Response model for entity tree structure"""
+    tree: List[EntityTreeNode]
+    
+    model_config = ConfigDict(from_attributes=True)
+
+# Update forward reference for recursive model
+EntityTreeNode.model_rebuild()
