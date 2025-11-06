@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     # Logging Configuration
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     
+    # LangSmith Configuration
+    LANGSMITH_TRACING: bool = os.getenv("LANGSMITH_TRACING", "false").lower() == "true"
+    LANGSMITH_API_KEY: Optional[str] = os.getenv("LANGSMITH_API_KEY")
+    LANGSMITH_PROJECT: Optional[str] = os.getenv("LANGSMITH_PROJECT")
+    LANGSMITH_ENDPOINT: Optional[str] = os.getenv("LANGSMITH_ENDPOINT")
+
     # Google AI Configuration
     GOOGLE_API_KEY: Optional[str] = os.getenv("GOOGLE_API_KEY")
     GCP_AI_KEY: Optional[str] = os.getenv("GCP_AI_KEY")

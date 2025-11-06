@@ -4,6 +4,7 @@ from app.db.database import get_session
 from app.models import ChatSession, ChatMessage
 from typing import List, Optional
 from fastapi import Depends
+from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
@@ -35,7 +36,11 @@ class ChatSessionService:
         """
         Get all chat sessions for a user.
         """
-        stmt = select(ChatSession).where(ChatSession.user_id == user_id)
+        stmt = (
+            select(ChatSession)
+            .where(ChatSession.user_id == user_id)
+            .order_by(ChatSession.updated_at.desc(), ChatSession.id.desc())
+        )
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
@@ -43,9 +48,23 @@ class ChatSessionService:
         """
         Get all messages for a chat session.
         """
-        stmt = select(ChatMessage).where(ChatMessage.session_id == session_id)
+        session = await self.get_session_by_id(session_id, user_id)
+        if not session:
+            logger.warning(
+                "User %s attempted to access messages for session %s they do not own or that does not exist",
+                user_id,
+                session_id,
+            )
+            return []
+
+        stmt = (
+            select(ChatMessage)
+            .join(ChatSession, ChatSession.id == ChatMessage.session_id)
+            .where(ChatSession.id == session_id)
+            .where(ChatSession.user_id == user_id)
+            .order_by(ChatMessage.created_at, ChatMessage.id)
+        )
         result = await self.session.execute(stmt)
-        # TODO: Add check to ensure user owns the session
         return result.scalars().all()
 
     async def get_session_by_id(self, session_id: int, user_id: str) -> Optional[ChatSession]:
@@ -61,12 +80,35 @@ class ChatSessionService:
         """
         Save a message to a chat session.
         """
+        has_prior_user_message = True
+        if role == "user":
+            prior_user_stmt = (
+                select(ChatMessage.id)
+                .where(ChatMessage.session_id == session_id)
+                .where(ChatMessage.role == "user")
+                .limit(1)
+            )
+            prior_user_result = await self.session.execute(prior_user_stmt)
+            has_prior_user_message = prior_user_result.first() is not None
+
+        chat_session = await self.session.get(ChatSession, session_id)
+        if not chat_session:
+            logger.error("Attempted to save message to missing session %s", session_id)
+            raise ValueError("Chat session not found")
+
         message = ChatMessage(
             session_id=session_id,
             role=role,  # "user" or "assistant"
             content=content
         )
         self.session.add(message)
+
+        if role == "user" and not has_prior_user_message:
+            new_title = (content or "").strip()[:60]
+            chat_session.title = new_title or chat_session.title
+
+        chat_session.updated_at = datetime.utcnow()
+
         await self.session.commit()
         await self.session.refresh(message)
         logger.info(f"Saved {role} message to session {session_id}, message_id: {message.id}")

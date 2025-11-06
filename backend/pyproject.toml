@@ -92,6 +92,7 @@ dependencies = [
     "langchainhub>=0.1.20",
     "langchain-text-splitters>=0.3.0",
     "langgraph-checkpoint-postgres>=3.0.0",
+    "langsmith",
 ]
 
 [project.optional-dependencies]

@@ -14,7 +14,7 @@
       :show-new-messages-divider="false"
       @send-message="handleSendMessage($event.detail[0])"
       @add-room="handleCreateSession"
-      @fetch-messages="handleFetchMessages"
+      @fetch-messages="handleFetchMessages($event.detail[0])"
       @room-action-handler="onRoomAction($event.detail[0])"
       @menu-action-handler="onMenuAction($event.detail[0])"
       @toggle-rooms-list="noop">
@@ -80,8 +80,9 @@ watch(
     // Ensure an active room selection exists for display
     // But only auto-select if there's no active session AND there are sessions
     if (!chatStore.activeSession && sessions && sessions.length > 0 && sessions[0]) {
-      chatStore.activeSession = sessions[0] as ChatSession | null;
-      activeRoomId.value = String(sessions[0].id);
+      const firstSessionId = sessions[0].id;
+      chatStore.switchActiveSession(firstSessionId);
+      activeRoomId.value = String(firstSessionId);
     } else if (chatStore.activeSession) {
       // Check if the active session still exists
       const sessionExists = sessions?.some(s => s.id === chatStore.activeSession!.id);
@@ -92,8 +93,9 @@ watch(
         console.log('Active session was deleted, clearing and selecting new one');
         chatStore.activeSession = null;
         if (sessions && sessions.length > 0 && sessions[0]) {
-          chatStore.activeSession = sessions[0] as ChatSession | null;
-          activeRoomId.value = String(sessions[0].id);
+          const firstSessionId = sessions[0].id;
+          chatStore.switchActiveSession(firstSessionId);
+          activeRoomId.value = String(firstSessionId);
         } else {
           activeRoomId.value = null;
         }
@@ -123,15 +125,18 @@ const handleSendMessage = (message: ChatMessagePayload) => {
   chatStore.sendMessage(message.content);
 };
 
-const handleFetchMessages = ({ room }: any) => {
-  const id = Number(room?.roomId);
+const handleFetchMessages = (options: any) => {
+  console.log('handleFetchMessages triggered with options:', options);
+  const id = Number(options?.room?.roomId);
   if (!isNaN(id)) {
-    const match = chatStore.sessions.find(s => s.id === id);
-    if (match) {
-      chatStore.activeSession = match;
-    }
-    chatStore.loadMessages(id);
+    console.log('Switching to session:', id);
+    chatStore.switchActiveSession(id);
     activeRoomId.value = String(id);
+  } else {
+    // This case can happen when the last chat is deleted.
+    // The library tries to fetch messages for a non-existent room.
+    // It's safe to ignore this event as the store handles state clearing.
+    console.warn('Could not get a valid room ID from fetch-messages event.', options);
   }
 };
 

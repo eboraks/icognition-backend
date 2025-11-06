@@ -76,7 +76,7 @@ async def _send_document_ready_message(
             "created_at": document.created_at.isoformat() if document.created_at else None,
             "updated_at": document.updated_at.isoformat() if document.updated_at else None
         }
-    }, user_id)
+    }, user_id, channel="extension")
     
     logger.info(f"Sent document_ready message for document {document.id} to user {user_id}")
 
@@ -110,7 +110,7 @@ async def _process_document_content(
             await ws_manager.send_personal_message({
                 "type": "progress_percentage",
                 "data": 10
-            }, user_id)
+            }, user_id, channel="extension")
         
         # Get the document
         result = await session.execute(
@@ -124,7 +124,7 @@ async def _process_document_content(
                 await ws_manager.send_personal_message({
                     "type": "error",
                     "data": "Document not found"
-                }, user_id)
+                }, user_id, channel="extension")
             return
         
         # Check if content is NOT_AVAILABLE or empty and skip processing
@@ -146,7 +146,7 @@ async def _process_document_content(
                         "document_id": document.id,
                         "status": "not_available"
                     }
-                }, user_id)
+                }, user_id, channel="extension")
             
             await session.close()
             return
@@ -156,7 +156,7 @@ async def _process_document_content(
             await ws_manager.send_personal_message({
                 "type": "progress_percentage",
                 "data": 30
-            }, user_id)
+            }, user_id, channel="extension")
         
         # Get DSPy content service (NEW: using DSPy instead of old ContentAnalysisService)
         dspy_content_service = get_dspy_content_service()
@@ -174,7 +174,7 @@ async def _process_document_content(
             await ws_manager.send_personal_message({
                 "type": "progress_percentage",
                 "data": 80
-            }, user_id)
+            }, user_id, channel="extension")
         
         # Update document with DSPy analysis results
         document.ai_is_about = analysis_result['summary']
@@ -197,7 +197,7 @@ async def _process_document_content(
             await ws_manager.send_personal_message({
                 "type": "progress_percentage",
                 "data": 100
-            }, user_id)
+            }, user_id, channel="extension")
         
     except Exception as e:
         logger.error(f"Error processing document {document_id}: {str(e)}")
@@ -209,7 +209,7 @@ async def _process_document_content(
             await ws_manager.send_personal_message({
                 "type": "error",
                 "data": f"Error processing document: {str(e)}"
-            }, user_id)
+            }, user_id, channel="extension")
         
     finally:
         # Clean up session

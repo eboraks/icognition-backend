@@ -9,6 +9,7 @@ from sqlalchemy import select, and_
 
 from app.models import Entity, EntityDocument
 from app.services.user_service import UserService
+from app.services.embedding_service import get_embedding_service
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)

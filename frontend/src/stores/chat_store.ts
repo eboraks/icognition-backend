@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref, watch } from 'vue';
-import { chatService } from '@/services/chatService';
-import { useAuthStore } from './auth_store';
+import { chatService } from '@/services/chatService.js';
+import { useAuthStore } from './auth_store.js';
 
 // Define the shape of a message and a session to match vue-advanced-chat
 export interface ChatMessage {
@@ -27,6 +27,7 @@ export const useChatStore = defineStore('chat', () => {
   const error = ref<string | null>(null);
   const authStore = useAuthStore();
   let socket: WebSocket | null = null;
+  let streamingMessageId: string | null = null;
 
   // Actions
   async function loadSessions() {
@@ -70,6 +71,7 @@ export const useChatStore = defineStore('chat', () => {
         timestamp: new Date(msg.created_at).toLocaleTimeString(),
         date: new Date(msg.created_at).toLocaleDateString(),
       }));
+      streamingMessageId = null;
     } catch (err: any) {
       error.value = err.message || 'Failed to load messages';
     } finally {
@@ -120,14 +122,18 @@ export const useChatStore = defineStore('chat', () => {
 
     const isFirstMessage = messages.value.length === 0;
 
+    const now = new Date();
     const message = {
         _id: Date.now().toString(),
         content: messageContent,
         senderId: authStore.currentUser.uid,
-        timestamp: new Date().toLocaleTimeString(),
-        date: new Date().toLocaleDateString(),
+        timestamp: now.toLocaleTimeString(),
+        date: now.toLocaleDateString(),
     };
     messages.value.push(message);
+
+    // Reset streaming state so the next agent response starts a fresh message
+    streamingMessageId = null;
 
     // Now send the message
     if (socket && socket.readyState === WebSocket.OPEN) {
@@ -136,19 +142,19 @@ export const useChatStore = defineStore('chat', () => {
       console.error('WebSocket still not connected after reconnection attempt');
     }
 
-    // Rename chat on first user message
-    if (isFirstMessage && activeSession.value) {
-      const newTitle = (messageContent || '').trim().slice(0, 60);
-      if (newTitle) {
-        try {
-          await chatService.updateSessionTitle(activeSession.value.id, newTitle);
-          const session = sessions.value.find(s => s.id === activeSession.value!.id);
-          if (session) session.title = newTitle;
-        } catch (e) {
-          console.warn('Failed to update session title', e);
-        }
-      }
-    }
+    // Backend now handles renaming the chat on the first user message.
+    // if (isFirstMessage && activeSession.value) {
+    //   const newTitle = (messageContent || '').trim().slice(0, 60);
+    //   if (newTitle) {
+    //     try {
+    //       await chatService.updateSessionTitle(activeSession.value.id, newTitle);
+    //       const session = sessions.value.find(s => s.id === activeSession.value!.id);
+    //       if (session) session.title = newTitle;
+    //     } catch (e) {
+    //       console.warn('Failed to update session title', e);
+    //     }
+    //   }
+    // }
   }
 
   function connectWebSocket(): Promise<void> {
@@ -184,20 +190,45 @@ export const useChatStore = defineStore('chat', () => {
       };
 
       socket.onmessage = (event) => {
-          const agentMessage = {
-              _id: Date.now().toString(),
-              content: event.data,
+          const chunk = typeof event.data === 'string' ? event.data : String(event.data);
+          if (!chunk) {
+            return;
+          }
+
+          const now = new Date();
+
+          if (!streamingMessageId) {
+            streamingMessageId = `agent-${Date.now()}`;
+            messages.value.push({
+              _id: streamingMessageId,
+              content: chunk,
               senderId: 'agent',
-              timestamp: new Date().toLocaleTimeString(),
-              date: new Date().toLocaleDateString(),
-          };
-          
-          // This is a simple implementation. A more robust solution would handle streaming chunks.
-          const lastMessage = messages.value[messages.value.length - 1];
-          if (lastMessage && lastMessage.senderId === 'agent') {
-              lastMessage.content += event.data;
+              timestamp: now.toLocaleTimeString(),
+              date: now.toLocaleDateString(),
+            });
+            return;
+          }
+
+          const activeMessage = messages.value.find(msg => msg._id === streamingMessageId);
+
+          if (activeMessage) {
+            if (chunk.startsWith(activeMessage.content)) {
+              activeMessage.content = chunk;
+            } else {
+              activeMessage.content += chunk;
+            }
+            activeMessage.timestamp = now.toLocaleTimeString();
+            activeMessage.date = now.toLocaleDateString();
           } else {
-              messages.value.push(agentMessage);
+            // Fallback: create a new message if we lost track of the streaming one
+            streamingMessageId = `agent-${Date.now()}`;
+            messages.value.push({
+              _id: streamingMessageId,
+              content: chunk,
+              senderId: 'agent',
+              timestamp: now.toLocaleTimeString(),
+              date: now.toLocaleDateString(),
+            });
           }
       };
 
@@ -210,6 +241,7 @@ export const useChatStore = defineStore('chat', () => {
       socket.onclose = (event) => {
         clearTimeout(timeout);
         console.log('WebSocket disconnected', event.code, event.reason);
+        streamingMessageId = null;
         socket = null;
       };
     });
@@ -219,19 +251,41 @@ export const useChatStore = defineStore('chat', () => {
     if (socket) {
       socket.close();
     }
+    streamingMessageId = null;
   }
 
-  watch(activeSession, async (newSession, oldSession) => {
-    if (oldSession) {
-      disconnectWebSocket();
+  async function switchActiveSession(sessionId: number) {
+    console.log(`Attempting to switch to session ${sessionId}`);
+    if (activeSession.value?.id === sessionId) {
+      console.log(`Already on session ${sessionId}. No switch needed.`);
+      return;
     }
+
+    disconnectWebSocket();
+    
+    const newSession = sessions.value.find(s => s.id === sessionId);
     if (newSession) {
-      await loadMessages(newSession.id);
+      activeSession.value = newSession;
       try {
+        console.log(`Loading messages for session ${sessionId}`);
+        await loadMessages(sessionId);
+        console.log(`Connecting WebSocket for session ${sessionId}`);
         await connectWebSocket();
       } catch (error) {
-        console.error('Failed to connect WebSocket on session change:', error);
+        console.error(`Failed to switch to session ${sessionId}:`, error);
       }
+    } else {
+      console.warn(`Session ${sessionId} not found.`);
+      activeSession.value = null;
+      messages.value = [];
+    }
+  }
+
+  watch(activeSession, (newSession, oldSession) => {
+    // This watcher is now only for cleanup when all sessions are gone.
+    // The explicit switchActiveSession handles the main logic.
+    if (!newSession && oldSession) {
+      disconnectWebSocket();
     }
   });
 
@@ -248,5 +302,6 @@ export const useChatStore = defineStore('chat', () => {
     addMessage,
     sendMessage,
     deleteSession,
+    switchActiveSession,
   };
 });

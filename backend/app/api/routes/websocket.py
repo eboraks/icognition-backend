@@ -18,49 +18,90 @@ router = APIRouter(tags=["websocket"])
 
 
 class ConnectionManager:
-    """Manage WebSocket connections for users"""
-    
+    """Manage WebSocket connections for users grouped by channel."""
+
+    DEFAULT_CHANNEL = "default"
+
     def __init__(self):
-        # Map user_id to set of active connections
-        self.active_connections: Dict[str, Set[WebSocket]] = {}
+        # Map user_id -> channel -> set[WebSocket]
+        self.active_connections: Dict[str, Dict[str, Set[WebSocket]]] = {}
         self._lock = asyncio.Lock()
-    
-    async def connect(self, websocket: WebSocket, user_id: str):
-        """Accept and register a new WebSocket connection"""
+
+    async def connect(self, websocket: WebSocket, user_id: str, channel: str | None = None):
+        """Accept and register a new WebSocket connection."""
+
         await websocket.accept()
-        
+
+        channel_name = channel or self.DEFAULT_CHANNEL
+
         async with self._lock:
-            if user_id not in self.active_connections:
-                self.active_connections[user_id] = set()
-            self.active_connections[user_id].add(websocket)
-        
-        logger.info(f"WebSocket connected for user {user_id}. Total connections: {len(self.active_connections[user_id])}")
-    
-    async def disconnect(self, websocket: WebSocket, user_id: str):
-        """Unregister a WebSocket connection"""
+            user_channels = self.active_connections.setdefault(user_id, {})
+            connections = user_channels.setdefault(channel_name, set())
+            connections.add(websocket)
+
+        logger.info(
+            "WebSocket connected for user %s on channel '%s'. Total connections on channel: %s",
+            user_id,
+            channel_name,
+            self.get_connection_count(user_id, channel_name),
+        )
+
+    async def disconnect(self, websocket: WebSocket, user_id: str, channel: str | None = None):
+        """Unregister a WebSocket connection."""
+
+        channel_name = channel or self.DEFAULT_CHANNEL
+
         async with self._lock:
-            if user_id in self.active_connections:
-                self.active_connections[user_id].discard(websocket)
-                
-                # Clean up empty sets
-                if not self.active_connections[user_id]:
-                    del self.active_connections[user_id]
-        
-        logger.info(f"WebSocket disconnected for user {user_id}")
-    
-    async def send_personal_message(self, message: dict, user_id: str):
-        """Send a message to all connections of a specific user"""
+            user_channels = self.active_connections.get(user_id)
+            if not user_channels:
+                return
+
+            connections = user_channels.get(channel_name)
+            if connections and websocket in connections:
+                connections.discard(websocket)
+
+                if not connections:
+                    user_channels.pop(channel_name, None)
+
+            if not user_channels:
+                self.active_connections.pop(user_id, None)
+
+        logger.info("WebSocket disconnected for user %s on channel '%s'", user_id, channel_name)
+
+    async def send_personal_message(
+        self,
+        message: dict,
+        user_id: str,
+        channel: str | None = None,
+    ):
+        """Send a message to connections of a specific user and channel.
+
+        If *channel* is not provided, the message is broadcast to all channels for the user.
+        """
+
         if user_id not in self.active_connections:
-            logger.warning(f"No active connections for user {user_id}")
+            logger.warning("No active connections for user %s", user_id)
             return
-        
-        # Get a copy of connections to avoid modification during iteration
+
         async with self._lock:
-            connections = list(self.active_connections.get(user_id, []))
-        
+            if channel:
+                target_channels = [self.active_connections[user_id].get(channel, set())]
+            else:
+                target_channels = list(self.active_connections[user_id].values())
+
+            connections = [conn for channel_conns in target_channels for conn in channel_conns]
+
+        if not connections:
+            logger.debug(
+                "No active connections for user %s on channel '%s'",
+                user_id,
+                channel or "*",
+            )
+            return
+
         message_json = json.dumps(message)
         disconnected = []
-        
+
         for connection in connections:
             try:
                 if connection.client_state == WebSocketState.CONNECTED:
@@ -68,26 +109,37 @@ class ConnectionManager:
                 else:
                     disconnected.append(connection)
             except Exception as e:
-                logger.error(f"Error sending message to user {user_id}: {e}")
+                logger.error("Error sending message to user %s: %s", user_id, e)
                 disconnected.append(connection)
-        
-        # Clean up disconnected connections
+
         if disconnected:
             async with self._lock:
-                if user_id in self.active_connections:
+                user_channels = self.active_connections.get(user_id)
+                if not user_channels:
+                    return
+
+                for channel_name, channel_conns in list(user_channels.items()):
                     for conn in disconnected:
-                        self.active_connections[user_id].discard(conn)
-                    
-                    if not self.active_connections[user_id]:
-                        del self.active_connections[user_id]
-    
-    def get_connection_count(self, user_id: str) -> int:
-        """Get the number of active connections for a user"""
-        return len(self.active_connections.get(user_id, set()))
-    
+                        channel_conns.discard(conn)
+
+                    if not channel_conns:
+                        user_channels.pop(channel_name, None)
+
+                if not user_channels:
+                    self.active_connections.pop(user_id, None)
+
+    def get_connection_count(self, user_id: str, channel: str | None = None) -> int:
+        """Get the number of active connections for a user (optionally by channel)."""
+
+        user_channels = self.active_connections.get(user_id, {})
+        if channel:
+            return len(user_channels.get(channel, set()))
+        return sum(len(connections) for connections in user_channels.values())
+
     def get_total_connections(self) -> int:
-        """Get the total number of active connections across all users"""
-        return sum(len(connections) for connections in self.active_connections.values())
+        """Get the total number of active connections across all users."""
+
+        return sum(self.get_connection_count(user_id) for user_id in self.active_connections)
 
 
 # Global connection manager instance
@@ -116,7 +168,9 @@ async def websocket_endpoint(
     logger.info(f"WebSocket connection attempt from user: {user_id}")
     
     # Accept the connection
-    await manager.connect(websocket, user_id)
+    channel_name = "extension"
+
+    await manager.connect(websocket, user_id, channel=channel_name)
     
     try:
         # Send initial connection confirmation
@@ -177,7 +231,7 @@ async def websocket_endpoint(
     except Exception as e:
         logger.error(f"WebSocket error for user {user_id}: {e}")
     finally:
-        await manager.disconnect(websocket, user_id)
+        await manager.disconnect(websocket, user_id, channel=channel_name)
 
 
 @router.get("/ws/stats")
