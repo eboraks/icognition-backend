@@ -45,7 +45,10 @@ const routes: Array<RouteRecordRaw> = [
   {
     path: '/library',
     name: 'library',
-    component: () => import("../views/DocumentContainer.vue")
+    components: {
+      default: () => import("../views/DocumentContainer.vue"),
+      sidebar: () => import("@/components/library/LibrarySidebar.vue")
+    }
   },
   {
     path: '/learning-qa',
@@ -55,7 +58,10 @@ const routes: Array<RouteRecordRaw> = [
   {
     path: '/knowledge-explorer',
     name: 'knowledge-explorer',
-    component: () => import("../views/library/KnowledgeExplorer.vue")
+    components: {
+      default: () => import("../views/library/KnowledgeExplorer.vue"),
+      sidebar: () => import("@/components/knowledge_explorer/FilterTree.vue")
+    }
   },
   { 
     path: '/docxray/:id',

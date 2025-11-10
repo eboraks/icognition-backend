@@ -10,11 +10,11 @@
             v-model:selectionKeys="selectedKeys"
             class="w-full" />
     </div>
-    <div class="flex align-items-center justify-content-between mt-2 pt-2 border-top-1 border-white-alpha-20" v-if="selectedLabels.length > 0">
+    <div class="flex align-items-center justify-content-between mt-2 pt-2 border-top-1 border-300" v-if="selectedLabels.length > 0">
       <div class="flex gap-1 flex-wrap flex-1">
-        <span class="text-white text-xs">{{ selectedLabels.length }} Selected Filters</span>
+        <span class="text-color text-xs">{{ selectedLabels.length }} Selected Filters</span>
       </div>
-      <Button label="Clear" text size="small" @click="clear" class="text-white" />
+      <Button label="Clear" text size="small" @click="clear" />
     </div>
   </div>
 </template>

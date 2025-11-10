@@ -1,48 +1,17 @@
 <template>
-    <div id="body-library" class="grid nested-grid grid-nogutter col-12 surface-100" style="height: calc(100% - 4.5em - 5.25em);">
-        <div class="col-12 bg-white border-round border-300 border-2 p-0 h-full">
-            <Splitter class="h-full border-round border-noround-right">
-                <SplitterPanel :class="{ 'splitter-panel-container-small': !buttonToggleSplitterPanelLeft }" class="p-2 border-round bg-primary-500 border-noround-right" :size="25" :minSize="1">
-                    <div class="grid h-full">
-                        <div class="col-6">
-                            <Button v-if="!buttonToggleSplitterPanelLeft" class="bg-transparent border-transparent border-0 text-white ml-1" icon="pi pi-filter" @click="buttonToggleSplitterPanelLeft = !buttonToggleSplitterPanelLeft" rounded aria-label="Expand Panel"/>
-                            <h4 v-if="buttonToggleSplitterPanelLeft" class="font-semibold pt-2 text-white">Filter by Topic</h4>
-                        </div>
-                        <div class="col-6 text-right">
-                            <Button v-if="buttonToggleSplitterPanelLeft" class="bg-transparent border-transparent border-0 text-white" icon="pi pi-filter" @click="buttonToggleSplitterPanelLeft = !buttonToggleSplitterPanelLeft" rounded aria-label="Collapse Panel"/>
-                        </div>
-                        <div class="w-full" style="height: calc(100% - 3.75em);" v-if="buttonToggleSplitterPanelLeft">
-                            <div v-if="libraryStore.loading" class="flex flex-flow justify-content-center">
-                                <i class="text-white pi pi-spin pi-spinner" style="font-size: 2rem"></i>
-                            </div>                         
-                            <div class="w-full h-full" v-else>
-                                <div class="w-full border-round-lg h-full">
-                                    <LibraryFilters :nodes="libraryStore.entityTree" @update:filters="onCheckedIds" />
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </SplitterPanel>
-                <SplitterPanel :class="{ 'splitter-panel-container-big': !buttonToggleSplitterPanelLeft }" class="p-0 bg-white flex flex-column" :size="75">
-                    <div class="flex flex-row w-full p-3 bg-white" style="flex-shrink: 0;">
-                        <LibraryToolbar class="w-full" @search="onToolbarSearch" @expandAll="onExpandAll" @collapseAll="onCollapseAll" @upload="onUpload" />
-                    </div>
-                    <!-- Div that will display RAG answer if resp_type === RAGAnswer -->
-                    <div v-if="documentStore.resp_type === 'RAGAnswer'" class="col-12 p-0 bg-white">
-                        <div class="col-12 p-0">
-                            <div class="col-8 p-4">{{ documentStore.answer }}</div>
-                        </div>
-                    </div>
-                    <div class="bg-white" style="flex-grow: 1; overflow: auto;">
-                        <LibraryTable ref="docsTable" :documents="libraryStore.filteredDocuments" :loading="libraryStore.loading"/>
-                    </div>
-                </SplitterPanel>
-            </Splitter>
+    <div class="document-container-view">
+        <div class="toolbar-section">
+            <LibraryToolbar class="w-full" @search="onToolbarSearch" @expandAll="onExpandAll" @collapseAll="onCollapseAll" @upload="onUpload" />
         </div>
+        <!-- Div that will display RAG answer if resp_type === RAGAnswer -->
+        <div v-if="documentStore.resp_type === 'RAGAnswer'" class="rag-answer-section">
+            <div class="rag-answer-content">{{ documentStore.answer }}</div>
+        </div>
+        <div class="table-section">
+            <LibraryTable ref="docsTable" :documents="libraryStore.filteredDocuments" :loading="libraryStore.loading"/>
+        </div>
+        <FileUploadDialog v-if="showUploadFileDialog"></FileUploadDialog>
     </div>
-
-    <FileUploadDialog v-if="showUploadFileDialog"></FileUploadDialog>
-
 </template>
 
 <script lang="ts">
@@ -56,12 +25,8 @@
 </script>
 
 <script lang="ts" setup>
-    import LibraryFilters from '@/components/library/LibraryFilters.vue';
     import LibraryToolbar from '@/components/library/LibraryToolbar.vue';
     import { useLibraryStore } from '@/stores/library_store';
-    import Splitter from 'primevue/splitter';
-    import SplitterPanel from 'primevue/splitterpanel';
-    import Button from 'primevue/button';
     
     import user_state from '@/composables/getUser';
     import { handleFileUpload } from '@/composables/handleFileUpload';
@@ -76,7 +41,6 @@
     const currentTab = ref('0');
     let isError = false;
     const router  = useRouter();
-    const buttonToggleSplitterPanelLeft = ref(true);
     const fitlerCheckedIds = ref(new Map());
     const items = ref<any[]>([]);
     let showUploadFileDialog = ref(false);
@@ -123,6 +87,15 @@
         }
     });
 
+    // Handle filter updates from sidebar (LibraryFilters component)
+    const onCheckedIds = (checkedIds: any) => {
+        fitlerCheckedIds.value = checkedIds;
+        libraryStore.updateSelectedEntities(checkedIds);
+    };
+    
+    // Expose the handler for the sidebar component to use
+    defineExpose({ onCheckedIds });
+
     const socketSetup = async (user_id: string) => {
         const socket = new WebSocket('http://localhost:8889/ws/' + user_id);
 
@@ -144,13 +117,6 @@
             console.log("WebSocket connection closed.");
         };
     }
-
-
-    const onCheckedIds = (checkedIds: any) => {
-        fitlerCheckedIds.value = checkedIds;
-        libraryStore.updateSelectedEntities(checkedIds);
-    }
-
 
     const emptied = () => {
         console.log("Emptied");
@@ -207,12 +173,43 @@
     };
 
 const onUpload = (e: any) => {
-
     console.log('Upload Event: ', e);
-
     handleFileUpload(e, user_state.user?.uid as string);
- 
 };
-        
-    
 </script>
+
+<style scoped>
+.document-container-view {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    background: var(--p-surface-ground);
+}
+
+.toolbar-section {
+    flex-shrink: 0;
+    padding: 1rem;
+    background: var(--p-surface-0);
+    border-bottom: 1px solid var(--p-content-border-color);
+}
+
+.rag-answer-section {
+    flex-shrink: 0;
+    padding: 1rem;
+    background: var(--p-surface-0);
+    border-bottom: 1px solid var(--p-content-border-color);
+}
+
+.rag-answer-content {
+    max-width: 66.666%;
+    padding: 1rem;
+}
+
+.table-section {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    background: var(--p-surface-0);
+}
+</style>

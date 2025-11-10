@@ -219,7 +219,7 @@ onMounted(() => {
 :deep(.p-tree) {
   border: none;
   background: transparent;
-  color: var(--p-primary-contrast-color);
+  color: var(--p-text-color);
 }
 
 :deep(.p-scrollpanel) {
@@ -231,7 +231,7 @@ onMounted(() => {
 }
 
 :deep(.p-tree-node-content) {
-  color: var(--p-primary-contrast-color);
+  color: var(--p-text-color);
   border-radius: 0.75rem;
   padding: 0.5rem 0.75rem;
   transition: background-color 0.2s ease, box-shadow 0.2s ease;
@@ -254,11 +254,11 @@ onMounted(() => {
 
 :deep(.p-treenode-selectable .p-tree-node-content:hover),
 :deep(.p-tree-node-content.p-highlight) {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--p-surface-hover);
 }
 
 :deep(.p-tree-toggler) {
-  color: var(--p-primary-200);
+  color: var(--p-text-muted-color);
 }
 
 :deep(.p-tree-toggler.p-tree-toggler-icon) {
@@ -267,24 +267,13 @@ onMounted(() => {
 
 :deep(.p-checkbox .p-checkbox-box) {
   border-radius: 0.5rem;
-  border-color: var(--p-primary-300);
-  background: var(--p-primary-600);
-}
-
-:deep(.p-checkbox.p-highlight .p-checkbox-box) {
-  background: var(--p-primary-contrast-color);
-  border-color: var(--p-primary-contrast-color);
-}
-
-:deep(.p-checkbox.p-highlight .p-checkbox-box .p-checkbox-icon) {
-  color: var(--p-primary-500);
 }
 
 .node-content {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  color: var(--p-primary-contrast-color);
+  color: var(--p-text-color);
 }
 
 .node-content > span {
