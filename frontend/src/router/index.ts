@@ -52,6 +52,11 @@ const routes: Array<RouteRecordRaw> = [
     name: 'learning-qa',
     component: () => import("../views/library/LearningQA.vue")
   },
+  {
+    path: '/knowledge-explorer',
+    name: 'knowledge-explorer',
+    component: () => import("../views/library/KnowledgeExplorer.vue")
+  },
   { 
     path: '/docxray/:id',
     name: 'docxray',
