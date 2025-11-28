@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.utils.logging import get_logger
 from app.services.dspy_models_no_entities import ContentExtractNoEntities
 from app.models import Document
+from app.utils.text_utils import extract_text_from_html
 
 logger = get_logger(__name__)
 
@@ -112,6 +113,10 @@ class DspyExtractionServiceNoEntities:
             ContentExtractNoEntities object with structured data
         """
         try:
+            text = extract_text_from_html(text)
+            if not text:
+                raise ValueError("No readable content provided for extraction")
+            
             logger.info(f"Starting content extraction (NO ENTITIES) with model: {model_name}")
             
             # Switch model if needed by creating a new LM instance
@@ -154,7 +159,10 @@ class DspyExtractionServiceNoEntities:
         if not document.content:
             raise ValueError("Document has no content to extract")
         
-        return self.extract_content(document.content, model_name)
+        text = extract_text_from_html(document.content)
+        if not text:
+            raise ValueError("Document has no readable content to extract")
+        return self.extract_content(text, model_name)
 
 
 # Global service instance

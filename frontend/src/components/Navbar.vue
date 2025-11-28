@@ -1,50 +1,6 @@
 <template>
     <header
         data-test="header"
-        id="website-header"
-        class="header w-full bg-white shadow-5 overflow-hidden sticky top-0"
-        style="z-index: 500;"
-        tabindex="-1">
-        <div class="grid">
-            <a href="#page" class="hidden">
-                Skip to Content
-            </a>
-            <!-- Background -->
-            <div class="flex col-12 pb-0">
-                <!-- Title and nav wrapper -->
-                <div class="col-3" style="min-width: 15em;">
-                    <div class="header-title mt-2" data-animation-role="header-element">
-                        <div class="header-title-logo">
-                            <a href="/" data-animation-role="header-element">
-                                <img
-                                src="/src/assets/images/iCofnitionLogo-website.png?format=1500w"
-                                alt="iCognition.ai">
-                            </a>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-6 text-center flex align-content-center flex-wrap"></div>
-
-                <!-- Actions -->
-                <div class="col-3 md:flex pr-3 align-items-center justify-content-end">
-                    <div class="hidden md:flex website-login-logout">
-                        <div v-if="authStore.isAuthenticated" class="text-right">
-                            <button type="button" class="login-with-google-btn mr-2" @click="handleLogout">
-                                Logout
-                            </button>
-                        </div>
-                        <div v-else class="text-right">
-                            <button type="button" class="login-with-google-btn mr-2" @click="handleGoogleLogin">
-                                Sign in with Google
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </header>
-    <header
-        data-test="header"
         id="app-header"
         class="header w-full bg-primary-800 shadow-5 sticky top-0"
         style="z-index: 1000;"
@@ -113,8 +69,8 @@
                             <div @click="handleLogout" 
                                  class="p-2 cursor-pointer border-round flex align-items-center text-gray-700"
                                  style="transition: background-color 0.2s;"
-                                 @mouseover="$event.target.style.backgroundColor = '#f5f5f5'"
-                                 @mouseout="$event.target.style.backgroundColor = 'transparent'">
+                                 @mouseover="($event.target as HTMLElement).style.backgroundColor = '#f5f5f5'"
+                                 @mouseout="($event.target as HTMLElement).style.backgroundColor = 'transparent'">
                                 <i class="pi pi-sign-out mr-2"></i>
                                 Sign Out
                             </div>

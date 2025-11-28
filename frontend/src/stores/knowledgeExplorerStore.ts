@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
+import { useChatStore } from '@/stores/chat_store';
 
 interface SelectedNode {
   id: number | null;
@@ -12,6 +13,7 @@ interface ChatTab {
   id: number;
   title: string;
   createdAt: number;
+  sessionId: number | null;
 }
 
 export const useKnowledgeExplorerStore = defineStore('knowledgeExplorer', () => {
@@ -28,10 +30,13 @@ export const useKnowledgeExplorerStore = defineStore('knowledgeExplorer', () => 
       id: 1,
       title: 'Knowledge Exploration',
       createdAt: Date.now(),
+      sessionId: null,
     },
   ]);
   const activeChatTabId = ref<number>(1);
   const nextChatTabIndex = ref(2);
+
+  const chatStore = useChatStore();
 
   // Computed: Get all selected node IDs
   const selectedNodeIds = computed(() => {
@@ -133,9 +138,9 @@ export const useKnowledgeExplorerStore = defineStore('knowledgeExplorer', () => 
     });
   }
 
-  function ensureActiveChatTab() {
+  async function ensureActiveChatTab() {
     if (!chatTabs.value.length) {
-      addChatTab('New Chat');
+      await addChatTab('New Chat');
       return;
     }
     const exists = chatTabs.value.some((tab) => tab.id === activeChatTabId.value);
@@ -144,12 +149,24 @@ export const useKnowledgeExplorerStore = defineStore('knowledgeExplorer', () => 
     }
   }
 
-  function addChatTab(title?: string) {
+  async function addChatTab(title?: string) {
     const nextIndex = nextChatTabIndex.value++;
+    const newSession = await chatStore.createSession(
+      title || `Chat ${nextIndex}`,
+      'all_library',
+      null // scopeId
+    );
+
+    if (!newSession) {
+      console.error('Failed to create new chat session.');
+      return;
+    }
+
     const newTab: ChatTab = {
       id: Date.now() + nextIndex,
-      title: title || `Chat ${nextIndex}`,
+      title: newSession.title,
       createdAt: Date.now(),
+      sessionId: newSession.id,
     };
     chatTabs.value.push(newTab);
     activeChatTabId.value = newTab.id;

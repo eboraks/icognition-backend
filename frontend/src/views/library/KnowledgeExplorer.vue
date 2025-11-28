@@ -18,11 +18,12 @@
       </button>
     </div>
     <div class="workspace">
-      <ChatPanel
-        :key="knowledgeStore.activeChatTabId"
-        :selected-entity-id="knowledgeStore.activeEntityId.length > 0 ? knowledgeStore.activeEntityId[0] : null"
-        :selected-document-id="knowledgeStore.activeDocumentId.length > 0 ? knowledgeStore.activeDocumentId[0] : null"
-      />
+          <ChatPanel
+            :key="knowledgeStore.activeChatTabId"
+            :selected-entity-id="knowledgeStore.activeEntityId.length > 0 ? knowledgeStore.activeEntityId[0] : null"
+            :selected-document-id="knowledgeStore.activeDocumentId.length > 0 ? knowledgeStore.activeDocumentId[0] : null"
+            :chat-session-id="knowledgeStore.activeChatTabId"
+          />
     </div>
   </div>
 </template>

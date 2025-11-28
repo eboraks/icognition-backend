@@ -1,12 +1,12 @@
 <template>
   <div class="filter-tree-container">
     <IconField iconPosition="left" class="w-full mb-3">
-      <InputIcon class="pi pi-search" />
-      <InputText
-        v-model="searchQuery"
-        placeholder="Search Topics"
-        class="w-full"
-      />
+        <InputIcon class="pi pi-search" style="top: 70% !important; transform: translateY(-70%) !important;" />
+        <InputText
+          v-model="searchQuery"
+          placeholder="Search Topics"
+          class="w-full"
+        />
     </IconField>
     <ScrollPanel v-if="!loading" class="tree-content">
       <Tree

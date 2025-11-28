@@ -457,6 +457,40 @@ async def fetch_document_content(
         )
 
 
+@router.post("/{document_id}/reprocess", response_model=DocumentResponse)
+async def reprocess_document_content(
+    document_id: int,
+    refetch: bool = Query(False, description="Refetch content from the original URL before reprocessing"),
+    user_context: UserContext = Depends(get_active_user_context),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Re-run content extraction, validation, and embedding generation for an existing document.
+    """
+    try:
+        document_service = DocumentService(session)
+        
+        document = await document_service.reprocess_document_content(
+            user_id=user_context.user_id,
+            document_id=document_id,
+            refetch_from_source=refetch
+        )
+        
+        if not document:
+            raise NotFoundError(f"Document {document_id} not found")
+        
+        return DocumentResponse.model_validate(document)
+    
+    except NotFoundError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to reprocess document {document_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to reprocess document: {str(e)}"
+        )
+
+
 @router.get("/entities/tree", response_model=EntityTreeResponse)
 async def get_entity_tree(
     user_context: UserContext = Depends(get_active_user_context),

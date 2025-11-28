@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.utils.logging import get_logger
 from app.services.dspy_models_entities_only import EntityExtractionResult, Entity
 from app.models import Document
+from app.utils.text_utils import extract_text_from_html
 
 logger = get_logger(__name__)
 
@@ -110,7 +111,8 @@ class DspyEntityService:
         Returns:
             List of entity dictionaries with name, type, description
         """
-        if not content or not content.strip():
+        text = extract_text_from_html(content)
+        if not text:
             logger.warning(f"Empty content for document {document_id}, skipping entity extraction")
             return []
         
@@ -124,7 +126,7 @@ class DspyEntityService:
                 # Initialize program in context
                 program = EntityExtractorProgram()
                 # Extract entities using DSPy
-                extracted = program(text=content)
+                extracted = program(text=text)
             
             # Convert to dictionary format
             entities = []

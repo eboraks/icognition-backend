@@ -23,12 +23,15 @@ app.use(pinia);
 app.use(router);
 app.use(PrimeVue as any, { 
     theme: {
-        preset: Aura
+        preset: Aura,
+        options: {
+            darkModeSelector: false
+        }
     },
     ripple: true 
 });
 
-app.directive('tooltip', Tooltip);
+app.directive('tooltip', Tooltip as any);
 
 // Initialize auth store and mount app
 const authStore = useAuthStore();

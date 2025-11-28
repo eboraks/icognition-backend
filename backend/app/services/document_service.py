@@ -18,6 +18,7 @@ from app.utils.logging import get_logger
 from bs4 import BeautifulSoup
 from app.services.content_validation_service import get_content_validation_service
 from app.services.embedding_service import get_embedding_service, EmbeddingService
+from app.utils.text_utils import extract_text_from_html
 
 
 logger = get_logger(__name__)
@@ -829,6 +830,62 @@ Return your response as JSON in this exact format, if the fields are not present
             logger.error(f"Unexpected error fetching content for document {document.id}: {str(e)}")
         
         return document
+    
+    async def reprocess_document_content(
+        self,
+        user_id: str,
+        document_id: int,
+        refetch_from_source: bool = False
+    ) -> Optional[Document]:
+        """
+        Re-run content extraction and embeddings for an existing document.
+        """
+        document = await self.get_document_by_id(user_id, document_id)
+        if not document:
+            return None
+        
+        # Optionally re-fetch the document from its source if requested or if no raw_html exists
+        if refetch_from_source or not document.raw_html:
+            if document.url:
+                updated_document = await self.fetch_and_update_document(
+                    user_id=user_id,
+                    document_id=str(document_id)
+                )
+                if updated_document:
+                    document = updated_document
+            else:
+                logger.warning(
+                    f"Document {document_id} has no raw_html or URL to refetch from"
+                )
+        
+        if not document.raw_html:
+            logger.warning(f"Document {document_id} still lacks raw_html after reprocess attempt")
+            return document
+        
+        fetcher = WebPageFetcher()
+        extraction = fetcher.extract_main_content(document.raw_html)
+        
+        document.content = extraction.get('content', '')
+        document.document_metadata = document.document_metadata or {}
+        document.document_metadata['content_extraction'] = extraction
+        document.updated_at = datetime.utcnow()
+        
+        await self._validate_document_content(document)
+        
+        embedding_service: EmbeddingService = get_embedding_service()
+        embedding_success = await embedding_service.generate_and_store_document_embeddings(
+            session=self.session,
+            document=document,
+            user_id=user_id,
+            force_regenerate=True
+        )
+        
+        if not embedding_success:
+            logger.warning(f"Failed to regenerate embeddings for document {document_id}")
+        
+        await self.session.commit()
+        await self.session.refresh(document)
+        return document
 
     async def get_user_documents(
         self,
@@ -1001,8 +1058,13 @@ Return your response as JSON in this exact format, if the fields are not present
             
             validation_service = get_content_validation_service()
             
+            content_for_validation = extract_text_from_html(document.content)
+            if not content_for_validation:
+                logger.warning(f"Document {document.id} content is empty after HTML sanitization")
+                return
+            
             validation_report = await validation_service.validate_content(
-                content=document.content,
+                content=content_for_validation,
                 title=document.title,
                 url=document.url,
                 metadata=document.document_metadata

@@ -1,26 +1,112 @@
 from app.utils.logging import get_logger
 from app.core.config import settings
 from app.utils.langsmith_tracing import enable_langsmith_tracing
-import asyncio
-import atexit
-from contextlib import ExitStack
 from typing import Optional
 import uuid
+from bs4 import BeautifulSoup
+from contextlib import AbstractAsyncContextManager
 
-from langgraph.checkpoint.postgres import PostgresSaver
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.agents import create_agent
+from langgraph.prebuilt import create_react_agent
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.tools import tool
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.engine import make_url
 from tenacity import RetryError
 
-from app.db.database import get_database_url, get_session
+from app.db.database import get_session, get_database_url
 from app.services.chat_session_service import ChatSessionService
 from app.services.document_service import DocumentService
 
 logger = get_logger(__name__)
+
+try:
+    # AsyncPostgresSaver is in the aio module
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+except ImportError:
+    logger.error("Failed to import AsyncPostgresSaver. Please ensure langgraph-checkpoint-postgres is installed.")
+    raise
+
+# Global checkpointer instance (initialized lazily)
+_checkpointer: Optional[AsyncPostgresSaver] = None
+_checkpointer_cm: Optional[AbstractAsyncContextManager[AsyncPostgresSaver]] = None
+
+
+async def get_checkpointer() -> AsyncPostgresSaver:
+    """
+    Get or create the PostgreSQL checkpointer for LangGraph.
+    This maintains conversation state across requests.
+    """
+    global _checkpointer
+    global _checkpointer_cm
+    if _checkpointer is None:
+        # Get database URL and ensure it's in the right format for the checkpointer
+        db_url = get_database_url()
+        # The checkpointer expects a sync postgresql:// URL (not asyncpg)
+        if db_url.startswith("postgresql+asyncpg://"):
+            db_url = db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+        elif db_url.startswith("postgresql+psycopg://"):
+            db_url = db_url.replace("postgresql+psycopg://", "postgresql://", 1)
+        
+        try:
+            _checkpointer_cm = AsyncPostgresSaver.from_conn_string(db_url)
+            _checkpointer = await _checkpointer_cm.__aenter__()
+            await _checkpointer.setup()
+            logger.info("Initialized LangGraph PostgreSQL checkpointer")
+        except Exception as e:
+            logger.error(f"Failed to initialize checkpointer: {e}", exc_info=True)
+            raise
+    return _checkpointer
+
+
+def strip_html_and_clean(text: str) -> str:
+    """
+    Strip HTML tags and clean up text for better readability.
+    This helps prevent raw HTML from appearing in chat responses.
+    """
+    if not text:
+        return ""
+    
+    try:
+        soup = BeautifulSoup(text, "html.parser")
+        # Get text and clean up whitespace
+        cleaned = soup.get_text(separator=" ", strip=True)
+        # Normalize multiple spaces to single space
+        cleaned = " ".join(cleaned.split())
+        return cleaned
+    except Exception as e:
+        logger.warning(f"Error stripping HTML: {e}, returning original text")
+        return text
+
+
+def extract_text_from_content(content) -> str:
+    """
+    Normalize LangChain/LangGraph content payloads into plain text.
+    Handles strings, ChatModel content lists, and dict payloads.
+    """
+    if content is None:
+        return ""
+
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                # Chat model chunks commonly return {"type": "output_text", "text": "..."}
+                text_value = item.get("text")
+                if text_value:
+                    parts.append(str(text_value))
+            else:
+                text_attr = getattr(item, "text", None)
+                if text_attr:
+                    parts.append(str(text_attr))
+        return "".join(parts)
+
+    # Fallback: convert to string
+    return str(content)
 
 
 def create_retrieve_documents_tool(user_id: str, scope_type: str, scope_id: Optional[int], db_session: AsyncSession):
@@ -55,14 +141,20 @@ def create_retrieve_documents_tool(user_id: str, scope_type: str, scope_id: Opti
             if not documents:
                 return f"No relevant documents found in your library for the query: '{query}'"
             
-            # Format documents for the agent
+            # Format documents for the agent with clean, readable content
             result_parts = [f"Found {len(documents)} relevant document(s):"]
             for i, doc in enumerate(documents, 1):
-                content_preview = doc.content[:500] if doc.content else "No content available"
+                # Strip HTML and clean content for better readability
+                raw_content = doc.content if doc.content else "No content available"
+                cleaned_content = strip_html_and_clean(raw_content)
+                # Truncate very long content to avoid token limits
+                if len(cleaned_content) > 2000:
+                    cleaned_content = cleaned_content[:2000] + "... [content truncated]"
+                
                 result_parts.append(f"\n{i}. **{doc.title}**")
                 if doc.url:
                     result_parts.append(f"   URL: {doc.url}")
-                result_parts.append(f"   Content preview: {content_preview}...")
+                result_parts.append(f"   Content: {cleaned_content}")
             
             return "\n".join(result_parts)
         except Exception as e:
@@ -72,47 +164,21 @@ def create_retrieve_documents_tool(user_id: str, scope_type: str, scope_id: Opti
     return retrieve_documents_tool
 
 
-class AsyncPostgresSaver(PostgresSaver):
-    """Async wrapper around PostgresSaver using thread offloading."""
-
-    async def aget_tuple(self, config):  # type: ignore[override]
-        return await asyncio.to_thread(self.get_tuple, config)
-
-    async def alist(self, config=None, *, filter=None, before=None, limit=None):  # type: ignore[override]
-        def _collect():
-            results = []
-            for item in self.list(config, filter=filter, before=before, limit=limit):
-                results.append(item)
-            return results
-
-        items = await asyncio.to_thread(_collect)
-        for item in items:
-            yield item
-
-    async def aput(self, config, checkpoint, metadata, new_versions):  # type: ignore[override]
-        return await asyncio.to_thread(
-            super().put, config, checkpoint, metadata, new_versions
-        )
-
-    async def aput_writes(self, config, writes, task_id, task_path=""):  # type: ignore[override]
-        return await asyncio.to_thread(
-            super().put_writes, config, writes, task_id, task_path
-        )
-
-    async def adelete_thread(self, thread_id):  # type: ignore[override]
-        await asyncio.to_thread(super().delete_thread, thread_id)
-
-
 class ChatAgentService:
     """
-    Service for handling chat interactions using a LangGraph agent.
+    Service for handling chat interactions using LangGraph's prebuilt ReAct agent.
+    The agent uses PostgreSQL checkpointer to maintain conversation history across requests.
     """
 
-    def __init__(self, checkpointer):
-        self.checkpointer = checkpointer
-
+    def __init__(self):
+        """Initialize the chat agent service."""
+        logger.info("ChatAgentService initialized")
 
     async def get_stream(self, session_id: int, message: str, user_id: str):
+        """
+        Stream agent responses for a chat message using LangGraph.
+        The agent maintains conversation history via PostgreSQL checkpointer using thread_id.
+        """
         logger.info(f"Starting stream for session {session_id}, user {user_id}, message length: {len(message)}")
         
         # Get database session for this request
@@ -120,7 +186,7 @@ class ChatAgentService:
         db_session = await async_gen.__anext__()
         
         try:
-            # Load chat session to get scope information
+            # Load chat session to get scope information and thread_id
             chat_session_service = ChatSessionService(db_session)
             chat_session = await chat_session_service.get_session_by_id(session_id, user_id)
             
@@ -129,19 +195,17 @@ class ChatAgentService:
                 yield "Error: Chat session not found."
                 return
             
-            logger.info(f"Found chat session: scope_type={chat_session.scope_type}, scope_id={chat_session.scope_id}, thread_id={chat_session.thread_id}")
+            logger.info(f"Found chat session: scope_type={chat_session.scope_type}, scope_id={chat_session.scope_id}")
             
-            # Ensure thread_id exists for conversation continuity
-            if not chat_session.thread_id:
-                chat_session.thread_id = str(uuid.uuid4())
-                db_session.add(chat_session)
+            # Ensure thread_id is set for LangGraph checkpointer
+            thread_id = chat_session.thread_id
+            if not thread_id:
+                # Generate a unique thread_id if not set
+                thread_id = f"session_{session_id}_{uuid.uuid4().hex[:8]}"
+                chat_session.thread_id = thread_id
                 await db_session.commit()
                 await db_session.refresh(chat_session)
-                logger.info(f"Generated new thread_id: {chat_session.thread_id}")
-            
-            # Load conversation history from database
-            previous_messages = await chat_session_service.get_session_messages(session_id, user_id)
-            logger.info(f"Loaded {len(previous_messages)} previous messages from database")
+                logger.info(f"Generated new thread_id for session {session_id}: {thread_id}")
             
             # Create context-aware tools with session scope
             retrieve_tool = create_retrieve_documents_tool(
@@ -151,7 +215,7 @@ class ChatAgentService:
                 db_session=db_session
             )
             
-            # Create agent executor with context-aware tools
+            # Initialize LLM
             try:
                 llm = ChatGoogleGenerativeAI(model=settings.GEMINI_FLASH_MODEL, google_api_key=settings.GOOGLE_API_KEY)
                 logger.info(f"Initialized LLM with model: {settings.GEMINI_FLASH_MODEL}")
@@ -160,156 +224,68 @@ class ChatAgentService:
                 yield "Error: Failed to initialize AI model."
                 return
             
-            tools = [retrieve_tool]
-            logger.info(f"Created {len(tools)} tool(s)")
-            
-            system_prompt = (
-                "You are a helpful research assistant that can answer questions using the user's document library. "
-                "When users ask questions, use the retrieve_documents_tool to find relevant documents from their library, "
-                "then provide comprehensive answers based on the retrieved content. If the documents don't contain relevant "
-                "information, let the user know clearly."
-            )
-            
-            # Build message history from stored messages to keep conversations scoped per tab/session
-            message_history = []
-            if previous_messages:
-                for stored_message in previous_messages:
-                    if stored_message.role == "user":
-                        message_history.append(HumanMessage(content=stored_message.content))
-                    elif stored_message.role == "assistant":
-                        message_history.append(AIMessage(content=stored_message.content))
-                    else:
-                        logger.debug(
-                            "Skipping unsupported message role '%s' for session %s", 
-                            stored_message.role, 
-                            session_id
-                        )
-
-                if message_history:
-                    logger.info(
-                        "Prepared %s message(s) for LangGraph history for session %s",
-                        len(message_history),
-                        session_id,
-                    )
-                else:
-                    logger.warning(
-                        "No supported messages found when preparing history for session %s; falling back to current message only",
-                        session_id,
-                    )
-                    message_history = [HumanMessage(content=message)]
-            else:
-                logger.info("No previous messages, starting fresh conversation")
-                message_history = [HumanMessage(content=message)]
-            
-            # Create agent with checkpointer for conversation memory
+            # Create LangGraph ReAct agent with checkpointer for memory
             try:
-                agent_executor = create_agent(
-                    model=llm,
-                    tools=tools,
-                    system_prompt=system_prompt,
-                    checkpointer=self.checkpointer
+                system_prompt = (
+                    "You are a helpful research assistant that can answer questions using the user's document library. "
+                    "When users ask questions, use the retrieve_documents_tool to find relevant documents from their library. "
+                    "IMPORTANT: After retrieving documents, you must synthesize the information and provide a comprehensive, "
+                    "natural-language answer to the user's question. Do NOT simply repeat the tool output verbatim. "
+                    "Use the retrieved document content to craft a clear, well-structured response that directly answers "
+                    "the user's question. If the documents don't contain relevant information, let the user know clearly. "
+                    "The tool returns cleaned text content - use it to inform your answer. Always cite document titles and URLs "
+                    "when referencing specific documents."
                 )
-                logger.info("Created agent executor with checkpointer")
+                
+                checkpointer = await get_checkpointer()
+                agent = create_react_agent(
+                    model=llm,
+                    tools=[retrieve_tool],
+                    prompt=system_prompt,
+                    checkpointer=checkpointer
+                )
+                logger.info("Created LangGraph ReAct agent with tools and checkpointer")
             except Exception as e:
                 logger.error(f"Failed to create agent: {e}", exc_info=True)
                 yield "Error: Failed to create chat agent."
                 return
             
-            # Prepare inputs with proper message format
-            inputs = {
-                "messages": message_history
-            }
+            # Prepare the input with the new user message
+            # LangGraph will automatically load previous messages from the checkpointer
+            input_messages = [HumanMessage(content=message)]
             
-            # Configure checkpointer with thread_id for conversation continuity
-            config = {
-                "configurable": {"thread_id": chat_session.thread_id},
-                "metadata": {
-                    "chat_session_id": session_id,
-                    "user_id": user_id,
-                    "scope_type": chat_session.scope_type,
-                    "scope_id": chat_session.scope_id,
-                    "chat_session_title": chat_session.title,
-                },
-                "tags": [
-                    "icognition",
-                    "chat",
-                    f"user:{user_id}",
-                    f"session:{session_id}",
-                ],
-            }
+            logger.info(f"Streaming response for thread_id: {thread_id}")
             
-            logger.info(f"Starting agent stream with thread_id: {chat_session.thread_id}")
-            
-            # Stream agent values and forward the latest message content to the websocket
-            chunk_count = 0
-            last_full_content = ""  # Track the last full content we've sent
-            
+            # Stream agent responses using LangGraph's value stream (mirrors previous behavior)
+            accumulated_text = ""
             try:
-                async for value in agent_executor.astream(inputs, stream_mode="values", config=config):
-                    chunk_count += 1
-                    try:
-                        messages = value.get("messages") or []
-                        if not messages:
-                            logger.debug(f"Chunk {chunk_count}: No messages in value")
-                            continue
-
-                        # Get the latest AI message
-                        ai_messages = [msg for msg in messages if getattr(msg, "type", None) in ("ai", "assistant") or getattr(msg, "role", None) in ("ai", "assistant")]
-                        
-                        if not ai_messages:
-                            logger.debug(f"Chunk {chunk_count}: No AI messages found")
-                            continue
-                        
-                        latest_ai = ai_messages[-1]
-                        
-                        content = getattr(latest_ai, "content", None)
-                        if content is None:
-                            continue
-
-                        # Normalize content to string
-                        text = None
-                        if isinstance(content, str):
-                            text = content
-                        elif isinstance(content, list):
-                            parts = []
-                            for part in content:
-                                if isinstance(part, dict):
-                                    # Handle different content types
-                                    if "text" in part:
-                                        parts.append(str(part.get("text", "")))
-                                    elif "type" in part and part.get("type") == "text":
-                                        parts.append(str(part.get("text", "")))
-                                    else:
-                                        # Fallback: stringify the dict
-                                        parts.append(str(part))
-                                elif isinstance(part, str):
-                                    parts.append(part)
-                                else:
-                                    parts.append(str(part))
-                            text = "".join(parts)
-                        else:
-                            text = str(content)
-
-                        # Only yield incremental content (new text since last chunk)
-                        if text and len(text) > len(last_full_content):
-                            # Check if it's a continuation or a new message
-                            if text.startswith(last_full_content):
-                                # It's a continuation - yield only the new part
-                                new_text = text[len(last_full_content):]
-                                last_full_content = text
-                                logger.debug(f"Yielding incremental update: {len(new_text)} new characters (total: {len(text)})")
-                                yield new_text
-                            else:
-                                # It's a completely new message (shouldn't happen with values mode, but handle it)
-                                logger.warning(f"New message detected without continuation - full length: {len(text)}")
-                                last_full_content = text
-                                yield text
-                                
-                    except Exception as e:
-                        logger.error(f"Error processing chunk {chunk_count}: {e}", exc_info=True)
+                async for chunk in agent.astream(
+                    {"messages": input_messages},
+                    config={"thread_id": thread_id},
+                    stream_mode="values"
+                ):
+                    messages = chunk.get("messages", [])
+                    if not messages:
                         continue
-                
-                logger.info(f"Stream completed: {chunk_count} chunks processed, final content length: {len(last_full_content)}")
+
+                    latest_message = messages[-1]
+                    if not isinstance(latest_message, AIMessage):
+                        continue
+                    
+                    text = extract_text_from_content(getattr(latest_message, "content", None))
+                    if not text:
+                        continue
+
+                    if text.startswith(accumulated_text):
+                        new_text = text[len(accumulated_text):]
+                    else:
+                        new_text = text
+
+                    accumulated_text = text
+                    if new_text:
+                        logger.debug("Streaming chunk emitted (%d chars)", len(new_text))
+                        yield new_text
+
             except RetryError as e:
                 logger.error(f"Network error while contacting AI service: {e}", exc_info=True)
                 yield "I'm having trouble connecting to the AI service. Please check the backend's network connection and DNS settings."
@@ -321,46 +297,17 @@ class ChatAgentService:
             await db_session.close()
             logger.info(f"Closed database session for session {session_id}")
 
-                    
 _chat_agent_service: Optional[ChatAgentService] = None
-_checkpointer_exit_stack: Optional[ExitStack] = None
 
 
 def get_chat_agent_service() -> ChatAgentService:
     """Get the chat agent service instance, creating it if it doesn't exist."""
-    global _chat_agent_service, _checkpointer_exit_stack
+    global _chat_agent_service
     if _chat_agent_service is None:
         try:
             enable_langsmith_tracing()
-            # Build a psycopg-compatible connection string from the configured async URL
-            async_url = get_database_url()
-            url = make_url(async_url)
-
-            if url.drivername.endswith("+asyncpg"):
-                url = url.set(drivername="postgresql")
-            elif url.drivername.endswith("+psycopg"):
-                url = url.set(drivername="postgresql")
-            elif url.drivername == "postgresql+psycopg3":
-                url = url.set(drivername="postgresql")
-
-            conn_str = url.render_as_string(hide_password=False)
-
-            logger.info("Initializing PostgresSaver checkpointer")
-
-            exit_stack = ExitStack()
-            checkpointer_context = AsyncPostgresSaver.from_conn_string(conn_str)
-            checkpointer = exit_stack.enter_context(checkpointer_context)
-            logger.info("PostgresSaver checkpointer created successfully")
-
-            # Ensure resources are cleaned up on process exit
-            atexit.register(exit_stack.close)
-            _checkpointer_exit_stack = exit_stack
-
-            # Ensure schema exists before usage
-            checkpointer.setup()
-
-            _chat_agent_service = ChatAgentService(checkpointer)
-            logger.info("ChatAgentService initialized successfully")
+            _chat_agent_service = ChatAgentService()
+            logger.info("ChatAgentService initialized successfully with LangGraph")
         except Exception as e:
             logger.error(f"Failed to create ChatAgentService: {e}", exc_info=True)
             raise

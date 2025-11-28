@@ -60,6 +60,7 @@ export interface ContextualMessageResponse {
 export interface ActionResponse {
   message: string;
   resources?: Array<{ id: number; title: string }>;
+  actions?: Array<{ id: string; label: string }>;
 }
 
 export const knowledgeService = {

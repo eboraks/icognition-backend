@@ -1,7 +1,7 @@
 <template>
   <div class="flex flex-column gap-2 w-full h-full">
     <IconField iconPosition="left" class="w-full mb-2">
-      <InputIcon class="pi pi-search" />
+      <InputIcon class="pi pi-search" style="top: 75% !important; transform: translateY(-75%) !important;" />
       <InputText v-model="searchText" placeholder="Search Topics" class="w-full" />
     </IconField>
     <div class="flex-1 overflow-auto">

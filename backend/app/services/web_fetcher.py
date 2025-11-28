@@ -6,16 +6,24 @@ import asyncio
 from typing import Optional, Dict, Any, Tuple
 from urllib.parse import urljoin, urlparse
 import httpx
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString, Tag
 import logging
 
 from app.utils.logging import get_logger
+from app.utils.text_utils import extract_text_from_html
 
 logger = get_logger(__name__)
 
 
 class WebPageFetcher:
     """Service for fetching web page content"""
+    
+    ALLOWED_BLOCK_TAGS = {
+        'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'blockquote'
+    }
+    ALLOWED_INLINE_TAGS = {'strong', 'em', 'b', 'i', 'u', 'a', 'code'}
+    SELF_CLOSING_TAGS = {'br'}
+    TEXT_CONTAINER_TAGS = {'p', 'li', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}
     
     def __init__(self, timeout: int = 30, max_redirects: int = 5):
         self.timeout = timeout
@@ -223,35 +231,33 @@ class WebPageFetcher:
                 self._extract_by_body_fallback
             ]
             
-            best_content = None
+            best_element = None
             best_score = 0
             
             for strategy in content_strategies:
                 try:
-                    content, score = strategy(soup)
-                    if content and score > best_score:
-                        best_content = content
+                    element, score = strategy(soup)
+                    if element and score > best_score:
+                        best_element = element
                         best_score = score
                 except Exception as e:
                     logger.debug(f"Content extraction strategy failed: {str(e)}")
                     continue
             
-            if not best_content:
+            if not best_element:
                 # Fallback to body content
-                best_content = soup.find('body')
-                if best_content:
-                    best_content = best_content.get_text(separator='\n', strip=True)
-                else:
-                    best_content = soup.get_text(separator='\n', strip=True)
+                best_element = soup.find('body') or soup
             
-            # Clean and process the content
-            cleaned_content = self._clean_text_content(best_content)
+            # Build sanitized HTML fragment
+            sanitized_html = self._sanitize_html_fragment(best_element)
+            plain_text = extract_text_from_html(sanitized_html)
             
             return {
-                'content': cleaned_content,
-                'content_length': len(cleaned_content),
+                'content': sanitized_html,
+                'content_text': plain_text,
+                'content_length': len(plain_text),
                 'extraction_score': best_score,
-                'word_count': len(cleaned_content.split())
+                'word_count': len(plain_text.split())
             }
             
         except Exception as e:
@@ -278,15 +284,14 @@ class WebPageFetcher:
             for element in soup.select(selector):
                 element.decompose()
     
-    def _extract_by_article_tag(self, soup: BeautifulSoup) -> Tuple[Optional[str], int]:
+    def _extract_by_article_tag(self, soup: BeautifulSoup) -> Tuple[Optional[Tag], int]:
         """Extract content using article tag"""
         article = soup.find('article')
         if article:
-            content = article.get_text(separator='\n', strip=True)
-            return content, 90  # High score for semantic HTML
+            return article, 90  # High score for semantic HTML
         return None, 0
     
-    def _extract_by_content_selectors(self, soup: BeautifulSoup) -> Tuple[Optional[str], int]:
+    def _extract_by_content_selectors(self, soup: BeautifulSoup) -> Tuple[Optional[Tag], int]:
         """Extract content using common content selectors"""
         content_selectors = [
             '.content', '.main-content', '.post-content', '.entry-content',
@@ -298,12 +303,12 @@ class WebPageFetcher:
         for selector in content_selectors:
             element = soup.select_one(selector)
             if element:
-                content = element.get_text(separator='\n', strip=True)
-                if len(content) > 200:  # Minimum content length
-                    return content, 80
+                text_preview = element.get_text(separator='\n', strip=True)
+                if len(text_preview) > 200:  # Minimum content length
+                    return element, 80
         return None, 0
     
-    def _extract_by_text_density(self, soup: BeautifulSoup) -> Tuple[Optional[str], int]:
+    def _extract_by_text_density(self, soup: BeautifulSoup) -> Tuple[Optional[Tag], int]:
         """Extract content by analyzing text density"""
         # Find elements with high text density
         elements = soup.find_all(['div', 'section', 'main'])
@@ -324,51 +329,72 @@ class WebPageFetcher:
                     best_element = element
         
         if best_element and best_density > 0.1:  # Minimum density threshold
-            content = best_element.get_text(separator='\n', strip=True)
-            return content, int(best_density * 100)
+            return best_element, int(best_density * 100)
         
         return None, 0
     
-    def _extract_by_main_tag(self, soup: BeautifulSoup) -> Tuple[Optional[str], int]:
+    def _extract_by_main_tag(self, soup: BeautifulSoup) -> Tuple[Optional[Tag], int]:
         """Extract content using main tag"""
         main = soup.find('main')
         if main:
-            content = main.get_text(separator='\n', strip=True)
-            return content, 85
+            return main, 85
         return None, 0
     
-    def _extract_by_body_fallback(self, soup: BeautifulSoup) -> Tuple[Optional[str], int]:
+    def _extract_by_body_fallback(self, soup: BeautifulSoup) -> Tuple[Optional[Tag], int]:
         """Fallback to body content"""
         body = soup.find('body')
         if body:
-            content = body.get_text(separator='\n', strip=True)
-            return content, 50
+            return body, 50
         return None, 0
     
-    def _clean_text_content(self, content: str) -> str:
-        """Clean and normalize text content"""
-        if not content:
+    def _sanitize_html_fragment(self, element: Optional[Tag]) -> str:
+        """Create a sanitized HTML fragment keeping only allowed tags."""
+        if not element:
             return ""
         
-        # Split into lines and clean each line
-        lines = content.split('\n')
-        cleaned_lines = []
+        sanitized_soup = BeautifulSoup('', 'html.parser')
+        container = sanitized_soup.new_tag('div')
+        sanitized_soup.append(container)
         
-        for line in lines:
-            line = line.strip()
-            # Skip empty lines and very short lines
-            if line and len(line) > 3:
-                cleaned_lines.append(line)
+        def append_node(node, parent):
+            if isinstance(node, NavigableString):
+                text_value = str(node).strip()
+                if not text_value:
+                    return
+                
+                parent_name = getattr(parent, 'name', None)
+                if parent_name in self.TEXT_CONTAINER_TAGS or parent_name in self.ALLOWED_INLINE_TAGS:
+                    parent.append(text_value)
+                else:
+                    paragraph = sanitized_soup.new_tag('p')
+                    paragraph.append(text_value)
+                    parent.append(paragraph)
+                return
+            
+            if not isinstance(node, Tag):
+                return
+            
+            tag_name = node.name.lower()
+            
+            if tag_name in self.ALLOWED_BLOCK_TAGS or tag_name in self.ALLOWED_INLINE_TAGS:
+                new_tag = sanitized_soup.new_tag(tag_name)
+                
+                if tag_name == 'a' and node.has_attr('href'):
+                    new_tag['href'] = node['href']
+                
+                parent.append(new_tag)
+                for child in node.children:
+                    append_node(child, new_tag)
+            elif tag_name in self.SELF_CLOSING_TAGS:
+                parent.append(sanitized_soup.new_tag(tag_name))
+            else:
+                for child in node.children:
+                    append_node(child, parent)
         
-        # Join lines and normalize whitespace
-        cleaned_content = '\n'.join(cleaned_lines)
+        for child in element.children:
+            append_node(child, container)
         
-        # Remove excessive whitespace
-        import re
-        cleaned_content = re.sub(r'\n\s*\n', '\n\n', cleaned_content)
-        cleaned_content = re.sub(r'[ \t]+', ' ', cleaned_content)
-        
-        return cleaned_content.strip()
+        return container.decode_contents().strip()
     
     def extract_enhanced_metadata(self, html_content: str) -> Dict[str, Any]:
         """

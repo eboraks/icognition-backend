@@ -10,8 +10,15 @@ from app.db.database import get_session
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
 import logging
+import uuid
+from app.utils.chat_formatting import format_chat_message
 
 logger = logging.getLogger(__name__)
+
+class WebSocketMessage(BaseModel):
+    type: str  # e.g., "stream_chunk", "end_stream", "error"
+    content: str = ""
+    message_id: str | None = None # Optional for tracking streamed messages
 
 router = APIRouter(
     prefix="/api/v1/chat",
@@ -176,19 +183,47 @@ async def chat_websocket_endpoint(
                 
                 # Collect assistant response chunks
                 assistant_response = ""
+                sent_stream_chunk = False
                 stream_error = None
                 
+                # Generate a unique message_id for this assistant response
+                response_message_id = str(uuid.uuid4())
+
                 try:
                     async for chunk in chat_agent_service.get_stream(session_id, user_message, user_id):
                         if chunk:
                             assistant_response += chunk
                             try:
-                                await websocket.send_text(chunk)
+                                # Send each chunk wrapped in a structured message
+                                formatted_content = format_chat_message(assistant_response)
+                                await websocket.send_text(WebSocketMessage(
+                                    type="stream_chunk",
+                                    content=formatted_content,
+                                    message_id=response_message_id
+                                ).json())
+                                sent_stream_chunk = True
                             except Exception as send_error:
                                 logger.error(f"Failed to send chunk to websocket: {send_error}", exc_info=True)
                                 stream_error = send_error
                                 break
                     
+                    # If we never streamed (e.g., model responded at once) but we have content, emit it now
+                    if assistant_response and not sent_stream_chunk:
+                        formatted_content = format_chat_message(assistant_response)
+                        await websocket.send_text(WebSocketMessage(
+                            type="stream_chunk",
+                            content=formatted_content,
+                            message_id=response_message_id
+                        ).json())
+                        sent_stream_chunk = True
+                    
+                    # Send an explicit end_stream message
+                    await websocket.send_text(WebSocketMessage(
+                        type="end_stream",
+                        content=format_chat_message(assistant_response),
+                        message_id=response_message_id
+                    ).json())
+
                     # Save assistant response after streaming completes
                     if assistant_response:
                         try:
@@ -200,23 +235,24 @@ async def chat_websocket_endpoint(
                     if stream_error:
                         # Send error message to client
                         error_msg = f"\n\nError: Failed to send response. Please try again."
-                        await websocket.send_text(error_msg)
+                        await websocket.send_text(WebSocketMessage(type="error", content=error_msg, message_id=response_message_id).json())
                         
                 except Exception as e:
                     logger.error(f"Error during streaming for session {session_id}: {e}", exc_info=True)
                     
                     # Try to save partial response if available
                     if assistant_response:
+                        cleaned_partial = assistant_response
                         try:
-                            await chat_session_service.save_message(session_id, "assistant", assistant_response)
-                            logger.info(f"Saved partial assistant response ({len(assistant_response)} chars)")
+                            await chat_session_service.save_message(session_id, "assistant", cleaned_partial)
+                            logger.info(f"Saved partial assistant response ({len(cleaned_partial)} chars)")
                         except Exception as save_error:
                             logger.error(f"Failed to save partial assistant response: {save_error}", exc_info=True)
                     
                     # Send error message to client
                     error_msg = f"\n\nError: {str(e)}. Please try again."
                     try:
-                        await websocket.send_text(error_msg)
+                        await websocket.send_text(WebSocketMessage(type="error", content=error_msg, message_id=response_message_id).json())
                     except Exception:
                         logger.error("Failed to send error message to client", exc_info=True)
 

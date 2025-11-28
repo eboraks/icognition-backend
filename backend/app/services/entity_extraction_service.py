@@ -25,6 +25,7 @@ from app.services.gemini_service import get_gemini_service, GeminiModel, GeminiC
 from app.services.user_service import UserService
 from app.utils.logging import get_logger
 from pydantic import BaseModel, Field
+from app.utils.text_utils import extract_text_from_html
 
 logger = get_logger(__name__)
 
@@ -67,6 +68,11 @@ class EntityExtractionService(UserIsolatedService[Entity]):
             List of extracted entity dictionaries
         """
         try:
+            content = extract_text_from_html(content)
+            if not content:
+                logger.warning("No readable content available for entity extraction")
+                return []
+            
             # Limit content length to avoid excessive token usage
             # Gemini can handle ~30k tokens input, but we want to be conservative
             max_chars = 10000  # Roughly 2500 tokens

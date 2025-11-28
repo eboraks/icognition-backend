@@ -8,9 +8,14 @@
         :class="message.type"
       >
         <div v-if="message.type === 'system'" class="message system-message">
-          <div class="message-icon">🤖</div>
+          <div class="message-icon">
+            <img src="/src/assets/images/icog_action_icon_16x16.png" alt="AI Icon" style="width: 2.25rem; height: 2.25rem; object-fit: contain;" />
+          </div>
           <div class="message-content">
-            <p>{{ message.content }}</p>
+            <div v-if="message.pending" class="message-spinner">
+              <ProgressSpinner strokeWidth="4" style="width: 32px; height: 32px" />
+            </div>
+            <div v-else class="message-text" v-html="message.content"></div>
             <div v-if="message.actions && message.actions.length > 0" class="action-buttons">
               <Button
                 v-for="action in message.actions"
@@ -35,10 +40,10 @@
           </div>
         </div>
         <div v-else-if="message.type === 'filter'" class="message filter-message">
-          <p>{{ message.content }}</p>
+          <div class="message-text" v-html="message.content"></div>
         </div>
         <div v-else-if="message.type === 'user'" class="message user-message">
-          <p>{{ message.content }}</p>
+          <div class="message-text" v-html="message.content"></div>
         </div>
       </div>
     </ScrollPanel>
@@ -47,7 +52,7 @@
         v-model="inputMessage"
         placeholder="Ask a follow-up question..."
         class="flex-1"
-        @keyup.enter="sendMessage"
+        @keydown.enter="sendMessage"
       />
       <Button
         icon="pi pi-send"
@@ -60,24 +65,41 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted } from 'vue';
+import { ref, watch, nextTick } from 'vue';
 import Button from 'primevue/button';
 import InputText from 'primevue/inputtext';
 import ScrollPanel from 'primevue/scrollpanel';
+import ProgressSpinner from 'primevue/progressspinner';
 import { knowledgeService, type ContextualMessageResponse, type ActionResponse } from '@/services/knowledgeService';
+import { useChatStore, type ChatMessage as ChatStoreMessage } from '@/stores/chat_store';
+import { useAuthStore } from '@/stores/auth_store';
 
 interface ChatMessage {
   type: 'system' | 'user' | 'filter';
   content: string;
   actions?: Array<{ id: string; label: string }>;
   resources?: Array<{ id: number; title: string }>;
+  pending?: boolean;
 }
 
 const props = defineProps<{
   selectedEntityId?: number | null;
   selectedDocumentId?: number | null;
+  chatSessionId: number; // New required prop
 }>();
 
+const escapeHtml = (unsafe: string) =>
+  unsafe
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+
+const toParagraphHtml = (content: string) => `<p>${escapeHtml(content)}</p>`;
+
+const chatStore = useChatStore();
+const authStore = useAuthStore();
 const messages = ref<ChatMessage[]>([]);
 const inputMessage = ref('');
 const messagesContainer = ref<any>(null);
@@ -95,58 +117,82 @@ const scrollToBottom = () => {
 };
 
 const loadInitialMessage = async () => {
-  try {
-    loading.value = true;
-    const response = await knowledgeService.getContextualMessage(
-      props.selectedEntityId || undefined,
-      props.selectedDocumentId || undefined
-    );
-    
-    const contextualData: ContextualMessageResponse = response.data;
-    
-    // Add filter selection message if something is selected
-    if (props.selectedEntityId || props.selectedDocumentId) {
-      let filterMessage = '';
-      if (props.selectedEntityId) {
-        // We'll get the entity name from the contextual message
-        filterMessage = `You filtered by ${contextualData.entity?.name || 'an entity'}`;
-      } else if (props.selectedDocumentId) {
-        filterMessage = `You filtered by ${contextualData.document?.title || 'a document'}`;
+  if (!authStore.currentUser) {
+    messages.value = [{
+      type: 'system',
+      content: toParagraphHtml('Please log in to start exploring your knowledge graph and chat.'),
+      actions: [],
+    }];
+    return;
+  }
+
+  // Switch chat store to the session provided by the prop
+  await chatStore.switchActiveSession(props.chatSessionId);
+
+  // After switching, populate local messages from the active session's messages
+  if (chatStore.activeSession) {
+    messages.value = chatStore.activeSession.messages.map(msg => ({
+      type: msg.senderId === authStore.currentUser?.uid ? 'user' : 'system',
+      content: msg.content,
+      actions: (msg as any).actions,
+      resources: (msg as any).resources,
+      pending: (msg as any).pending ?? false,
+    }));
+  } else {
+    messages.value = [];
+  }
+
+  // Add specific contextual message if no messages yet or selection changed
+  if (messages.value.length === 0 || chatStore.activeSession?.scope_id !== (props.selectedEntityId || props.selectedDocumentId)) {
+    try {
+      loading.value = true;
+      const response = await knowledgeService.getContextualMessage(
+        props.selectedEntityId || undefined,
+        props.selectedDocumentId || undefined
+      );
+      
+      const contextualData: ContextualMessageResponse = response.data;
+      
+      if (props.selectedEntityId || props.selectedDocumentId) {
+        let filterMessage = '';
+        if (props.selectedEntityId) {
+          filterMessage = `You filtered by ${contextualData.entity?.name || 'an entity'}`;
+        } else if (props.selectedDocumentId) {
+          filterMessage = `You filtered by ${contextualData.document?.title || 'a document'}`;
+        }
+        
+        if (filterMessage) {
+          messages.value.push({
+            type: 'filter',
+            content: toParagraphHtml(filterMessage),
+          });
+        }
       }
       
-      if (filterMessage) {
-        messages.value.push({
-          type: 'filter',
-          content: filterMessage,
-        });
-      }
+      messages.value.push({
+        type: 'system',
+        content: contextualData.message,
+        actions: contextualData.actions,
+      });
+    } catch (error) {
+      console.error('Failed to load contextual message:', error);
+      messages.value.push({
+        type: 'system',
+        content: toParagraphHtml('Hello! I\'m your knowledge exploration assistant. Use the filters on the left to navigate your knowledge graph, or ask me a question directly.'),
+        actions: [],
+      });
+    } finally {
+      loading.value = false;
     }
-    
-    // Add the contextual message
-    messages.value.push({
-      type: 'system',
-      content: contextualData.message,
-      actions: contextualData.actions,
-    });
-    
-    scrollToBottom();
-  } catch (error) {
-    console.error('Failed to load initial message:', error);
-    messages.value.push({
-      type: 'system',
-      content: 'Hello! I\'m your knowledge exploration assistant. Use the filters on the left to navigate your knowledge graph, or ask me a question directly.',
-      actions: [],
-    });
-  } finally {
-    loading.value = false;
   }
+  scrollToBottom();
 };
 
 const handleActionClick = async (action: { id: string; label: string }) => {
   // Add user message for the action
   messages.value.push({
     type: 'user',
-    content: action.label,
+    content: toParagraphHtml(action.label),
   });
   
   scrollToBottom();
@@ -161,19 +207,32 @@ const handleActionClick = async (action: { id: string; label: string }) => {
     
     const actionData: ActionResponse = response.data;
     
-    // Add system response
-    messages.value.push({
-      type: 'system',
+    // Append response to chatStore messages as well for persistence
+    // This will implicitly update local messages due to chatStore.messages watcher
+    chatStore.addMessage({
+      _id: Date.now().toString(),
       content: actionData.message,
-      resources: actionData.resources,
+      senderId: 'agent',
+      timestamp: new Date().toLocaleTimeString(),
+      date: new Date().toLocaleDateString(),
     });
+
+    // Manually add resources/actions to the local message if chatStore doesn't handle them
+    // (This part might not be needed if chatStore.addMessage handles resources/actions)
+    if (chatStore.activeSession) {
+      const lastMessage = chatStore.activeSession.messages[chatStore.activeSession.messages.length - 1];
+      if (lastMessage && lastMessage.senderId === 'agent') {
+        (lastMessage as any).resources = actionData.resources;
+        (lastMessage as any).actions = actionData.actions;
+      }
+    }
     
     scrollToBottom();
   } catch (error) {
     console.error('Failed to handle action:', error);
     messages.value.push({
       type: 'system',
-      content: 'Sorry, I encountered an error processing that action. Please try again.',
+      content: toParagraphHtml('Sorry, I encountered an error processing that action. Please try again.'),
     });
   } finally {
     loading.value = false;
@@ -185,41 +244,109 @@ const sendMessage = async () => {
     return;
   }
   
-  const userMessage = inputMessage.value.trim();
+  // Ensure we have an active session
+  if (!chatStore.activeSession) {
+    // Try to switch to the session if we have a sessionId prop
+    if (props.chatSessionId) {
+      try {
+        await chatStore.switchActiveSession(props.chatSessionId);
+      } catch (error) {
+        console.error('Failed to switch to session:', error);
+        messages.value.push({
+          type: 'system',
+          content: toParagraphHtml('Unable to connect to chat session. Please try refreshing the page.'),
+        });
+        return;
+      }
+    } else {
+      console.error('No active session and no sessionId provided');
+      return;
+    }
+  }
+  
+  const userMessageContent = inputMessage.value.trim();
   inputMessage.value = '';
   
-  // Add user message
-  messages.value.push({
-    type: 'user',
-    content: userMessage,
-  });
-  
-  scrollToBottom();
-  
-  // For now, just echo back. In the future, this could call a chat endpoint
-  setTimeout(() => {
+  try {
+    loading.value = true;
+    // Send message via chatStore, which handles WebSocket and adds message to chatStore.messages
+    // The watcher will sync it to local messages.value
+    await chatStore.sendMessage(userMessageContent, props.chatSessionId);
+  } catch (error) {
+    console.error('Failed to send chat message:', error);
+    if (chatStore.activeSession) {
+        chatStore.activeSession.messages.pop(); // Remove the user message if sending failed
+    }
     messages.value.push({
       type: 'system',
-      content: 'I received your message. Direct question handling will be available soon.',
+      content: toParagraphHtml('Sorry, I encountered an error sending your message. Please try again.'),
     });
-    scrollToBottom();
-  }, 500);
+  } finally {
+    loading.value = false;
+  }
+  scrollToBottom();
 };
+
+// Watch chatStore.activeSession?.messages to sync new messages from WebSocket
+watch(
+  () => chatStore.activeSession?.messages,
+  (newMessages) => {
+    if (!authStore.currentUser || !chatStore.activeSession || !newMessages) return;
+    
+    // Only sync if we're on the active session that matches our prop
+    if (chatStore.activeSession.id === props.chatSessionId) {
+      // Convert chatStore messages to ChatPanel's local ChatMessage format
+      const newMessagesFormatted: ChatMessage[] = newMessages.map(msg => ({
+        type: (msg.senderId === authStore.currentUser?.uid ? 'user' : 'system') as 'user' | 'system',
+        content: msg.content,
+        actions: (msg as any).actions,
+        resources: (msg as any).resources,
+        pending: (msg as any).pending ?? false,
+      }));
+      
+      // Only update if the length changed or content differs (to avoid unnecessary updates)
+      if (messages.value.length !== newMessagesFormatted.length ||
+          messages.value.some((msg, idx) => {
+            const newMsg = newMessagesFormatted[idx];
+            return (
+              !newMsg ||
+              msg.content !== newMsg.content ||
+              msg.pending !== newMsg.pending
+            );
+          })) {
+        messages.value = [...newMessagesFormatted];
+        scrollToBottom();
+      }
+    }
+  },
+  { deep: true }
+);
 
 // Watch for selection changes
 watch(
-  () => [props.selectedEntityId, props.selectedDocumentId],
-  () => {
-    // Clear messages and load new contextual message when selection changes
-    messages.value = [];
-    loadInitialMessage();
+  () => [props.selectedEntityId, props.selectedDocumentId, props.chatSessionId],
+  (newValues, oldValues) => {
+    // Extract new and old values safely
+    const [newEntityId, newDocumentId, newChatSessionId] = newValues;
+    const [oldEntityId, oldDocumentId, oldChatSessionId] = oldValues || [undefined, undefined, undefined];
+
+    // Only reload if the chat session itself changed, or if selections changed within the same session
+    if (
+      (oldValues === undefined) || // First run
+      newChatSessionId !== oldChatSessionId ||
+      (newChatSessionId === oldChatSessionId && (newEntityId !== oldEntityId || newDocumentId !== oldDocumentId))
+    ) {
+      messages.value = [];
+      loadInitialMessage();
+    }
   },
   { immediate: true }
 );
 
-onMounted(() => {
-  loadInitialMessage();
-});
+// The initial load is now handled by the 'watch' with immediate: true
+// onMounted(() => {
+//   loadInitialMessage();
+// });
 </script>
 
 <style scoped>
@@ -268,28 +395,53 @@ onMounted(() => {
 }
 
 .message {
-  max-width: 70%;
+  max-width: min(640px, 70%);
+  width: fit-content;
   padding: 0.9rem 1.1rem;
   border-radius: 14px;
-  word-wrap: break-word;
   background: var(--p-surface-card);
   border: 1px solid var(--p-content-border-color);
   box-shadow: 0 8px 16px rgba(15, 23, 42, 0.08);
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.message-text {
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.message-text p {
+  margin: 0 0 0.75rem 0;
+}
+
+.message-text p:last-child {
+  margin-bottom: 0;
+}
+
+.message-text ul {
+  margin: 0.5rem 0 0.5rem 1.25rem;
+  padding-left: 1.25rem;
+  list-style-type: disc;
+}
+
+.message-text li {
+  margin-bottom: 0.25rem;
 }
 
 .system-message {
   display: flex;
   gap: 0.85rem;
   align-items: flex-start;
-  background: var(--p-primary-50);
-  border-color: var(--p-primary-200);
+  background: var(--blue-100); /* Light blue background */
+  border-color: var(--blue-200); /* Slightly darker blue border */
 }
 
 .message-icon {
   font-size: 1.4rem;
   flex-shrink: 0;
-  background: var(--p-primary-500);
-  color: var(--p-primary-contrast-color);
+  background: transparent; /* Remove background as image provides it */
+  color: transparent; /* Remove color as image provides it */
   width: 2.25rem;
   height: 2.25rem;
   border-radius: 50%;
@@ -310,11 +462,18 @@ onMounted(() => {
 }
 
 .system-message .message-content p {
-  color: var(--p-primary-800);
+  color: var(--p-text-color);
 }
 
 .message-content p:last-child {
   margin-bottom: 0;
+}
+
+.message-spinner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2rem;
 }
 
 .filter-message {

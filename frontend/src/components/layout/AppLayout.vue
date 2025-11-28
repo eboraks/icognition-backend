@@ -1,7 +1,7 @@
 <template>
   <div class="layout-wrapper">
     <!-- Top Bar -->
-    <div class="layout-topbar">
+    <div class="layout-topbar bg-primary-500">
       <div class="layout-topbar-left">
         <button class="layout-menu-button p-link" @click="onMenuToggle">
           <i class="pi pi-bars"></i>
@@ -38,7 +38,7 @@
       </div>
       
       <div class="layout-topbar-right">
-        <div class="layout-topbar-user" @click="toggleUserMenu">
+        <div v-if="authStore.isAuthenticated" class="layout-topbar-user" @click="toggleUserMenu">
           <img 
             v-if="authStore.currentUser?.photoURL" 
             :src="authStore.currentUser.photoURL" 
@@ -51,6 +51,9 @@
           <span class="user-name">{{ authStore.currentUser?.displayName || 'User' }}</span>
           <i class="pi pi-angle-down"></i>
         </div>
+        <button v-else class="login-button" @click="handleGoogleLogin">
+          <img src="/src/assets/images/web_neutral_rd_SI@2x.png" alt="Sign in with Google" class="google-signin-image" />
+        </button>
         
         <Menu ref="userMenu" :model="userMenuItems" :popup="true" />
       </div>
@@ -85,6 +88,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth_store';
 import Menu from 'primevue/menu';
+import Button from 'primevue/button';
 
 const route = useRoute();
 const router = useRouter();
@@ -131,6 +135,15 @@ const handleLogout = async () => {
   }
 };
 
+const handleGoogleLogin = async () => {
+  try {
+    await authStore.loginWithGoogle();
+    router.push('/library'); // Redirect to library after successful login
+  } catch (error) {
+    console.error('Login failed using Google:', error);
+  }
+};
+
 const userMenuItems = [
   {
     label: 'Sign Out',
@@ -151,7 +164,7 @@ const userMenuItems = [
 /* Top Bar */
 .layout-topbar {
   height: 4rem;
-  background: var(--p-primary-color);
+  /*background: var(--p-primary-color);*/
   border-bottom: 1px solid var(--p-content-border-color);
   display: flex;
   align-items: center;
@@ -261,6 +274,26 @@ const userMenuItems = [
 
 .user-name {
   font-weight: 500;
+}
+
+.login-button {
+  padding: 0;
+  background-color: transparent;
+  border: none;
+  cursor: pointer;
+  display: inline-block;
+  height: 40px; /* Adjust height as needed */
+  width: 180px; /* Adjust width as needed to fit the image */
+}
+
+.google-signin-image {
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+}
+
+.login-button:hover {
+  background-color: transparent; /* No background change on hover for image button */
 }
 
 /* Sidebar */

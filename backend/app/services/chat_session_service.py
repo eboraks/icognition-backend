@@ -4,7 +4,8 @@ from app.db.database import get_session
 from app.models import ChatSession, ChatMessage
 from typing import List, Optional
 from fastapi import Depends
-from datetime import datetime
+from datetime import datetime, timezone
+from app.utils.chat_formatting import format_chat_message
 import logging
 
 logger = logging.getLogger(__name__)
@@ -96,10 +97,12 @@ class ChatSessionService:
             logger.error("Attempted to save message to missing session %s", session_id)
             raise ValueError("Chat session not found")
 
+        formatted_content = format_chat_message(content or "")
+
         message = ChatMessage(
             session_id=session_id,
             role=role,  # "user" or "assistant"
-            content=content
+            content=formatted_content
         )
         self.session.add(message)
 
@@ -107,7 +110,7 @@ class ChatSessionService:
             new_title = (content or "").strip()[:60]
             chat_session.title = new_title or chat_session.title
 
-        chat_session.updated_at = datetime.utcnow()
+        chat_session.updated_at = datetime.now(timezone.utc)
 
         await self.session.commit()
         await self.session.refresh(message)

@@ -17,6 +17,7 @@ from pgvector.sqlalchemy import Vector
 from app.services.gemini_service import GeminiService, GeminiModel, get_gemini_service
 from app.models import Document, User, Embedding, Entity
 from app.utils.logging import get_logger
+from app.utils.text_utils import extract_text_from_html
 from langchain_text_splitters import HTMLSectionSplitter, RecursiveCharacterTextSplitter
 
 logger = get_logger(__name__)
@@ -189,17 +190,19 @@ class EmbeddingService:
             if use_title and document.title:
                 text_parts.append(f"Title: {document.title}")
             
-            if use_content and document.content:
+            content_text = extract_text_from_html(document.content) if document.content else ""
+            
+            if use_content and content_text:
                 if combine_strategy == "content_only":
-                    text_parts = [document.content]
+                    text_parts = [content_text]
                 elif combine_strategy == "title_content":
-                    text_parts = [f"{document.title}: {document.content}"]
+                    text_parts = [f"{document.title}: {content_text}"]
                 elif combine_strategy == "separate":
                     if document.title:
                         text_parts.append(f"Title: {document.title}")
-                    text_parts.append(f"Content: {document.content}")
+                    text_parts.append(f"Content: {content_text}")
                 else:
-                    text_parts.append(document.content)
+                    text_parts.append(content_text)
             
             if not text_parts:
                 return EmbeddingResult(
@@ -633,26 +636,30 @@ class EmbeddingService:
             
             # 2. Embed document content as chunks
             if document.content and document.content.strip():
-                content = document.content.strip()
+                content_html = document.content.strip()
+                plain_text_content = extract_text_from_html(content_html)
+                has_html = self._has_html_structure(content_html)
                 
                 # Check if content has HTML structure
-                if self._has_html_structure(content):
+                if has_html:
                     # Use HTML splitter for structured content
                     try:
-                        chunks = self.html_splitter.split_text(content)
+                        chunks = self.html_splitter.split_text(content_html)
                         logger.info(f"Chunked document {document.id} HTML content into {len(chunks)} chunks using HTMLSectionSplitter")
                     except Exception as e:
                         logger.warning(f"HTML splitter failed for document {document.id}, falling back to text splitter: {e}")
                         # Fallback to text splitter if HTML splitter fails
-                        chunks = self.text_splitter.split_text(content)
+                        chunks = self.text_splitter.split_text(plain_text_content)
                 else:
                     # Use text splitter for plain text
-                    chunks = self.text_splitter.split_text(content)
+                    chunks = self.text_splitter.split_text(plain_text_content)
                     logger.info(f"Chunked document {document.id} plain text content into {len(chunks)} chunks using RecursiveCharacterTextSplitter")
                 
                 for idx, chunk in enumerate(chunks):
                     # Extract text from chunk (chunk may be a Document object from LangChain)
                     chunk_text = chunk.page_content if hasattr(chunk, 'page_content') else str(chunk)
+                    if self._has_html_structure(chunk_text):
+                        chunk_text = extract_text_from_html(chunk_text)
                     
                     embedding_result = await self.generate_embedding(
                         text=chunk_text,
