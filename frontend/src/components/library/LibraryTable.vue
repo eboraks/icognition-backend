@@ -11,7 +11,20 @@
       <template #body="{ data }">
         <div class="flex align-items-center">
           <i :class="getIconForType(data.type)" class="mr-2 text-600"></i>
-          <a class="cursor-pointer text-primary" @click="$emit('open', data)">{{ data.title }}</a>
+          <a 
+            v-if="data.url || data.sourceUrl" 
+            :href="data.url || data.sourceUrl" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            class="cursor-pointer text-primary hover:underline">
+            {{ data.title }}
+          </a>
+          <a 
+            v-else
+            class="cursor-pointer text-primary" 
+            @click="$emit('open', data)">
+            {{ data.title }}
+          </a>
         </div>
       </template>
     </Column>
@@ -27,10 +40,10 @@
     <template #expansion="{ data }">
       <div class="p-4 bg-white border-round">
         <div class="text-sm text-600 mb-2 font-semibold">Summary</div>
-        <div class="mb-4 text-700">{{ data.summary || 'No summary available.' }}</div>
+        <div class="mb-4 text-700" v-html="formatUrlsAsLinks(data.summary || 'No summary available.')"></div>
         <div class="text-sm text-600 mb-2 font-semibold">Key Points</div>
         <ul class="pl-3 text-700">
-          <li v-for="(kp, i) in data.keyPoints" :key="i" class="mb-1">{{ kp }}</li>
+          <li v-for="(kp, i) in data.keyPoints" :key="i" class="mb-1" v-html="formatUrlsAsLinks(kp)"></li>
           <li v-if="!data.keyPoints || data.keyPoints.length === 0" class="text-600">No key points available.</li>
         </ul>
       </div>
@@ -39,14 +52,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watchEffect } from 'vue';
+import { ref, watchEffect, computed } from 'vue';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
+import { formatUrlsAsLinks } from '@/composables/useUrlFormatter';
 
 interface DocRow {
   id: string | number;
   title: string;
   updatedAt: string;
+  url?: string;
   sourceUrl?: string;
   sourceHost?: string;
   summary?: string;

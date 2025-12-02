@@ -22,6 +22,7 @@ from app.api.models.document_models import (
 from app.api.errors import NotFoundError, ValidationError
 from app.utils.logging import get_logger
 from app.models import Document
+from app.api.routes.bookmarks import _process_document_content, _process_document_entities
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -461,11 +462,12 @@ async def fetch_document_content(
 async def reprocess_document_content(
     document_id: int,
     refetch: bool = Query(False, description="Refetch content from the original URL before reprocessing"),
+    background_tasks: BackgroundTasks = None,
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
 ):
     """
-    Re-run content extraction, validation, and embedding generation for an existing document.
+    Re-run content extraction, validation, embedding generation, AI summary, bullet points, and entity extraction for an existing document.
     """
     try:
         document_service = DocumentService(session)
@@ -478,6 +480,27 @@ async def reprocess_document_content(
         
         if not document:
             raise NotFoundError(f"Document {document_id} not found")
+        
+        # Trigger background tasks for AI-generated content (summary, bullet points, and entities)
+        # These will regenerate the AI summary, bullet points, and extract entities
+        if background_tasks:
+            logger.info(f"Triggering background tasks for AI content regeneration for document {document_id}")
+            
+            # Task 1: Summary & Bullet Points
+            background_tasks.add_task(
+                _process_document_content,
+                str(document_id),
+                document.title,
+                document.url,
+                user_context.user_id
+            )
+            
+            # Task 2: Entity Extraction
+            background_tasks.add_task(
+                _process_document_entities,
+                str(document_id),
+                user_context.user_id
+            )
         
         return DocumentResponse.model_validate(document)
     

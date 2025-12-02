@@ -360,7 +360,7 @@ class DocumentService(UserIsolatedService[Document]):
         return soup.find('body') or soup
 
     def _extract_title_from_html(self, soup: BeautifulSoup) -> str:
-        """Extract title using multiple strategies"""
+        """Extract title using multiple strategies, preserving link text and title attributes"""
         # Priority order
         selectors = [
             'meta[property="og:title"]',
@@ -376,7 +376,27 @@ class DocumentService(UserIsolatedService[Document]):
                 if element.name == 'meta':
                     title = element.get('content', '').strip()
                 else:
-                    title = element.get_text().strip()
+                    # For title/h1 elements, preserve link text and title attributes
+                    # get_text() already preserves link text, but we want to ensure
+                    # we also capture title attributes from links if link text is empty
+                    links = element.find_all('a', recursive=True)
+                    if links:
+                        # Build title preserving all text including link text
+                        # get_text() will include link text, but we also want to preserve
+                        # title attributes from links that might have no visible text
+                        title = element.get_text(separator=' ', strip=True)
+                        
+                        # If any link has a title attribute but no text, append it
+                        for link in links:
+                            link_text = link.get_text(strip=True)
+                            link_title_attr = link.get('title', '').strip()
+                            if not link_text and link_title_attr:
+                                # Link has no text but has title attribute, append it
+                                if link_title_attr not in title:
+                                    title = f"{title} {link_title_attr}".strip()
+                    else:
+                        # No links, use standard text extraction
+                        title = element.get_text(separator=' ', strip=True)
                 
                 if title and len(title) > 0:
                     return title
@@ -589,7 +609,8 @@ class DocumentService(UserIsolatedService[Document]):
                 element.decompose()
         
         # Extract content elements preserving HTML structure
-        content_elements = container.select('h1, h2, h3, h4, h5, h6, p, ul, ol, li, blockquote')
+        # Include 'a' tags to capture standalone links with important information
+        content_elements = container.select('h1, h2, h3, h4, h5, h6, p, ul, ol, li, blockquote, a')
         
         if not content_elements:
             # Fallback: wrap all text in article tag
@@ -602,21 +623,77 @@ class DocumentService(UserIsolatedService[Document]):
         # Create article wrapper
         article = soup.new_tag('article')
         
+        # Track processed elements to avoid duplicates (e.g., links inside paragraphs)
+        processed_element_ids = set()
+        
         # Add each content element to article, preserving structure
         for element in content_elements:
+            # Skip if element is already processed (e.g., a link inside a paragraph)
+            element_id = id(element)
+            if element_id in processed_element_ids:
+                continue
+            
+            # Special handling for standalone links
+            if element.name == 'a':
+                link_text = element.get_text().strip()
+                link_title_attr = element.get('title', '').strip()
+                link_href = element.get('href', '').strip()
+                
+                # Only include links with meaningful text or title attribute
+                if not link_text and not link_title_attr:
+                    continue
+                
+                # Check if link is nested inside another content element
+                # If so, it will be preserved as part of the parent element
+                parent = element.parent
+                is_nested = False
+                while parent and parent != container:
+                    if parent.name in ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'blockquote']:
+                        # Link is inside a content element, skip standalone processing
+                        is_nested = True
+                        break
+                    parent = parent.parent
+                
+                if is_nested:
+                    # Link will be preserved as part of parent, skip standalone extraction
+                    continue
+                
+                # Link is standalone, include it
+                # Wrap standalone links in a paragraph for better structure
+                p_tag = soup.new_tag('p')
+                cloned_link = self._clone_element(soup, element)
+                if cloned_link:
+                    p_tag.append(cloned_link)
+                    article.append(p_tag)
+                    processed_element_ids.add(element_id)
+                continue
+            
+            # Standard content elements (h1-h6, p, ul, ol, li, blockquote)
             element_text = element.get_text().strip()
             if element_text:
                 # Extract the element's HTML string to preserve inner structure
-                # This preserves nested tags, lists, etc.
-                element_html = str(element)
-                # Parse it back to add to article (preserves structure)
-                temp_soup = BeautifulSoup(element_html, 'html.parser')
-                cloned_element = temp_soup.find(element.name)
+                # This preserves nested tags, lists, links, etc.
+                cloned_element = self._clone_element(soup, element)
                 if cloned_element:
                     article.append(cloned_element)
+                    # Mark this element and all its descendants as processed
+                    for descendant in element.descendants:
+                        if hasattr(descendant, 'name'):
+                            processed_element_ids.add(id(descendant))
         
         # Return the HTML string
-        return str(article)
+        return str(article) if article.contents else ""
+    
+    def _clone_element(self, soup: BeautifulSoup, element) -> Optional[Any]:
+        """Clone an element preserving its structure and attributes"""
+        try:
+            element_html = str(element)
+            temp_soup = BeautifulSoup(element_html, 'html.parser')
+            cloned_element = temp_soup.find(element.name)
+            return cloned_element
+        except Exception as e:
+            logger.debug(f"Error cloning element {element.name if hasattr(element, 'name') else 'unknown'}: {str(e)}")
+            return None
 
     def _calculate_extraction_confidence(self, content: str, title: str, author: str, 
                                        publication_date: str, image_url: str, 

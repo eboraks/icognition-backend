@@ -34,11 +34,21 @@ of the JSON.
     - Identify 4-6 key takeaways (most important facts/arguments)
     - Analyze objectivity, tone, and intent
 
-2.  **Paywalls:** If content is limited, fill `access_notes` with 
+2.  **Links and URLs:**
+    - **IMPORTANT**: When the content contains links or URLs (especially in social media posts), 
+      explicitly include the full URL in both the summary and relevant bullet points.
+    - If a link is the subject of a post (e.g., "Check out this article: [link]"), 
+      include the complete URL in the summary and at least one bullet point.
+    - For social media posts that reference external articles, always include the 
+      article URL in the summary and key takeaways.
+    - Extract URLs from anchor tags, plain text URLs, or shortened links mentioned in the content.
+    - Include the full URL as plain text in the summary and key takeaways (the frontend will format them as links).
+
+3.  **Paywalls:** If content is limited, fill `access_notes` with 
     'Full analysis is limited; content is behind a paywall.'
-3.  **Opinion Pieces:** Set `objectivity` correctly (e.g., 'Subjective (Opinion)').
-4.  **Social Media:** Set `source_type` to 'Social Media Post'.
-5.  **Multi-Topic:** Ensure `key_takeaways` covers all topics.
+4.  **Opinion Pieces:** Set `objectivity` correctly (e.g., 'Subjective (Opinion)').
+5.  **Social Media:** Set `source_type` to 'Social Media Post'.
+6.  **Multi-Topic:** Ensure `key_takeaways` covers all topics.
 """
     
     content_text: str = dspy.InputField(
@@ -126,6 +136,7 @@ class DspyContentService:
                 extracted = program(text=content)
             
             # Prepare result in compatible format with old service
+            # Note: URLs are returned as plain text - frontend will handle link formatting
             result = {
                 'summary': extracted.summary,
                 'bullet_points': extracted.key_takeaways,

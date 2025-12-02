@@ -112,14 +112,17 @@ async def _process_document_content(
                 "data": 10
             }, user_id, channel="extension")
         
+        # Convert document_id to int if it's a string (Document.id is an integer)
+        doc_id = int(document_id) if isinstance(document_id, str) else document_id
+        
         # Get the document
         result = await session.execute(
-            select(Document).where(Document.id == document_id)
+            select(Document).where(Document.id == doc_id)
         )
         document = result.scalar_one_or_none()
         
         if not document:
-            logger.error(f"Document {document_id} not found")
+            logger.error(f"Document {doc_id} not found")
             if user_id:
                 await ws_manager.send_personal_message({
                     "type": "error",
@@ -129,7 +132,7 @@ async def _process_document_content(
         
         # Check if content is NOT_AVAILABLE or empty and skip processing
         if document.content_type == "not_available" or not document.content or not document.content.strip():
-            logger.info(f"Skipping content analysis for document {document_id} - content is NOT_AVAILABLE or empty")
+            logger.info(f"Skipping content analysis for document {doc_id} - content is NOT_AVAILABLE or empty")
             
             # Mark as processed without AI analysis
             document.ai_is_about = "Content not available for analysis"
@@ -162,7 +165,7 @@ async def _process_document_content(
         dspy_content_service = get_dspy_content_service()
         
         # Analyze the document content using DSPy
-        logger.info(f"Analyzing document content with DSPy for {document_id}")
+        logger.info(f"Analyzing document content with DSPy for {doc_id}")
         analysis_result = await dspy_content_service.analyze_document_content(
             content=document.content or "",
             title=title,
@@ -187,7 +190,7 @@ async def _process_document_content(
         await session.commit()
         await session.refresh(document)
         
-        logger.info(f"Successfully processed document {document_id} with summary and bullet points")
+        logger.info(f"Successfully processed document {doc_id} with summary and bullet points")
         
         # Send completion update with document data
         if user_id:
@@ -240,19 +243,22 @@ async def _process_document_entities(
         session = await session_gen.__anext__()
         
         try:
+            # Convert document_id to int if it's a string (Document.id is an integer)
+            doc_id = int(document_id) if isinstance(document_id, str) else document_id
+            
             # Get the document
             result = await session.execute(
-                select(Document).where(Document.id == document_id)
+                select(Document).where(Document.id == doc_id)
             )
             document = result.scalar_one_or_none()
             
             if not document or not document.content:
-                logger.warning(f"Document {document_id} not found or has no content for entity extraction")
+                logger.warning(f"Document {doc_id} not found or has no content for entity extraction")
                 return
             
             # Skip if content is NOT_AVAILABLE
             if document.content_type == "not_available":
-                logger.info(f"Skipping entity extraction for document {document_id} - content is NOT_AVAILABLE")
+                logger.info(f"Skipping entity extraction for document {doc_id} - content is NOT_AVAILABLE")
                 return
             
             # Get DSPy entity service
@@ -261,21 +267,21 @@ async def _process_document_entities(
             # Extract entities using DSPy
             entities = await dspy_entity_service.extract_entities_from_content(
                 content=document.content,
-                document_id=int(document_id)
+                document_id=doc_id
             )
             
             # Process and store entities using adapter
             adapter = DspyEntityAdapter(session)
             result = await adapter.process_document_entities(
                 firebase_uid=user_id,
-                document_id=int(document_id),
+                document_id=doc_id,
                 entities=entities
             )
             
             # Commit changes
             await session.commit()
             
-            logger.info(f"DSPy entity extraction completed for document {document_id}: {result.get('entities_processed', 0)} entities processed")
+            logger.info(f"DSPy entity extraction completed for document {doc_id}: {result.get('entities_processed', 0)} entities processed")
             
         finally:
             await session.close()
@@ -406,18 +412,21 @@ async def _process_document_embeddings(
         session = await session_gen.__anext__()
         
         try:
+            # Convert document_id to int if it's a string (Document.id is an integer)
+            doc_id = int(document_id) if isinstance(document_id, str) else document_id
+            
             # Get the document
             result = await session.execute(
-                select(Document).where(Document.id == document_id)
+                select(Document).where(Document.id == doc_id)
             )
             document = result.scalar_one_or_none()
             
             if not document:
-                logger.error(f"Document {document_id} not found for embedding generation")
+                logger.error(f"Document {doc_id} not found for embedding generation")
                 return
             
             if not document.content:
-                logger.warning(f"Document {document_id} has no content for embedding generation")
+                logger.warning(f"Document {doc_id} has no content for embedding generation")
                 return
             
             # Get embedding service
@@ -475,14 +484,17 @@ async def _process_document_entities_batch(
             
             for document_id in document_ids:
                 try:
+                    # Convert document_id to int if it's a string (Document.id is an integer)
+                    doc_id = int(document_id) if isinstance(document_id, str) else document_id
+                    
                     # Get the document
                     result = await session.execute(
-                        select(Document).where(Document.id == document_id)
+                        select(Document).where(Document.id == doc_id)
                     )
                     document = result.scalar_one_or_none()
                     
                     if not document or not document.content:
-                        logger.warning(f"Document {document_id} not found or has no content for entity extraction")
+                        logger.warning(f"Document {doc_id} not found or has no content for entity extraction")
                         continue
                     
                     # Extract entities from document content
@@ -496,7 +508,7 @@ async def _process_document_entities_batch(
                     total_entities_processed += entities_processed
                     successful_docs += 1
                     
-                    logger.info(f"Entity extraction completed for document {document_id}: {entities_processed} entities processed")
+                    logger.info(f"Entity extraction completed for document {doc_id}: {entities_processed} entities processed")
                     
                 except Exception as e:
                     logger.error(f"Error processing document {document_id} in batch: {str(e)}")
@@ -539,18 +551,21 @@ async def _process_document_embeddings_batch(
             
             for document_id in document_ids:
                 try:
+                    # Convert document_id to int if it's a string (Document.id is an integer)
+                    doc_id = int(document_id) if isinstance(document_id, str) else document_id
+                    
                     # Get the document
                     result = await session.execute(
-                        select(Document).where(Document.id == document_id)
+                        select(Document).where(Document.id == doc_id)
                     )
                     document = result.scalar_one_or_none()
                     
                     if not document:
-                        logger.warning(f"Document {document_id} not found for embedding generation")
+                        logger.warning(f"Document {doc_id} not found for embedding generation")
                         continue
                     
                     if not document.content:
-                        logger.warning(f"Document {document_id} has no content for embedding generation")
+                        logger.warning(f"Document {doc_id} has no content for embedding generation")
                         continue
                     
                     # Generate and store embeddings in the Embedding table

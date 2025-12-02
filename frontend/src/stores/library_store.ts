@@ -8,6 +8,7 @@ interface DocRow {
   id: string | number;
   title: string;
   updatedAt: string;
+  url?: string;
   sourceUrl?: string;
   sourceHost?: string;
   summary?: string;
@@ -73,6 +74,7 @@ export const useLibraryStore = defineStore('library', () => {
         id: doc.id,
         title: doc.title || 'Untitled',
         updatedAt: doc.updateAt ? doc.updateAt.format('YYYY-MM-DD') : new Date().toISOString(),
+        url: doc.url,
         sourceUrl: doc.url,
         sourceHost: doc.url ? new URL(doc.url).hostname : undefined,
         summary: doc.is_about,

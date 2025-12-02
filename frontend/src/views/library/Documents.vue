@@ -12,6 +12,7 @@
     import { useDocumentStore } from '@/stores/documents_store';
     import { useStudyCollection } from '@/composables/useStudyCollection';
     import user_state from '@/composables/getUser';
+    import { formatUrlsAsLinks } from '@/composables/useUrlFormatter';
     import { ref, onMounted, watch } from 'vue';
     import { DataTableExpandedRows } from 'primevue';
     import FileUpload from 'primevue/fileupload';
@@ -168,7 +169,7 @@
                                     <div class="text-xs px-3">
                                         <div class="mb-2">
                                             <span class="font-semibold text-xs">Summary:</span>
-                                            <p class="m-0 p-2 text-xs line-height-2">{{ slotProps.data.ai_is_about }}</p>
+                                            <p class="m-0 p-2 text-xs line-height-2" v-html="formatUrlsAsLinks(slotProps.data.ai_is_about || '')"></p>
                                         </div>
                                         <div class="mb-2">
                                             <span class="font-semibold text-xs">Key Points:</span>
@@ -176,7 +177,7 @@
                                                 <li v-for="(point, index) in slotProps.data.ai_bullet_points" :key="index" 
                                                     class="flex align-items-center mb-1 text-xs line-height-2">
                                                     <i class="pi pi-circle-fill mr-2" style="font-size: 0.3rem"></i>
-                                                    {{ point }}
+                                                    <span v-html="formatUrlsAsLinks(point || '')"></span>
                                                 </li>
                                             </ul>
                                         </div>
