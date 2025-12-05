@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref, watch } from 'vue';
+import { getAuth } from 'firebase/auth';
 import { chatService } from '@/services/chatService.js';
 import { useAuthStore } from './auth_store.js';
 
@@ -39,9 +40,9 @@ export const useChatStore = defineStore('chat', () => {
   const isLoading = ref(false);
   const error = ref<string | null>(null);
   const authStore = useAuthStore();
-  let socket: WebSocket | null = null;
-let streamingMessageId: string | null = null;
-let streamingBuffer = "";
+  let eventSource: EventSource | null = null;
+  let streamingMessageId: string | null = null;
+  let streamingBuffer = "";
 
   // Actions
   async function loadSessions() {
@@ -144,20 +145,6 @@ let streamingBuffer = "";
       return;
     }
 
-    // Check if WebSocket is disconnected or not open, reconnect if needed
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      console.log('WebSocket not connected, reconnecting...');
-      try {
-        await connectWebSocket();
-        console.log('WebSocket reconnected successfully');
-      } catch (error) {
-        console.error('Failed to reconnect WebSocket:', error);
-        throw error; // Re-throw so caller knows connection failed
-      }
-    }
-
-    // const isFirstMessage = messages.value.length === 0; // No longer relevant for global messages
-
     const now = new Date();
     const formattedContent = toParagraphHtml(messageContent);
     const message: ChatMessage = {
@@ -182,175 +169,208 @@ let streamingBuffer = "";
     streamingMessageId = placeholderId;
     streamingBuffer = '';
 
-    // Now send the message
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ content: messageContent }));
-    } else {
-      console.error('WebSocket still not connected after reconnection attempt');
+    try {
+      // Send message via REST API
+      const savedMessage = await chatService.sendMessage(activeSession.value.id, messageContent);
+      
+      // Start SSE stream for AI response
+      await streamChatResponse(activeSession.value.id, savedMessage.id);
+    } catch (error) {
+      console.error('Failed to send message:', error);
+      // Update placeholder with error
+      if (activeSession.value) {
+        const placeholder = activeSession.value.messages.find(msg => msg._id === placeholderId);
+        if (placeholder) {
+          placeholder.content = 'Failed to send message. Please try again.';
+          placeholder.pending = false;
+          placeholder.senderId = 'system';
+        }
+      }
+      streamingMessageId = null;
+      streamingBuffer = '';
     }
-
-    // Backend now handles renaming the chat on the first user message.
-    // if (isFirstMessage && activeSession.value) {
-    //   const newTitle = (messageContent || '').trim().slice(0, 60);
-    //   if (newTitle) {
-    //     try {
-    //       await chatService.updateSessionTitle(activeSession.value.id, newTitle);
-    //       const session = sessions.value.find(s => s.id === activeSession.value!.id);
-    //       if (session) session.title = newTitle;
-    //     } catch (e) {
-    //       console.warn('Failed to update session title', e);
-    //     }
-    //   }
-    // }
   }
 
-  function connectWebSocket(): Promise<void> {
-    return new Promise((resolve, reject) => {
+  async function streamChatResponse(sessionId: number, messageId: number) {
+    // Close existing EventSource if any
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+
+    return new Promise<void>((resolve, reject) => {
       if (!activeSession.value || !authStore.currentUser) {
         reject(new Error('No active session or user'));
         return;
       }
+
+      const apiBase = import.meta.env.VITE_APP_API_BASE_URL as string;
       
-      // Close existing socket if any
-      if (socket) {
-        socket.close();
-        socket = null;
+      // Get Firebase ID token
+      const auth = getAuth();
+      const user = auth.currentUser;
+      if (!user) {
+        reject(new Error('No authenticated user'));
+        return;
       }
       
-      const apiBase = import.meta.env.VITE_APP_API_BASE_URL as string;
-      const wsBase = apiBase.replace(/^http/, 'ws');
-      const wsUrl = `${wsBase}/api/v1/chat/ws/${activeSession.value.id}/${authStore.currentUser.uid}`;
-      socket = new WebSocket(wsUrl);
+      let token: string;
+      try {
+        token = await user.getIdToken();
+      } catch (error) {
+        reject(new Error('Failed to get authentication token'));
+        return;
+      }
 
-      const timeout = setTimeout(() => {
-        if (socket) {
-          socket.close();
-          socket = null;
+      // Create SSE connection with authentication
+      const streamUrl = `${apiBase}/api/v1/chat/sessions/${sessionId}/stream?message_id=${messageId}`;
+      
+      // Use fetch with ReadableStream for SSE (EventSource doesn't support custom headers)
+      fetch(streamUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'text/event-stream',
+        },
+      }).then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
         }
-        reject(new Error('WebSocket connection timeout'));
-      }, 5000); // 5 second timeout
 
-      socket.onopen = () => {
-        clearTimeout(timeout);
-        console.log('WebSocket connected');
-        resolve();
-      };
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-      socket.onmessage = (event) => {
-          const rawData = typeof event.data === 'string' ? event.data : String(event.data);
-          if (!rawData) {
-            return;
-          }
+        if (!reader) {
+          throw new Error('Response body is not readable');
+        }
 
-          let messageData: { type: string; content?: string; message_id?: string };
-          try {
-            messageData = JSON.parse(rawData);
-          } catch (e) {
-            console.error('Failed to parse WebSocket message:', rawData, e);
-            return; // Skip if message is not valid JSON
-          }
-
-          const { type, content, message_id } = messageData;
-          const now = new Date();
-
-          if (type === "stream_chunk") {
-            if (!activeSession.value) return;
-
-            if (!streamingMessageId) {
-              streamingMessageId = message_id || `agent-${Date.now()}`;
-              activeSession.value.messages.push({
-                _id: streamingMessageId,
-                content: '',
-                senderId: 'agent',
-                timestamp: now.toLocaleTimeString(),
-                date: now.toLocaleDateString(),
-                pending: true,
-              });
+        function processChunk(): Promise<void> {
+          return reader.read().then(({ done, value }) => {
+            if (done) {
+              resolve();
+              return;
             }
 
-            if (message_id && streamingMessageId !== message_id) {
-              const placeholder = activeSession.value.messages.find(msg => msg._id === streamingMessageId);
-              if (placeholder) {
-                placeholder._id = message_id;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+            for (const line of lines) {
+              if (line.startsWith('event: ')) {
+                const eventType = line.substring(7).trim();
+                continue;
               }
-              streamingMessageId = message_id;
-            }
 
-            let activeMessage = activeSession.value.messages.find(msg => msg._id === streamingMessageId);
-            if (!activeMessage) {
-              activeMessage = {
-                _id: streamingMessageId!,
-                content: '',
-                senderId: 'agent',
-                timestamp: now.toLocaleTimeString(),
-                date: now.toLocaleDateString(),
-                pending: true,
-              };
-              activeSession.value.messages.push(activeMessage);
-            }
-
-            streamingBuffer += content || '';
-            activeMessage.pending = true;
-            activeMessage.timestamp = now.toLocaleTimeString();
-            activeMessage.date = now.toLocaleDateString();
-          } else if (type === "end_stream") {
-            const finalContent = (content && content.length > 0) ? content : streamingBuffer;
-            if (activeSession.value && streamingMessageId) {
-              const activeMessage = activeSession.value.messages.find(msg => msg._id === streamingMessageId);
-              if (activeMessage) {
-                activeMessage.content = finalContent || '';
-                activeMessage.pending = false;
-                activeMessage.timestamp = now.toLocaleTimeString();
-                activeMessage.date = now.toLocaleDateString();
-              }
-            }
-            streamingMessageId = null; // Reset for the next message
-            streamingBuffer = '';
-          } else if (type === "error") {
-            console.error('Backend WebSocket error:', content);
-            if (activeSession.value) {
-              if (streamingMessageId) {
-                const pendingMessage = activeSession.value.messages.find(msg => msg._id === streamingMessageId);
-                if (pendingMessage) {
-                  pendingMessage.content = content || 'An unknown error occurred.';
-                  pendingMessage.pending = false;
-                  pendingMessage.senderId = 'system';
-                  pendingMessage.timestamp = now.toLocaleTimeString();
-                  pendingMessage.date = now.toLocaleDateString();
+              if (line.startsWith('data: ')) {
+                const data = line.substring(6).trim();
+                try {
+                  const messageData = JSON.parse(data);
+                  handleSSEMessage(messageData);
+                } catch (e) {
+                  console.error('Failed to parse SSE data:', data, e);
                 }
-              } else {
-                activeSession.value.messages.push({
-                  _id: `error-${Date.now()}`,
-                  content: content || 'An unknown error occurred.',
-                  senderId: 'system',
-                  timestamp: now.toLocaleTimeString(),
-                  date: now.toLocaleDateString(),
-                });
               }
             }
-            streamingMessageId = null;
-            streamingBuffer = '';
-          }
-      };
 
-      socket.onerror = (error) => {
-        clearTimeout(timeout);
-        console.error('WebSocket error:', error);
-        reject(error);
-      };
+            return processChunk();
+          });
+        }
 
-      socket.onclose = (event) => {
-        clearTimeout(timeout);
-        console.log('WebSocket disconnected', event.code, event.reason);
-        streamingMessageId = null;
-        socket = null;
-      };
+        processChunk().catch(reject);
+      }).catch(reject);
     });
   }
-  
-  function disconnectWebSocket() {
-    if (socket) {
-      socket.close();
+
+  function handleSSEMessage(messageData: { type: string; content?: string; message_id?: string }) {
+    const { type, content, message_id } = messageData;
+    const now = new Date();
+
+    if (type === "stream_chunk") {
+      if (!activeSession.value) return;
+
+      if (!streamingMessageId) {
+        streamingMessageId = message_id || `agent-${Date.now()}`;
+        activeSession.value.messages.push({
+          _id: streamingMessageId,
+          content: '',
+          senderId: 'agent',
+          timestamp: now.toLocaleTimeString(),
+          date: now.toLocaleDateString(),
+          pending: true,
+        });
+      }
+
+      if (message_id && streamingMessageId !== message_id) {
+        const placeholder = activeSession.value.messages.find(msg => msg._id === streamingMessageId);
+        if (placeholder) {
+          placeholder._id = message_id;
+        }
+        streamingMessageId = message_id;
+      }
+
+      let activeMessage = activeSession.value.messages.find(msg => msg._id === streamingMessageId);
+      if (!activeMessage) {
+        activeMessage = {
+          _id: streamingMessageId!,
+          content: '',
+          senderId: 'agent',
+          timestamp: now.toLocaleTimeString(),
+          date: now.toLocaleDateString(),
+          pending: true,
+        };
+        activeSession.value.messages.push(activeMessage);
+      }
+
+      streamingBuffer = content || '';
+      activeMessage.content = streamingBuffer;
+      activeMessage.pending = true;
+      activeMessage.timestamp = now.toLocaleTimeString();
+      activeMessage.date = now.toLocaleDateString();
+    } else if (type === "end_stream") {
+      const finalContent = (content && content.length > 0) ? content : streamingBuffer;
+      if (activeSession.value && streamingMessageId) {
+        const activeMessage = activeSession.value.messages.find(msg => msg._id === streamingMessageId);
+        if (activeMessage) {
+          activeMessage.content = finalContent || '';
+          activeMessage.pending = false;
+          activeMessage.timestamp = now.toLocaleTimeString();
+          activeMessage.date = now.toLocaleDateString();
+        }
+      }
+      streamingMessageId = null;
+      streamingBuffer = '';
+    } else if (type === "error") {
+      console.error('Backend SSE error:', content);
+      if (activeSession.value) {
+        if (streamingMessageId) {
+          const pendingMessage = activeSession.value.messages.find(msg => msg._id === streamingMessageId);
+          if (pendingMessage) {
+            pendingMessage.content = content || 'An unknown error occurred.';
+            pendingMessage.pending = false;
+            pendingMessage.senderId = 'system';
+            pendingMessage.timestamp = now.toLocaleTimeString();
+            pendingMessage.date = now.toLocaleDateString();
+          }
+        } else {
+          activeSession.value.messages.push({
+            _id: `error-${Date.now()}`,
+            content: content || 'An unknown error occurred.',
+            senderId: 'system',
+            timestamp: now.toLocaleTimeString(),
+            date: now.toLocaleDateString(),
+          });
+        }
+      }
+      streamingMessageId = null;
+      streamingBuffer = '';
+    }
+  }
+
+  function disconnectSSE() {
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
     }
     streamingMessageId = null;
   }
@@ -362,7 +382,7 @@ let streamingBuffer = "";
       return;
     }
 
-    disconnectWebSocket();
+    disconnectSSE();
     
     const newSession = sessions.value.find(s => s.id === sessionId);
     if (newSession) {
@@ -370,23 +390,20 @@ let streamingBuffer = "";
       try {
         console.log(`Loading messages for session ${sessionId}`);
         await loadMessages(sessionId);
-        console.log(`Connecting WebSocket for session ${sessionId}`);
-        await connectWebSocket();
+        // No need to connect SSE here - it's done per message
       } catch (error) {
         console.error(`Failed to switch to session ${sessionId}:`, error);
       }
     } else {
       console.warn(`Session ${sessionId} not found.`);
       activeSession.value = null;
-      // messages.value = []; // Messages are now session-specific
     }
   }
 
   watch(activeSession, (newSession, oldSession) => {
-    // This watcher is now only for cleanup when all sessions are gone.
-    // The explicit switchActiveSession handles the main logic.
+    // Cleanup when session changes
     if (!newSession && oldSession) {
-      disconnectWebSocket();
+      disconnectSSE();
     }
   });
 

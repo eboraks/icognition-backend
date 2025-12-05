@@ -25,6 +25,7 @@ from app.services.dspy_entity_adapter import DspyEntityAdapter
 from app.services.embedding_service import get_embedding_service
 from app.core.config import settings
 from app.api.routes.websocket import get_connection_manager
+from app.api.routes.notifications import get_notification_manager
 
 logger = get_logger(__name__)
 
@@ -55,7 +56,7 @@ async def _send_document_ready_message(
     url: Optional[str] = None
 ) -> None:
     """
-    Send a document_ready WebSocket message for a processed document.
+    Send a document_ready notification for a processed document.
     
     Args:
         document: The document to send
@@ -63,9 +64,9 @@ async def _send_document_ready_message(
         title: Override title (optional)
         url: Override URL (optional)
     """
-    ws_manager = get_connection_manager()
+    notification_manager = get_notification_manager()
     
-    await ws_manager.send_personal_message({
+    await notification_manager.send_notification({
         "type": "document_ready",
         "data": {
             "id": str(document.id),
@@ -76,9 +77,9 @@ async def _send_document_ready_message(
             "created_at": document.created_at.isoformat() if document.created_at else None,
             "updated_at": document.updated_at.isoformat() if document.updated_at else None
         }
-    }, user_id, channel="extension")
+    }, user_id)
     
-    logger.info(f"Sent document_ready message for document {document.id} to user {user_id}")
+    logger.info(f"Sent document_ready notification for document {document.id} to user {user_id}")
 
 
 async def _process_document_content(
@@ -96,7 +97,7 @@ async def _process_document_content(
         url: Document URL
         user_id: User ID for WebSocket notifications
     """
-    ws_manager = get_connection_manager()
+    notification_manager = get_notification_manager()
     
     try:
         logger.info(f"Starting content processing for document {document_id}")
@@ -107,10 +108,10 @@ async def _process_document_content(
         
         # Send initial progress update
         if user_id:
-            await ws_manager.send_personal_message({
+            await notification_manager.send_notification({
                 "type": "progress_percentage",
                 "data": 10
-            }, user_id, channel="extension")
+            }, user_id)
         
         # Convert document_id to int if it's a string (Document.id is an integer)
         doc_id = int(document_id) if isinstance(document_id, str) else document_id
@@ -124,10 +125,10 @@ async def _process_document_content(
         if not document:
             logger.error(f"Document {doc_id} not found")
             if user_id:
-                await ws_manager.send_personal_message({
+                await notification_manager.send_notification({
                     "type": "error",
                     "data": "Document not found"
-                }, user_id, channel="extension")
+                }, user_id)
             return
         
         # Check if content is NOT_AVAILABLE or empty and skip processing
@@ -142,24 +143,24 @@ async def _process_document_content(
             await session.refresh(document)
             
             if user_id:
-                await ws_manager.send_personal_message({
+                await notification_manager.send_notification({
                     "type": "document_ready",
                     "data": {
                         "bookmark_id": title,
                         "document_id": document.id,
                         "status": "not_available"
                     }
-                }, user_id, channel="extension")
+                }, user_id)
             
             await session.close()
             return
         
         # Send progress update
         if user_id:
-            await ws_manager.send_personal_message({
+            await notification_manager.send_notification({
                 "type": "progress_percentage",
                 "data": 30
-            }, user_id, channel="extension")
+            }, user_id)
         
         # Get DSPy content service (NEW: using DSPy instead of old ContentAnalysisService)
         dspy_content_service = get_dspy_content_service()
@@ -174,10 +175,10 @@ async def _process_document_content(
         
         # Send progress update
         if user_id:
-            await ws_manager.send_personal_message({
+            await notification_manager.send_notification({
                 "type": "progress_percentage",
                 "data": 80
-            }, user_id, channel="extension")
+            }, user_id)
         
         # Update document with DSPy analysis results
         document.ai_is_about = analysis_result['summary']
@@ -197,10 +198,10 @@ async def _process_document_content(
             await _send_document_ready_message(document, user_id, title, url)
             
             # Send final progress
-            await ws_manager.send_personal_message({
+            await notification_manager.send_notification({
                 "type": "progress_percentage",
                 "data": 100
-            }, user_id, channel="extension")
+            }, user_id)
         
     except Exception as e:
         logger.error(f"Error processing document {document_id}: {str(e)}")
@@ -209,10 +210,10 @@ async def _process_document_content(
         
         # Send error notification
         if user_id:
-            await ws_manager.send_personal_message({
+            await notification_manager.send_notification({
                 "type": "error",
                 "data": f"Error processing document: {str(e)}"
-            }, user_id, channel="extension")
+            }, user_id)
         
     finally:
         # Clean up session

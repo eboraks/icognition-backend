@@ -49,5 +49,7 @@ export const chatService = {
     return apiClient.get(`/api/v1/chat/sessions/${sessionId}/messages`);
   },
 
-  // WebSocket connection is handled separately in the store or component
+  sendMessage(sessionId: number, content: string) {
+    return apiClient.post(`/api/v1/chat/sessions/${sessionId}/messages`, { content });
+  },
 };
