@@ -124,8 +124,8 @@ dev = [
 #     "matplotlib-inline>=0.1.6",
 # ]
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "pytest>=8.3.3",
     "pytest-asyncio",
     "debugpy>=1.8.0",

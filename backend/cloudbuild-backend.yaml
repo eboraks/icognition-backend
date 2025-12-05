@@ -9,16 +9,16 @@ steps:
     args:
       - build
       - -t
-      - gcr.io/$PROJECT_ID/icognition-backend:$SHORT_SHA
+      - gcr.io/${PROJECT_ID}/icognition-backend:${SHORT_SHA}
       - -f
-      - backend/Dockerfile
+      - Dockerfile
       - .
 
   # Push the image to Artifact Registry / Container Registry
   - name: gcr.io/cloud-builders/docker
     args:
       - push
-      - gcr.io/$PROJECT_ID/icognition-backend:$SHORT_SHA
+      - gcr.io/${PROJECT_ID}/icognition-backend:${SHORT_SHA}
 
   # Deploy the image to Cloud Run
   - name: gcr.io/cloud-builders/gcloud
@@ -27,14 +27,14 @@ steps:
       - -c
       - |
         gcloud run deploy ${_SERVICE_NAME} \
-          --image gcr.io/$PROJECT_ID/icognition-backend:$SHORT_SHA \
+          --image gcr.io/${PROJECT_ID}/icognition-backend:${SHORT_SHA} \
           --region ${_REGION} \
           --platform managed \
           --vpc-connector ${_VPC_CONNECTOR} \
           --vpc-egress private-ranges-only \
-          --set-secrets DATABASE_URL=DB_CONNECTION_URL:latest \
+          --set-secrets DATABASE_URL=DB_CONNECTION_URL:latest,FIREBASE_SERVICE_ACCOUNT_JSON=FIREBASE_SERVICE_ACCOUNT_JSON:latest \
           --allow-unauthenticated
 
 images:
-  - gcr.io/$PROJECT_ID/icognition-backend:$SHORT_SHA
+  - gcr.io/${PROJECT_ID}/icognition-backend:${SHORT_SHA}
 
