@@ -2,14 +2,16 @@
 
 This document provides a concise summary with absolute file paths to help replicate the chat interface from the web app to the iPhone app.
 
+**Note**: This guide reflects the current SSE (Server-Sent Events) + REST Pull implementation. The chat system was migrated from WebSocket to SSE for better reliability in serverless environments. See `backend/SSE_MIGRATION.md` for migration details.
+
 ## Architecture Overview
 
-The chat interface follows a **session-based, WebSocket-streaming architecture** with the following key components:
+The chat interface follows a **session-based, SSE (Server-Sent Events) streaming architecture** with the following key components:
 
-1. **Frontend**: Vue 3 + Pinia stores managing chat sessions and WebSocket connections
-2. **Backend**: FastAPI with WebSocket endpoints streaming AI responses via LangGraph
+1. **Frontend**: Vue 3 + Pinia stores managing chat sessions and SSE connections
+2. **Backend**: FastAPI with REST endpoints for sending messages and SSE endpoints for streaming AI responses via LangGraph
 3. **State Management**: Session isolation with per-session message histories
-4. **Real-time Communication**: WebSocket streaming with structured message envelopes
+4. **Real-time Communication**: SSE streaming with structured message envelopes (no persistent WebSocket connection)
 
 ---
 
@@ -33,18 +35,19 @@ The chat interface follows a **session-based, WebSocket-streaming architecture**
 ### Chat Store (State Management)
 **File**: `/Users/eboraks/Projects/icognition/frontend/src/stores/chat_store.ts`
 
-- Pinia store managing chat sessions and WebSocket connections
+- Pinia store managing chat sessions and SSE connections
 - Key functions:
   - `loadSessions()`: Fetch all user sessions
   - `createSession()`: Create new chat session
-  - `sendMessage()`: Send message via WebSocket, handle streaming
-  - `connectWebSocket()`: Establish WebSocket connection per session
+  - `sendMessage()`: Send message via REST API, then start SSE stream
+  - `streamChatResponse()`: Establish SSE connection for streaming AI response
   - `switchActiveSession()`: Switch between chat sessions
-- WebSocket message handling:
+- SSE message handling:
   - `stream_chunk`: Accumulates streaming content
   - `end_stream`: Finalizes message, removes pending flag
   - `error`: Displays error messages
 - Messages stored per-session in `activeSession.value.messages`
+- Uses `fetch` with `ReadableStream` for SSE (EventSource doesn't support custom headers)
 
 ### Knowledge Explorer Store
 **File**: `/Users/eboraks/Projects/icognition/frontend/src/stores/knowledgeExplorerStore.ts`
@@ -72,6 +75,7 @@ The chat interface follows a **session-based, WebSocket-streaming architecture**
   - `POST /api/v1/chat/sessions`: Create session
   - `GET /api/v1/chat/sessions`: List sessions
   - `GET /api/v1/chat/sessions/{id}/messages`: Get messages
+  - `POST /api/v1/chat/sessions/{id}/messages`: Send message (returns saved message with ID)
   - `DELETE /api/v1/chat/sessions/{id}`: Delete session
   - `PUT /api/v1/chat/sessions/{id}/title`: Update title
   - `PUT /api/v1/chat/sessions/{id}/scope`: Update scope
@@ -95,15 +99,18 @@ The chat interface follows a **session-based, WebSocket-streaming architecture**
   - `POST /api/v1/chat/sessions`: Create session
   - `GET /api/v1/chat/sessions`: List user sessions
   - `GET /api/v1/chat/sessions/{session_id}/messages`: Get messages
+  - `POST /api/v1/chat/sessions/{session_id}/messages`: Send user message (returns saved message with ID)
   - `DELETE /api/v1/chat/sessions/{session_id}`: Delete session
   - `PUT /api/v1/chat/sessions/{session_id}/scope`: Update scope
   - `PUT /api/v1/chat/sessions/{session_id}/title`: Update title
-- WebSocket endpoint:
-  - `WS /api/v1/chat/ws/{session_id}/{user_id}`: Real-time chat streaming
-  - Validates session ownership
-  - Saves user messages immediately
+- SSE endpoint:
+  - `GET /api/v1/chat/sessions/{session_id}/stream?message_id={message_id}`: Stream AI response via Server-Sent Events
+  - Validates session ownership and message existence
   - Streams assistant responses via `chat_agent_service.get_stream()`
-  - Sends structured messages: `stream_chunk`, `end_stream`, `error`
+  - Sends SSE events: `stream_chunk`, `end_stream`, `error`
+  - Saves assistant response after streaming completes
+- WebSocket endpoint (legacy, retained for backward compatibility):
+  - `WS /api/v1/chat/ws/{session_id}/{user_id}`: Legacy WebSocket streaming (not used by frontend)
 
 ### Chat Session Service
 **File**: `/Users/eboraks/Projects/icognition/backend/app/services/chat_session_service.py`
@@ -143,12 +150,13 @@ The chat interface follows a **session-based, WebSocket-streaming architecture**
   - URL linkification
   - HTML escaping for security
 
-### WebSocket Manager
-**File**: `/Users/eboraks/Projects/icognition/backend/app/api/routes/websocket.py`
+### SSE Implementation Details
+**File**: `/Users/eboraks/Projects/icognition/backend/app/api/routes/chat.py`
 
-- `ConnectionManager` class for WebSocket connection management
-- Tracks connections by user_id and channel
-- Used by chat router for connection lifecycle
+- SSE streaming uses FastAPI's `StreamingResponse` with `text/event-stream` media type
+- Headers include `Cache-Control: no-cache`, `Connection: keep-alive`, `X-Accel-Buffering: no`
+- Generator function `generate_stream()` yields SSE-formatted events
+- Events follow SSE format: `event: {type}\ndata: {json}\n\n`
 
 ### Data Models
 **File**: `/Users/eboraks/Projects/icognition/backend/app/models.py`
@@ -175,38 +183,47 @@ The chat interface follows a **session-based, WebSocket-streaming architecture**
 
 ## Key Implementation Details
 
-### WebSocket Message Protocol
+### REST + SSE Message Protocol
 
-**Client → Server**:
-```json
+**Client → Server (REST POST)**:
+```http
+POST /api/v1/chat/sessions/{session_id}/messages
+Content-Type: application/json
+Authorization: Bearer {firebase_token}
+
 {
   "content": "User message text"
 }
 ```
 
-**Server → Client**:
+**Server → Client (REST Response)**:
 ```json
 {
-  "type": "stream_chunk",
-  "content": "<p>HTML formatted content</p>",
-  "message_id": "uuid-string"
+  "id": 123,
+  "session_id": 1,
+  "role": "user",
+  "content": "User message text",
+  "created_at": "2024-01-01T12:00:00Z"
 }
 ```
 
-```json
-{
-  "type": "end_stream",
-  "content": "<p>Final HTML formatted content</p>",
-  "message_id": "uuid-string"
-}
+**Client → Server (SSE GET)**:
+```http
+GET /api/v1/chat/sessions/{session_id}/stream?message_id={message_id}
+Accept: text/event-stream
+Authorization: Bearer {firebase_token}
 ```
 
-```json
-{
-  "type": "error",
-  "content": "Error message",
-  "message_id": "uuid-string"
-}
+**Server → Client (SSE Events)**:
+```
+event: stream_chunk
+data: {"type": "stream_chunk", "content": "<p>HTML formatted content</p>", "message_id": "uuid-string"}
+
+event: end_stream
+data: {"type": "end_stream", "content": "<p>Final HTML formatted content</p>", "message_id": "uuid-string"}
+
+event: error
+data: {"type": "error", "content": "Error message", "message_id": "uuid-string"}
 ```
 
 ### Frontend Message Flow
@@ -215,31 +232,33 @@ The chat interface follows a **session-based, WebSocket-streaming architecture**
 2. Calls `chatStore.sendMessage()` with session ID
 3. Store adds user message to `activeSession.messages`
 4. Store creates placeholder assistant message with `pending: true`
-5. Store sends message via WebSocket
-6. Store receives `stream_chunk` messages → updates placeholder content
-7. Store receives `end_stream` → finalizes message, sets `pending: false`
-8. `ChatPanel` watcher syncs store messages to local `messages` array
-9. UI re-renders with updated content
+5. Store sends message via REST API (`POST /sessions/{id}/messages`)
+6. Store receives saved message with `id` from REST response
+7. Store starts SSE stream (`GET /sessions/{id}/stream?message_id={id}`)
+8. Store receives `stream_chunk` SSE events → updates placeholder content
+9. Store receives `end_stream` SSE event → finalizes message, sets `pending: false`
+10. `ChatPanel` watcher syncs store messages to local `messages` array
+11. UI re-renders with updated content
 
 ### Session Management
 
 - Each chat tab has a unique backend session ID
 - Sessions are isolated: messages stored per-session
 - Switching tabs calls `chatStore.switchActiveSession()`
-- WebSocket reconnects when switching sessions
+- SSE connections are per-message (no persistent connection needed)
 - Session scope (entity/document filters) stored in `ChatSession.scope_type` and `scope_id`
 
 ### Authentication
 
-- Frontend: Firebase Auth with ID token injection via Axios interceptors
+- Frontend: Firebase Auth with ID token injection via Axios interceptors (REST) and fetch headers (SSE)
 - Backend: `get_authenticated_user_context` dependency validates Firebase tokens
 - All endpoints require authenticated user
-- WebSocket validates session ownership before accepting connection
+- SSE endpoint validates session ownership and message existence before streaming
 
 ### Environment Variables
 
 **Frontend**:
-- `VITE_APP_API_BASE_URL`: Backend API base URL (WebSocket uses `ws://` or `wss://`)
+- `VITE_APP_API_BASE_URL`: Backend API base URL (SSE uses `http://` or `https://`)
 
 **Backend**:
 - `GOOGLE_API_KEY`: Gemini API key
@@ -254,22 +273,25 @@ The chat interface follows a **session-based, WebSocket-streaming architecture**
 
 - [ ] Implement chat session store (similar to Pinia store)
 - [ ] Create chat UI component with message list and input
-- [ ] Implement WebSocket client for streaming
-- [ ] Handle message types: `stream_chunk`, `end_stream`, `error`
+- [ ] Implement SSE client for streaming (using `URLSession` with `URLSessionDataTask` or `EventSource` equivalent)
+- [ ] Handle SSE event types: `stream_chunk`, `end_stream`, `error`
 - [ ] Implement session management (create, switch, delete)
-- [ ] Add Firebase Auth token injection for API calls
+- [ ] Add Firebase Auth token injection for REST API calls and SSE headers
 - [ ] Handle pending message states (loading spinner)
 - [ ] Implement auto-scroll to bottom
 - [ ] Format HTML content in messages (or use native text rendering)
+- [ ] Implement REST API call to send messages before starting SSE stream
 
 ### Backend Integration
 
 - [ ] Use existing REST endpoints for session management
-- [ ] Connect to WebSocket endpoint: `ws://{API_BASE}/api/v1/chat/ws/{session_id}/{user_id}`
-- [ ] Parse WebSocket message envelope (`type`, `content`, `message_id`)
+- [ ] Send messages via REST: `POST {API_BASE}/api/v1/chat/sessions/{session_id}/messages`
+- [ ] Extract `message_id` from REST response
+- [ ] Connect to SSE endpoint: `GET {API_BASE}/api/v1/chat/sessions/{session_id}/stream?message_id={message_id}`
+- [ ] Parse SSE event format (`event: {type}\ndata: {json}`)
 - [ ] Handle streaming: accumulate chunks until `end_stream`
-- [ ] Display errors from `error` message type
-- [ ] Implement reconnection logic for WebSocket
+- [ ] Display errors from `error` event type
+- [ ] Handle SSE connection lifecycle (no persistent connection needed - per message)
 
 ### Data Models
 
@@ -288,20 +310,23 @@ The chat interface follows a **session-based, WebSocket-streaming architecture**
 - `/Users/eboraks/Projects/icognition/frontend/src/views/library/KnowledgeExplorer.vue`
 
 **Backend**:
-- `/Users/eboraks/Projects/icognition/backend/app/api/routes/chat.py`
+- `/Users/eboraks/Projects/icognition/backend/app/api/routes/chat.py` (REST + SSE endpoints)
 - `/Users/eboraks/Projects/icognition/backend/app/services/chat_session_service.py`
 - `/Users/eboraks/Projects/icognition/backend/app/services/chat_agent_service.py`
 - `/Users/eboraks/Projects/icognition/backend/app/utils/chat_formatting.py`
 - `/Users/eboraks/Projects/icognition/backend/app/models.py` (ChatSession, ChatMessage)
-- `/Users/eboraks/Projects/icognition/backend/app/api/routes/websocket.py`
+- `/Users/eboraks/Projects/icognition/backend/SSE_MIGRATION.md` (Migration documentation)
 
 ---
 
 ## Notes
 
 - All message content is HTML-formatted on the backend. The iPhone app should either render HTML or strip HTML tags for plain text display.
-- The WebSocket connection is session-specific. Each chat tab/session requires its own WebSocket connection.
+- SSE connections are per-message, not per-session. Each message requires a separate SSE connection that closes after the response completes.
 - Session scope (entity/document filters) affects which documents the AI can retrieve via the `retrieve_documents_tool`.
 - The backend uses LangGraph's PostgreSQL checkpointer for conversation memory, so each session maintains context across messages.
-- Error handling: If WebSocket fails, the frontend should show an error message and allow retry.
+- Error handling: If SSE stream fails, the frontend should show an error message and allow retry. The placeholder message should be updated with the error.
+- **Two-step process**: First send message via REST (get `message_id`), then start SSE stream with that `message_id`.
+- SSE uses standard HTTP with `Accept: text/event-stream` header and Firebase token in `Authorization` header.
+- The WebSocket endpoint (`/ws/{session_id}/{user_id}`) is retained for backward compatibility but is not used by the frontend.
 

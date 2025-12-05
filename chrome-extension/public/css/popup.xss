@@ -1,0 +1,199 @@
+@font-face {
+    font-family: OpenDyslexicFont;
+    src: url('fonts/OpenDyslexic-Regular.otf');
+  }
+  
+.display-text {
+    font-family: Monospace, Arial, Helvetica, sans-serif;
+    font-size: 14px;
+}
+
+
+@import "primeicons/primeicons.css";
+body {
+    background: none;
+    font-family: Monospace, Arial, Helvetica, sans-serif;
+	font-size: 13px;
+    border-radius: 10px;
+}
+
+
+.container {
+    width:100%;
+    display: flex;
+    justify-content: center;
+}
+
+.popup_container {
+    background: green;
+    border-radius: 10px;
+    width: 100%;
+    height: 100%;
+}
+
+.controls {
+    padding: 20px;
+    display: flex;
+    justify-content: center;
+}
+textarea {
+    resize: none;
+}
+
+div.sidepanel {
+    position: fixed;
+    z-index: 1;
+    height: 100%;
+    width: 0;
+    top: 0;
+    left: 0;
+    background-color: #fff;
+    overflow-x: hidden;
+    transition: 0.5s;
+    padding-top: 60px;
+} 
+
+div.sidepanel a {
+    padding: 8px 8px 8px 32px;
+    text-decoration: none;
+    font-size: 25px;
+    color: #000;
+    display: block;
+    transition: 0.3s;
+}
+
+
+button {
+    position: absolute;
+    top: 0;
+    right: 25px;
+    font-size: 12px !important;
+    margin-left: 50px;
+    border: 1px solid grey;
+    border-radius: 5px; /* Add this line to make the button border corners round */
+}
+
+
+.auth {
+    margin: auto;
+    margin-left: 80px;
+}
+
+.debug {
+    background-color: #f4f4f4;
+    padding: 10px;
+    margin-bottom: 20px;
+}
+
+.button_container {
+    padding: 5px 5px 5px 1px;
+    margin-left: 5px;
+    display: flex;
+    justify-content: center;
+    width: 250px;
+
+}
+label.btn {
+    width: 100%;
+    padding: 5px 25px 5px 25px;
+    border: 1px solid #666;
+    border-radius: 0.20em;
+    background-color: #95d8f3;
+    font-size: 16px;
+    text-align: center;
+}
+label.btn:hover {
+    border: 1px solid #666;
+    border-radius: 0.20em;
+    background-color: #00a6e6; 
+}
+
+.logout_icon {
+    position: absolute;
+    top: 8px;
+    right: 16px;
+    font-size: 30px;
+}
+
+body{
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 13px;
+    background: none;
+}
+.answer, .info, .success, .warning, .error, .validation {
+    border: 0.5px solid;
+    margin: 10px 0px;
+    padding: 15px 10px 15px 15px;
+    background-repeat: no-repeat;
+    background-position: 10px center;
+    border-radius: 10px;
+}
+.answer_contrainer {
+    padding: 2px 2px 2px 2px;
+}
+.answer-item {
+    padding: 2px 2px 5px 5px;
+}
+.answer {
+    font-family: 'Courier New', Courier, monospace;
+    color: #2f3133;
+    background-color: #e1e2e3;
+    font-size: 16px;
+    padding: 5px;
+}
+.answer_title {
+    padding: 0.5px 2px 1px 10px;
+    text-decoration: underline;
+}
+.info {
+    color: #00529B;
+    background-color: #BDE5F8;
+}
+.success {
+    color: #4F8A10;
+    background-color: #DFF2BF;
+}
+.warning {
+    color: #9F6000;
+    background-color: #FEEFB3;
+}
+
+.message_container {
+    padding: 1px;
+    display: flex;
+    justify-content: center;
+}
+.error{
+    color: #D8000C;
+    background-color: #FFBABA;
+    width: 72%;
+}
+
+.validation{
+    color: #D63301;
+    background-color: #FFCCBA;
+}
+
+p.loading {
+    animation: typing 2s steps(1, end) infinite;
+    overflow: hidden;
+    display: inline-block;
+    width: 7ch;
+    white-space: nowrap; 
+  }
+  
+  @keyframes typing {
+    0% { width: 8ch }
+    25% { width: 9ch }
+    50% { width: 10ch }
+    75% { width: 11ch }
+    100% { width: 11ch }
+  }
+  
+  .loading {
+    margin: 50px;
+    padding: 10px;
+    width: 200px;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 20px;
+  }

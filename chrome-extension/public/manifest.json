@@ -1,0 +1,73 @@
+{
+  "name": "iCogntion",
+  "version": "1.0",
+  "manifest_version": 3,
+  "key": "%{CHROME_EXTENSION_ID}%",
+  "description": "Provides TLDR and other information about articles in sidepanel.",
+  "background": {
+    "service_worker": "js/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "icogntion.ai",
+    "default_icon": {
+      "128": "icons/icog_action_icon_128x128.png",
+      "16": "icons/icog_action_icon_32x32.png"
+    }
+  },
+  "icons": {
+    "128": "icons/icog_action_icon_128x128.png",
+    "16": "icons/icog_action_icon_32x32.png"
+  },
+  "permissions": ["tabs", "storage", "identity", "scripting", "activeTab", "sidePanel"],
+  "host_permissions": [ "http://*/*", "https://*/*", "<all_urls>" ],
+  "oauth2": {
+    "client_id": "713863541713-ikdrhqt1nms05su0r6i4j2069r6iuqif.apps.googleusercontent.com", 
+    "scopes": [
+      "https://www.googleapis.com/auth/userinfo.email",
+      "https://www.googleapis.com/auth/userinfo.profile"
+    ]
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["js/content-scripts/highlighter.js"],
+      "run_at": "document_end"  
+    }
+  ],
+  "side_panel": {
+    "default_path": "index.html"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+O",
+        "mac": "Alt+Shift+O",
+        "chromeos": "Alt+Shift+O",
+        "linux": "Alt+Shift+O",
+        "windows": "Alt+Shift+O"
+      },
+      "description": "Open iCognition Side Panel"
+    },
+    "focus-input": {
+      "suggested_key": {
+        "default": "Alt+Shift+K",
+        "mac": "Alt+Shift+K",
+        "chromeos": "Alt+Shift+K", 
+        "linux": "Alt+Shift+K",
+        "windows": "Alt+Shift+K"
+      },
+      "description": "Focus the question input or analyze button"
+    },
+    "test-shortcut-1": {
+      "suggested_key": {
+        "default": "Alt+Shift+1",
+        "mac": "Alt+Shift+1",
+        "chromeos": "Alt+Shift+1",
+        "linux": "Alt+Shift+1",
+        "windows": "Alt+Shift+1"
+      },
+      "description": "Test shortcut 1 for logging"
+    }
+  }
+}

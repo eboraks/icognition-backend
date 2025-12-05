@@ -1,0 +1,72 @@
+/* Global styles for chat interface */
+
+/* Make chat messages wider */
+.chat-message {
+    max-width: 95% !important;
+    width: 95% !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+}
+
+.chat-message p {
+    font-size: 0.9rem !important;
+    line-height: 1.4 !important;
+}
+
+.chat-message-content {
+    max-width: 95% !important;
+    width: 95% !important;
+}
+
+/* Override PrimeVue max-width constraints */
+.max-w-25 {
+    max-width: 95% !important;
+}
+
+/* Make card content more compact */
+.p-card-content {
+    padding: 0.75rem !important;
+}
+
+.p-card {
+    margin-bottom: 0.75rem !important;
+}
+
+/* Make input text smaller */
+.p-inputtext {
+    font-size: 0.9rem !important;
+}
+
+/* Adjust spacing in chat bubbles */
+.p-card-body {
+    padding: 0.75rem !important;
+}
+
+/* Make sure text wraps properly */
+.chat-message p, 
+.chat-message div, 
+.chat-message span {
+    word-wrap: break-word !important;
+    white-space: normal !important;
+}
+
+/* Ensure code blocks don't overflow */
+.chat-message pre, 
+.chat-message code {
+    max-width: 100% !important;
+    overflow-x: auto !important;
+    white-space: pre-wrap !important;
+    word-wrap: break-word !important;
+}
+
+/* Adjust list spacing */
+.chat-message ul, 
+.chat-message ol {
+    padding-left: 1.5rem !important;
+}
+
+/* Make sure images don't overflow */
+.chat-message img {
+    max-width: 100% !important;
+    height: auto !important;
+} 

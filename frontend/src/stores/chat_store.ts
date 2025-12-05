@@ -173,8 +173,22 @@ export const useChatStore = defineStore('chat', () => {
       // Send message via REST API
       const savedMessage = await chatService.sendMessage(activeSession.value.id, messageContent);
       
+      // Debug: Log the response structure
+      console.log('Saved message response:', savedMessage);
+      console.log('Saved message data:', savedMessage.data);
+      console.log('Message ID:', savedMessage.data?.id);
+      
+      // Extract message ID - handle different possible response structures
+      const messageId = savedMessage.data?.id || savedMessage.data?.data?.id || savedMessage.id;
+      
+      if (!messageId) {
+        console.error('Message ID is missing from response. Full response:', savedMessage);
+        console.error('Response data:', savedMessage.data);
+        throw new Error('Failed to get message ID from server response');
+      }
+      
       // Start SSE stream for AI response
-      await streamChatResponse(activeSession.value.id, savedMessage.id);
+      await streamChatResponse(activeSession.value.id, messageId);
     } catch (error) {
       console.error('Failed to send message:', error);
       // Update placeholder with error
@@ -198,7 +212,7 @@ export const useChatStore = defineStore('chat', () => {
       eventSource = null;
     }
 
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<void>(async (resolve, reject) => {
       if (!activeSession.value || !authStore.currentUser) {
         reject(new Error('No active session or user'));
         return;

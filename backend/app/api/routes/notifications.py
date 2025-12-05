@@ -13,7 +13,10 @@ from datetime import datetime
 
 logger = get_logger(__name__)
 
-router = APIRouter(tags=["notifications"])
+router = APIRouter(
+    prefix="/api/v1/notifications",
+    tags=["notifications"],
+)
 
 
 class SSENotificationManager:
