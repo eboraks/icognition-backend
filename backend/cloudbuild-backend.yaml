@@ -4,7 +4,7 @@ substitutions:
   _VPC_CONNECTOR: run-sql-connector
 
 steps:
-  # Build the backend container image from backend/Dockerfile
+  # Build the backend container image from Dockerfile (build context is current directory)
   - name: gcr.io/cloud-builders/docker
     args:
       - build
@@ -32,7 +32,7 @@ steps:
           --platform managed \
           --vpc-connector ${_VPC_CONNECTOR} \
           --vpc-egress private-ranges-only \
-          --set-secrets DATABASE_URL=DB_CONNECTION_URL:latest,FIREBASE_SERVICE_ACCOUNT_JSON=FIREBASE_SERVICE_ACCOUNT_JSON:latest \
+          --set-secrets DATABASE_URL=DB_CONNECTION_URL:latest,FIREBASE_SERVICE_ACCOUNT_JSON=FIREBASE_SERVICE_ACCOUNT_JSON:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest,SECRET_KEY=SECRET_KEY:latest,GEMINI_FLASH_MODEL=GEMINI_FLASH_MODEL:latest,GEMINI_FLASH_LITE=GEMINI_FLASH_LITE:latest,GEMINI_EMBEDDING_MODEL=GEMINI_EMBEDDING_MODEL:latest \
           --allow-unauthenticated
 
 images:
