@@ -11,6 +11,7 @@ export interface ChatMessage {
   senderId: string;
   timestamp: string;
   date: string;
+  pending?: boolean;
 }
 
 export interface ChatSession {
@@ -112,7 +113,7 @@ export const useChatStore = defineStore('chat', () => {
       if (activeSession.value?.id === sessionId) {
         activeSession.value = null;
         // messages.value = []; // Messages are now session-specific
-        disconnectWebSocket();
+        disconnectSSE();
       }
     } catch (err: any) {
       error.value = err.message || 'Failed to delete session';
@@ -179,7 +180,7 @@ export const useChatStore = defineStore('chat', () => {
       console.log('Message ID:', savedMessage.data?.id);
       
       // Extract message ID - handle different possible response structures
-      const messageId = savedMessage.data?.id || savedMessage.data?.data?.id || savedMessage.id;
+      const messageId = savedMessage.data?.id || (savedMessage.data as any)?.data?.id;
       
       if (!messageId) {
         console.error('Message ID is missing from response. Full response:', savedMessage);
@@ -260,7 +261,7 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         function processChunk(): Promise<void> {
-          return reader.read().then(({ done, value }) => {
+          return reader!.read().then(({ done, value }) => {
             if (done) {
               resolve();
               return;
@@ -336,11 +337,13 @@ export const useChatStore = defineStore('chat', () => {
         activeSession.value.messages.push(activeMessage);
       }
 
-      streamingBuffer = content || '';
-      activeMessage.content = streamingBuffer;
-      activeMessage.pending = true;
-      activeMessage.timestamp = now.toLocaleTimeString();
-      activeMessage.date = now.toLocaleDateString();
+      if (activeMessage) {
+        streamingBuffer = content || '';
+        activeMessage.content = streamingBuffer;
+        activeMessage.pending = true;
+        activeMessage.timestamp = now.toLocaleTimeString();
+        activeMessage.date = now.toLocaleDateString();
+      }
     } else if (type === "end_stream") {
       const finalContent = (content && content.length > 0) ? content : streamingBuffer;
       if (activeSession.value && streamingMessageId) {

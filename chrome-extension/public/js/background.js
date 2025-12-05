@@ -592,45 +592,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     
     // Chat-related message handlers removed - will be re-implemented in future update
     
-    if (request.name === 'highlight-citation') {
-        (async () => {  // Wrap in async IIFE
-            try {
-                const { active_tab_id } = await chrome.storage.session.get(['active_tab_id']);
-                if (!active_tab_id) {
-                    console.error('No active tab ID found in storage');
-                    
-                    // If no active tab ID in storage, try to get the current active tab
-                    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-                    if (tabs && tabs.length > 0) {
-                        const currentTabId = tabs[0].id;
-                        console.log('Retrieved current active tab ID:', currentTabId);
-                        
-                        // Store it for future use
-                        await chrome.storage.session.set({ active_tab_id: currentTabId });
-                        
-                        // Continue with this tab ID
-                        await handleHighlighting(currentTabId, request.verbatim, sendResponse);
-                        return;
-                    }
-                    
-                    sendResponse({
-                        success: false,
-                        error: 'No active tab found'
-                    });
-                    return;
-                }
-                
-                await handleHighlighting(active_tab_id, request.verbatim, sendResponse);
-            } catch (error) {
-                console.error('Error in highlight-citation handler:', error);
-                sendResponse({
-                    success: false,
-                    error: error.message || 'Unknown error'
-                });
-            }
-        })();
-        return true;
-    }
+    // highlight-citation is handled by the message handler at line 881
     // Don't log unknown requests here - let other handlers process them
     // Return false so other listeners can handle the message
     return false;
