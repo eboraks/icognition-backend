@@ -1,6 +1,6 @@
 <template>
   <div class="filter-tree-container">
-    <IconField iconPosition="left" class="w-full mb-3">
+    <IconField iconPosition="left" class="w-full mb-3 filter-search-input">
         <InputIcon class="pi pi-search" style="top: 70% !important; transform: translateY(-70%) !important;" />
         <InputText
           v-model="searchQuery"
@@ -214,6 +214,12 @@ onMounted(() => {
   flex-direction: column;
   overflow: hidden;
   min-height: 0;
+}
+
+.filter-search-input {
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
 }
 
 :deep(.p-tree) {

@@ -313,6 +313,10 @@ const userMenuItems = [
 .layout-sidebar-content {
   padding: 1rem;
   height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
 }
 
 @media (max-width: 991px) {

@@ -10,11 +10,22 @@
             v-model:selectionKeys="selectedKeys"
             class="w-full" />
     </div>
-    <div class="flex align-items-center justify-content-between mt-2 pt-2 border-top-1 border-300" v-if="selectedLabels.length > 0">
-      <div class="flex gap-1 flex-wrap flex-1">
-        <span class="text-color text-xs">{{ selectedLabels.length }} Selected Filters</span>
+    <!-- Use PrimeVue Divider and Chip components with PrimeFlex utilities -->
+    <Divider v-if="selectedLabels.length > 0" />
+    <div v-if="selectedLabels.length > 0" class="flex flex-column gap-2 flex-shrink-0 pt-2">
+      <div class="flex align-items-center justify-content-between">
+        <span class="text-xs text-color-secondary">{{ selectedLabels.length }} Selected</span>
+        <Button label="Clear" text size="small" @click="clear" />
       </div>
-      <Button label="Clear" text size="small" @click="clear" />
+      <div class="flex flex-wrap gap-1">
+        <Chip 
+          v-for="(label, index) in selectedLabels" 
+          :key="index"
+          :label="label"
+          removable
+          @remove="removeFilter(label)"
+        />
+      </div>
     </div>
   </div>
 </template>
@@ -22,8 +33,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import Tree, { TreeSelectionKeys } from 'primevue/tree';
-import Tag from 'primevue/tag';
+import Chip from 'primevue/chip';
 import Button from 'primevue/button';
+import Divider from 'primevue/divider';
 import InputText from 'primevue/inputtext';
 import IconField from 'primevue/iconfield';
 import InputIcon from 'primevue/inputicon';
@@ -87,8 +99,27 @@ const clear = () => {
   selectedKeys.value = {};
   emit('update:filters', selectedKeys.value);
 };
+
+const removeFilter = (label: string) => {
+  // Find the key for this label and uncheck it
+  const keyToRemove = Object.keys(labelsMap.value).find(
+    key => labelsMap.value[key] === label
+  );
+  if (keyToRemove) {
+    const newSelection = { ...selectedKeys.value };
+    if (typeof newSelection[keyToRemove] === 'object') {
+      newSelection[keyToRemove] = { ...newSelection[keyToRemove], checked: false };
+    } else {
+      delete newSelection[keyToRemove];
+    }
+    selectedKeys.value = newSelection;
+    emit('update:filters', selectedKeys.value);
+  }
+};
 </script>
 
 <style scoped>
+/* Using PrimeFlex utilities instead of custom CSS where possible */
+/* Only minimal custom styles if needed for specific adjustments */
 </style>
 
