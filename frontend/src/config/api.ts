@@ -6,7 +6,7 @@
 // API Configuration
 export const API_CONFIG = {
   // Base URL for the FastAPI backend
-  BASE_URL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000',
+  BASE_URL: import.meta.env.VITE_APP_API_BASE_URL || 'http://localhost:8000',
   
   // Timeout settings
   TIMEOUT: 30000, // 30 seconds

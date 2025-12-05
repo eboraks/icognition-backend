@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, JSONResponse
 
 from app.core.config import settings
 from app.core.security_middleware import SecurityMiddleware
@@ -163,6 +163,127 @@ async def health_check():
         "message": "iCognition API is running",
         "version": "0.1.0"
     }
+
+
+@app.get("/status")
+async def status_check():
+    """
+    Detailed status endpoint that checks database and Gemini connectivity.
+    Returns the health status of critical services.
+    """
+    from app.db.database import async_session
+    from app.services.gemini_service import get_gemini_service, GeminiModel, GeminiConfig
+    from sqlalchemy import text
+    
+    status = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "service": "iCognition API",
+        "version": "0.1.0",
+        "checks": {}
+    }
+    
+    overall_healthy = True
+    
+    # Check database connectivity
+    db_status = {
+        "status": "unknown",
+        "message": "",
+        "details": {}
+    }
+    
+    try:
+        async with async_session() as session:
+            # Simple query to test connection
+            result = await session.execute(text("SELECT version(), current_database(), current_user"))
+            row = result.fetchone()
+            
+            db_status["status"] = "healthy"
+            db_status["message"] = "Database connection successful"
+            db_status["details"] = {
+                "postgresql_version": row[0] if row else "unknown",
+                "database": row[1] if row else "unknown",
+                "user": row[2] if row else "unknown"
+            }
+            
+            # Test pgvector extension
+            result = await session.execute(text("SELECT * FROM pg_extension WHERE extname = 'vector'"))
+            extension = result.fetchone()
+            db_status["details"]["pgvector_installed"] = extension is not None
+            
+    except Exception as e:
+        db_status["status"] = "unhealthy"
+        db_status["message"] = f"Database connection failed: {str(e)}"
+        overall_healthy = False
+    
+    status["checks"]["database"] = db_status
+    
+    # Check Gemini API connectivity
+    gemini_status = {
+        "status": "unknown",
+        "message": "",
+        "details": {}
+    }
+    
+    try:
+        gemini_service = get_gemini_service()
+        
+        # Check if API key is configured
+        api_key = getattr(gemini_service, 'api_key', None)
+        if gemini_service.mock_mode:
+            gemini_status["status"] = "unhealthy"
+            gemini_status["message"] = "Gemini service is in mock mode (API key not configured)"
+            overall_healthy = False
+        elif not api_key:
+            gemini_status["status"] = "unhealthy"
+            gemini_status["message"] = "Gemini API key not configured"
+            overall_healthy = False
+        elif gemini_service.client is None:
+            gemini_status["status"] = "unhealthy"
+            gemini_status["message"] = "Gemini client not initialized"
+            overall_healthy = False
+        else:
+            # Make a simple test call to verify connectivity
+            # Use a minimal prompt to test the API
+            test_response = await gemini_service.generate_content(
+                prompt="Say 'OK' if you can read this.",
+                model=GeminiModel.FLASH_LITE,
+                config=GeminiConfig(
+                    max_output_tokens=10,
+                    temperature=0.1
+                )
+            )
+            
+            if test_response and test_response.get("text"):
+                gemini_status["status"] = "healthy"
+                gemini_status["message"] = "Gemini API connection successful"
+                gemini_status["details"] = {
+                    "model": GeminiModel.FLASH_LITE.value,
+                    "test_response_received": True
+                }
+            else:
+                gemini_status["status"] = "unhealthy"
+                gemini_status["message"] = "Gemini API returned empty response"
+                overall_healthy = False
+                
+    except Exception as e:
+        gemini_status["status"] = "unhealthy"
+        gemini_status["message"] = f"Gemini API connection failed: {str(e)}"
+        overall_healthy = False
+    
+    status["checks"]["gemini"] = gemini_status
+    
+    # Set overall status
+    status["status"] = "healthy" if overall_healthy else "degraded"
+    
+    # Return appropriate HTTP status code
+    if overall_healthy:
+        return status
+    else:
+        # Return 503 Service Unavailable if any check fails
+        return JSONResponse(
+            content=status,
+            status_code=503
+        )
 
 
 
