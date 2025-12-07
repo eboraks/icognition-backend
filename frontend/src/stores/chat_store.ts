@@ -207,6 +207,11 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function streamChatResponse(sessionId: number, messageId: number) {
+    const startTime = Date.now();
+    const log = (msg: string) => console.log(`[${new Date().toISOString()}] [Chat SSE] ${msg}`);
+    
+    log(`Starting SSE stream for session ${sessionId}, message ${messageId}`);
+    
     // Close existing EventSource if any
     if (eventSource) {
       eventSource.close();
@@ -215,30 +220,37 @@ export const useChatStore = defineStore('chat', () => {
 
     return new Promise<void>(async (resolve, reject) => {
       if (!activeSession.value || !authStore.currentUser) {
+        log('ERROR: No active session or user');
         reject(new Error('No active session or user'));
         return;
       }
 
       const apiBase = import.meta.env.VITE_APP_API_BASE_URL as string;
+      log(`API Base URL: ${apiBase}`);
       
       // Get Firebase ID token
       const auth = getAuth();
       const user = auth.currentUser;
       if (!user) {
+        log('ERROR: No authenticated Firebase user');
         reject(new Error('No authenticated user'));
         return;
       }
       
       let token: string;
       try {
+        log('Getting Firebase ID token...');
         token = await user.getIdToken();
+        log('Firebase ID token obtained successfully');
       } catch (error) {
+        log(`ERROR: Failed to get Firebase token: ${error}`);
         reject(new Error('Failed to get authentication token'));
         return;
       }
 
       // Create SSE connection with authentication
       const streamUrl = `${apiBase}/api/v1/chat/sessions/${sessionId}/stream?message_id=${messageId}`;
+      log(`Fetching SSE stream from: ${streamUrl}`);
       
       // Use fetch with ReadableStream for SSE (EventSource doesn't support custom headers)
       fetch(streamUrl, {
@@ -248,24 +260,36 @@ export const useChatStore = defineStore('chat', () => {
           'Accept': 'text/event-stream',
         },
       }).then(response => {
+        log(`SSE response received, status: ${response.status}, ok: ${response.ok}`);
         if (!response.ok) {
+          log(`ERROR: SSE response not ok, status: ${response.status}`);
           throw new Error(`HTTP error! status: ${response.status}`);
         }
 
         const reader = response.body?.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
+        let chunkNumber = 0;
 
         if (!reader) {
+          log('ERROR: Response body is not readable');
           throw new Error('Response body is not readable');
         }
+
+        log('SSE reader obtained, starting to process chunks...');
 
         function processChunk(): Promise<void> {
           return reader!.read().then(({ done, value }) => {
             if (done) {
+              const duration = Date.now() - startTime;
+              log(`SSE stream completed in ${duration}ms, total chunks processed: ${chunkNumber}`);
               resolve();
               return;
             }
+
+            chunkNumber++;
+            const bytesReceived = value?.length || 0;
+            log(`SSE chunk #${chunkNumber} received: ${bytesReceived} bytes`);
 
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split('\n');
@@ -274,16 +298,19 @@ export const useChatStore = defineStore('chat', () => {
             for (const line of lines) {
               if (line.startsWith('event: ')) {
                 const eventType = line.substring(7).trim();
+                log(`SSE event type: ${eventType}`);
                 continue;
               }
 
               if (line.startsWith('data: ')) {
                 const data = line.substring(6).trim();
+                log(`SSE data received (${data.length} chars): ${data.substring(0, 100)}...`);
                 try {
                   const messageData = JSON.parse(data);
+                  log(`Parsed SSE message: type=${messageData.type}, content_length=${messageData.content?.length || 0}`);
                   handleSSEMessage(messageData);
                 } catch (e) {
-                  console.error('Failed to parse SSE data:', data, e);
+                  console.error(`[${new Date().toISOString()}] [Chat SSE] ERROR: Failed to parse SSE data:`, data, e);
                 }
               }
             }
@@ -292,17 +319,30 @@ export const useChatStore = defineStore('chat', () => {
           });
         }
 
-        processChunk().catch(reject);
-      }).catch(reject);
+        processChunk().catch(err => {
+          log(`ERROR in SSE processChunk: ${err.message}`);
+          reject(err);
+        });
+      }).catch(err => {
+        log(`ERROR in SSE fetch: ${err.message}`);
+        reject(err);
+      });
     });
   }
 
   function handleSSEMessage(messageData: { type: string; content?: string; message_id?: string }) {
+    const log = (msg: string) => console.log(`[${new Date().toISOString()}] [SSE Handler] ${msg}`);
     const { type, content, message_id } = messageData;
     const now = new Date();
+    
+    log(`Handling message type: ${type}, content_length: ${content?.length || 0}, message_id: ${message_id}`);
 
     if (type === "stream_chunk") {
-      if (!activeSession.value) return;
+      if (!activeSession.value) {
+        log('WARNING: No active session, cannot handle stream_chunk');
+        return;
+      }
+      log('Processing stream_chunk...');
 
       if (!streamingMessageId) {
         streamingMessageId = message_id || `agent-${Date.now()}`;
@@ -343,10 +383,13 @@ export const useChatStore = defineStore('chat', () => {
         activeMessage.pending = true;
         activeMessage.timestamp = now.toLocaleTimeString();
         activeMessage.date = now.toLocaleDateString();
+        log(`stream_chunk processed: ${streamingBuffer.length} chars total`);
       }
     } else if (type === "end_stream") {
+      log('Processing end_stream...');
       const finalContent = (content && content.length > 0) ? content : streamingBuffer;
       if (activeSession.value && streamingMessageId) {
+        log(`Finalizing message: ${finalContent.length} chars`);
         const activeMessage = activeSession.value.messages.find(msg => msg._id === streamingMessageId);
         if (activeMessage) {
           activeMessage.content = finalContent || '';
@@ -357,8 +400,10 @@ export const useChatStore = defineStore('chat', () => {
       }
       streamingMessageId = null;
       streamingBuffer = '';
+      log('end_stream processed successfully');
     } else if (type === "error") {
-      console.error('Backend SSE error:', content);
+      log(`ERROR event received: ${content}`);
+      console.error(`[${new Date().toISOString()}] [SSE Handler] Backend SSE error:`, content);
       if (activeSession.value) {
         if (streamingMessageId) {
           const pendingMessage = activeSession.value.messages.find(msg => msg._id === streamingMessageId);
