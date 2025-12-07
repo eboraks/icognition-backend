@@ -201,12 +201,17 @@ async def stream_chat_response(
     
     async def generate_stream():
         """Generator function that yields SSE events"""
+        logger.info(f"[Session {session_id}] SSE generate_stream() started for message_id: {message_id}")
         assistant_response = ""
         response_message_id = str(uuid.uuid4())
+        chunk_count = 0
         
         try:
             # Stream the AI response
+            logger.info(f"[Session {session_id}] Starting iteration over chat_agent_service.get_stream()...")
             async for chunk in chat_agent_service.get_stream(session_id, user_message, user_context.user.id):
+                chunk_count += 1
+                logger.info(f"[Session {session_id}] SSE received chunk #{chunk_count}: {len(chunk) if chunk else 0} chars")
                 if chunk:
                     assistant_response += chunk
                     # Format the accumulated response
@@ -218,7 +223,10 @@ async def stream_chat_response(
                         "content": formatted_content,
                         "message_id": response_message_id
                     }
+                    logger.info(f"[Session {session_id}] Yielding SSE event: stream_chunk (response length: {len(assistant_response)})")
                     yield f"event: stream_chunk\ndata: {json.dumps(event_data)}\n\n"
+            
+            logger.info(f"[Session {session_id}] Stream iteration completed. Total chunks: {chunk_count}, Total response: {len(assistant_response)} chars")
             
             # Send end_stream event
             formatted_content = format_chat_message(assistant_response)
@@ -227,6 +235,7 @@ async def stream_chat_response(
                 "content": formatted_content,
                 "message_id": response_message_id
             }
+            logger.info(f"[Session {session_id}] Sending end_stream event")
             yield f"event: end_stream\ndata: {json.dumps(event_data)}\n\n"
             
             # Save assistant response after streaming completes

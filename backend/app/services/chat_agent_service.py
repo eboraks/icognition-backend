@@ -237,14 +237,16 @@ class ChatAgentService:
                     "when referencing specific documents."
                 )
                 
+                logger.info(f"[Session {session_id}] Getting checkpointer...")
                 checkpointer = await get_checkpointer()
+                logger.info(f"[Session {session_id}] Checkpointer obtained, creating ReAct agent...")
                 agent = create_react_agent(
                     model=llm,
                     tools=[retrieve_tool],
                     prompt=system_prompt,
                     checkpointer=checkpointer
                 )
-                logger.info("Created LangGraph ReAct agent with tools and checkpointer")
+                logger.info(f"[Session {session_id}] Created LangGraph ReAct agent with tools and checkpointer")
             except Exception as e:
                 logger.error(f"Failed to create agent: {e}", exc_info=True)
                 yield "Error: Failed to create chat agent."
@@ -254,26 +256,34 @@ class ChatAgentService:
             # LangGraph will automatically load previous messages from the checkpointer
             input_messages = [HumanMessage(content=message)]
             
-            logger.info(f"Streaming response for thread_id: {thread_id}")
+            logger.info(f"[Session {session_id}] Starting stream for thread_id: {thread_id}")
             
             # Stream agent responses using LangGraph's value stream (mirrors previous behavior)
             accumulated_text = ""
+            chunk_count = 0
             try:
+                logger.info(f"[Session {session_id}] Calling agent.astream()...")
                 async for chunk in agent.astream(
                     {"messages": input_messages},
                     config={"thread_id": thread_id},
                     stream_mode="values"
                 ):
+                    chunk_count += 1
+                    logger.info(f"[Session {session_id}] Received chunk #{chunk_count} from agent.astream()")
                     messages = chunk.get("messages", [])
                     if not messages:
+                        logger.info(f"[Session {session_id}] Chunk #{chunk_count} has no messages, skipping")
                         continue
 
                     latest_message = messages[-1]
+                    logger.info(f"[Session {session_id}] Latest message type: {type(latest_message).__name__}")
                     if not isinstance(latest_message, AIMessage):
+                        logger.info(f"[Session {session_id}] Not an AIMessage, skipping")
                         continue
                     
                     text = extract_text_from_content(getattr(latest_message, "content", None))
                     if not text:
+                        logger.info(f"[Session {session_id}] No text content extracted, skipping")
                         continue
 
                     if text.startswith(accumulated_text):
@@ -283,8 +293,12 @@ class ChatAgentService:
 
                     accumulated_text = text
                     if new_text:
-                        logger.debug("Streaming chunk emitted (%d chars)", len(new_text))
+                        logger.info(f"[Session {session_id}] Yielding chunk: {len(new_text)} chars (total: {len(accumulated_text)})")
                         yield new_text
+                    else:
+                        logger.info(f"[Session {session_id}] No new text to yield in this chunk")
+                
+                logger.info(f"[Session {session_id}] Stream loop completed. Total chunks: {chunk_count}, Total text: {len(accumulated_text)} chars")
 
             except RetryError as e:
                 logger.error(f"Network error while contacting AI service: {e}", exc_info=True)
