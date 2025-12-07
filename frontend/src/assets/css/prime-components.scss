@@ -46,9 +46,10 @@
     font-weight: var(--p-dialog-title-font-weight);
 }
 
-.p-fileupload-choose-button {
-    background-color: var(--primary-color);
-}
+// Removed custom primary color override - use PrimeVue Aura defaults
+// .p-fileupload-choose-button {
+//     background-color: var(--primary-color);
+// }
 
 .p-floatlabel {
     &:has(input:focus) label {
@@ -170,12 +171,12 @@
     }
 
     .p-tree-container .p-treenode .p-treenode-content.p-treenode-selectable:not(.p-highlight):hover {
-        background: transparent;
-        color: white;
+        background: var(--surface-100);
+        color: var(--surface-800);
     }
 
     .p-inputicon {
-        color: white;
+        color: var(--surface-500);
     }
 }
 

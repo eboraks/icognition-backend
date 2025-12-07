@@ -1,9 +1,10 @@
 /* color palette */
 :root {
-  --primary-color:#3497BE!important;      // Primary Main
-  --primary-200:#8AD3E1!important;        // Primary Light
-  --primary-500:#3497be!important;        // Primary Main
-  --primary-800:#054761!important;        // Primary Dark
+  --primary-color:#3497BE;      // Primary Main
+  --primary-color-text:#ffffff; // Primary contrast text
+  --primary-200:#8AD3E1;        // Primary Light
+  --primary-500:#3497be;        // Primary Main
+  --primary-800:#054761;        // Primary Dark
 
   --cyan-200:rgba(0,170,255,.95)!important;  // Select Light
   --cyan-500:rgba(0,170,255,.9)!important;  // Select Main
@@ -86,8 +87,9 @@
   --p-breadcrumb-background: transparent;
   --p-breadcrumb-padding: 0em 0em .25em .25em;
   --p-button-icon-only-width: 2em;
-  --p-button-primary-background: var(--primary-color);
-  --p-button-primary-border-color: var(--primary-color);
+  // Removed custom primary color overrides - use PrimeVue Aura defaults
+  // --p-button-primary-background: var(--primary-color);
+  // --p-button-primary-border-color: var(--primary-color);
   --p-button-primary-hover-background: transparent;
   --p-button-primary-hover-border-color: transparent;
   --p-button-sm-font-size: .75rem;
@@ -122,10 +124,10 @@
   --p-tag-padding: .1rem .25rem;
   --p-tag-primary-background: var(--blue-100);
   --p-tag-primary-color: var(--vt-c-black);
-  --p-tree-node-color: var(--vt-c-white);
-  --p-tree-node-hover-background: transparent;
-  --p-tree-node-hover-color: var(--vt-c-white);
-  --p-tree-node-toggle-button-color: var(--vt-c-white);
+  --p-tree-node-color: var(--surface-700);
+  --p-tree-node-hover-background: var(--surface-100);
+  --p-tree-node-hover-color: var(--surface-800);
+  --p-tree-node-toggle-button-color: var(--surface-600);
 }
 
 @media (prefers-color-scheme: dark) {
