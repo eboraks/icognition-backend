@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from sqlalchemy.orm import selectinload
 import logging
+import html
 from datetime import datetime
 
 from app.models import Document, User, ContentExtraction, PageType, Entity, EntityDocument
@@ -116,6 +117,20 @@ class DocumentService(UserIsolatedService[Document]):
                     'extracted_metadata': enhanced_metadata,
                     'content_extraction': content_extraction
                 }
+                
+                # Store page detection info if available
+                if fetch_metadata.get('page_detection'):
+                    page_detection = fetch_metadata['page_detection']
+                    document.document_metadata['page_detection'] = page_detection
+                    
+                    # Log warnings if any
+                    if page_detection.get('warnings'):
+                        for warning in page_detection['warnings']:
+                            logger.warning(f"Page detection warning for document {document.id}: {warning}")
+                    
+                    # If page requires JS and we detected placeholder content, mark it
+                    if page_detection.get('issues'):
+                        logger.info(f"Document {document.id} has detected issues: {', '.join(page_detection['issues'])}")
                 
                 # Store extracted fields
                 if enhanced_metadata.get('author'):
@@ -333,30 +348,59 @@ class DocumentService(UserIsolatedService[Document]):
 
     def _find_main_content_container(self, soup: BeautifulSoup):
         """Find the main content container using semantic HTML5 and common patterns"""
-        # Priority order: article > main > div with main/content/article in id/class
+        # PRIORITY 2: Enhanced selectors with WordPress/Elementor support
+        # Priority order: specific content containers > semantic HTML > generic patterns
         selectors = [
             'article',
             'main',
+            # WordPress/Elementor/Page Builder specific (high priority)
+            '.jupiterx-post-content',
+            '.elementor-widget-text-editor',
+            '.entry-content',
+            '.post-content',
+            '.article-content',
+            '.article-body',
+            '.story-content',
+            # Gutenberg blocks
+            '.wp-block-post-content',
+            # Divi builder
+            '.et_pb_post_content',
+            # Generic semantic containers (exclude nav/sidebar)
+            'div[id="main"]:not([id*="sidebar"])',
+            'div[id="content"]:not([id*="sidebar"])',
+            'div[id*="main-content"]',
+            'div[id*="article"]',
+            'div[id*="post-"]:not([id*="related"]):not([id*="nav"])',
+            'div[id*="entry"]',
+            # Class-based selectors (more specific to avoid sidebars)
+            'div[class*="main-content"]:not([class*="sidebar"])',
+            'div[class*="post-content"]:not([class*="sidebar"])',
+            'div[class*="article-content"]:not([class*="sidebar"])',
+            'div[class*="entry-content"]:not([class*="sidebar"])',
+            # Less specific fallbacks
             'div[id*="main"]',
             'div[class*="main"]',
             'div[id*="content"]',
             'div[class*="content"]',
-            'div[id*="article"]',
-            'div[class*="article"]',
-            'div[id*="post"]',
-            'div[class*="post"]',
-            'div[id*="entry"]',
-            'div[class*="entry"]',
             'div[id*="body"]',
             'div[class*="body"]'
         ]
         
         for selector in selectors:
-            container = soup.select_one(selector)
-            if container:
-                return container
+            try:
+                container = soup.select_one(selector)
+                if container:
+                    # Verify container has meaningful content (not just navigation)
+                    text_content = container.get_text(strip=True)
+                    if len(text_content) > 100:  # Minimum content threshold
+                        logger.debug(f"Found main content container using selector: {selector}")
+                        return container
+            except Exception as e:
+                logger.debug(f"Error with selector {selector}: {str(e)}")
+                continue
         
         # Fallback to body if nothing found
+        logger.debug("No specific content container found, falling back to body")
         return soup.find('body') or soup
 
     def _extract_title_from_html(self, soup: BeautifulSoup) -> str:
@@ -592,32 +636,109 @@ class DocumentService(UserIsolatedService[Document]):
         if not container:
             return ""
         
-        # Remove unwanted elements based on page type
+        # PRIORITY 1: More specific unwanted selectors to avoid removing content
+        # Use prefix matches (^=) and specific classes instead of contains (*=)
         unwanted_selectors = [
-            'script', 'style', 'nav', 'header', 'footer', 'aside',
-            '[class*="nav"]', '[class*="menu"]', '[class*="sidebar"]',
-            '[class*="footer"]', '[class*="header"]', '[class*="ad"]',
-            '[class*="advertisement"]', '[class*="related"]'
+            'script', 'style', 'nav', 'aside',
+            # Only remove actual structural elements, not content metadata
+            'header:not(article header):not(main header):not([class*="post-header"]):not([class*="article-header"])',
+            'footer:not(article footer):not(main footer):not([class*="post-footer"]):not([class*="article-footer"])',
+            '[role="banner"]', '[role="navigation"]', '[role="complementary"]',
+            # Use prefix matches to be more specific
+            '[class^="nav-"]', '[class^="menu-"]', '[class^="sidebar-"]',
+            # Specific ad/promotional classes
+            '.advertisement', '.ads', '.ad-banner', '.sponsored', '.promo',
+            # Social and newsletter - specific classes only
+            '.social-share', '.newsletter-signup', '.subscribe-box',
+            # Cookie/privacy notices
+            '.cookie-notice', '.privacy-notice', '.cky-consent',
+            # Related content sections - use specific classes
+            '.related-posts', '.recommended-posts', '.recommended-articles'
         ]
         
         # For forum/social media, keep comments
         if page_type not in ['forum_post', 'social_media']:
-            unwanted_selectors.extend(['[class*="comment"]', '[id*="comment"]'])
+            unwanted_selectors.extend(['.comments-section', '.comment-form', '[id^="comment-"]'])
         
         for selector in unwanted_selectors:
-            for element in container.select(selector):
-                element.decompose()
+            try:
+                for element in container.select(selector):
+                    element.decompose()
+            except Exception as e:
+                logger.debug(f"Error removing unwanted selector {selector}: {str(e)}")
+                continue
         
-        # Extract content elements preserving HTML structure
-        # Include 'a' tags to capture standalone links with important information
-        content_elements = container.select('h1, h2, h3, h4, h5, h6, p, ul, ol, li, blockquote, a')
+        # PRIORITY 3: Extract content elements preserving HTML structure
+        # First try semantic tags
+        content_elements = container.select('h1, h2, h3, h4, h5, h6, p, ul, ol, blockquote')
         
+        # If not enough content found, look for page builder containers (Elementor, Divi, etc.)
+        if not content_elements or len(''.join(e.get_text(strip=True) for e in content_elements)) < 200:
+            logger.debug("Semantic tags yielded insufficient content, checking page builder containers")
+            
+            # Look for Elementor/WordPress widgets
+            page_builder_widgets = container.select(
+                '.elementor-widget-container, .elementor-text-editor, '
+                '.et_pb_text, .fl-rich-text, '  # Divi and Beaver Builder
+                '.wp-block-paragraph, .entry-content > div'  # Gutenberg and WordPress
+            )
+            
+            additional_content = []
+            for widget in page_builder_widgets:
+                # Extract content from widget containers
+                widget_content = widget.select('p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote')
+                additional_content.extend(widget_content)
+            
+            if additional_content:
+                logger.debug(f"Found {len(additional_content)} additional content elements in page builder widgets")
+                content_elements = additional_content
+        
+        # PRIORITY 4: Enhanced fallback - find text-bearing divs
         if not content_elements:
-            # Fallback: wrap all text in article tag
-            text = container.get_text().strip()
+            logger.debug("No content elements found, using enhanced fallback")
+            text_parts = []
+            seen_texts = set()  # Track seen text to avoid duplicates
+            
+            # Walk through all text-bearing elements
+            for elem in container.find_all(['div', 'section', 'span', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+                # Skip empty elements
+                text = elem.get_text(strip=True)
+                if len(text) < 20:  # Minimum meaningful content threshold
+                    continue
+                
+                # Avoid duplicates from nested elements
+                if text in seen_texts:
+                    continue
+                
+                # Check if this text is not a substring of already captured text
+                is_duplicate = False
+                for seen in seen_texts:
+                    if text in seen or seen in text:
+                        # If current text is longer, replace the shorter one
+                        if len(text) > len(seen):
+                            seen_texts.discard(seen)
+                            for i, part in enumerate(text_parts):
+                                if seen in part:
+                                    text_parts[i] = text
+                                    is_duplicate = True
+                                    break
+                        else:
+                            is_duplicate = True
+                        break
+                
+                if not is_duplicate:
+                    text_parts.append(text)
+                    seen_texts.add(text)
+            
+            if text_parts:
+                # Wrap in article with paragraphs
+                paragraphs = ''.join(f'<p>{self._escape_html(text)}</p>' for text in text_parts[:50])  # Limit to 50 parts
+                return f"<article>{paragraphs}</article>"
+            
+            # Ultimate fallback: get all text
+            text = container.get_text(strip=True)
             if text:
-                # Wrap plain text in article with paragraph
-                return f"<article><p>{text}</p></article>"
+                return f"<article><p>{self._escape_html(text)}</p></article>"
             return ""
         
         # Create article wrapper
@@ -694,6 +815,10 @@ class DocumentService(UserIsolatedService[Document]):
         except Exception as e:
             logger.debug(f"Error cloning element {element.name if hasattr(element, 'name') else 'unknown'}: {str(e)}")
             return None
+    
+    def _escape_html(self, text: str) -> str:
+        """Escape HTML special characters in text"""
+        return html.escape(text)
 
     def _calculate_extraction_confidence(self, content: str, title: str, author: str, 
                                        publication_date: str, image_url: str, 
@@ -858,6 +983,20 @@ Return your response as JSON in this exact format, if the fields are not present
                     'extracted_metadata': enhanced_metadata,
                     'content_extraction': content_extraction
                 })
+                
+                # Store page detection info if available
+                if fetch_metadata.get('page_detection'):
+                    page_detection = fetch_metadata['page_detection']
+                    document.document_metadata['page_detection'] = page_detection
+                    
+                    # Log warnings if any
+                    if page_detection.get('warnings'):
+                        for warning in page_detection['warnings']:
+                            logger.warning(f"Page detection warning for document {document.id}: {warning}")
+                    
+                    # If page requires JS and we detected placeholder content, mark it
+                    if page_detection.get('issues'):
+                        logger.info(f"Document {document.id} has detected issues: {', '.join(page_detection['issues'])}")
                 
                 # Store extracted fields
                 if enhanced_metadata.get('author'):

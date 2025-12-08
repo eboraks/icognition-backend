@@ -226,16 +226,27 @@ class ChatAgentService:
             
             # Create LangGraph ReAct agent with checkpointer for memory
             try:
-                system_prompt = (
-                    "You are a helpful research assistant that can answer questions using the user's document library. "
-                    "When users ask questions, use the retrieve_documents_tool to find relevant documents from their library. "
-                    "IMPORTANT: After retrieving documents, you must synthesize the information and provide a comprehensive, "
-                    "natural-language answer to the user's question. Do NOT simply repeat the tool output verbatim. "
-                    "Use the retrieved document content to craft a clear, well-structured response that directly answers "
-                    "the user's question. If the documents don't contain relevant information, let the user know clearly. "
-                    "The tool returns cleaned text content - use it to inform your answer. Always cite document titles and URLs "
-                    "when referencing specific documents."
-                )
+                # Try to get system prompt from database, fallback to hardcoded
+                from app.services.prompt_service import PromptService
+                prompt_service = PromptService(db_session)
+                db_prompt = await prompt_service.get_latest_prompt("react_agent_system")
+                
+                if db_prompt:
+                    system_prompt = db_prompt.content
+                    logger.info(f"[Session {session_id}] Using system prompt from database (version {db_prompt.version})")
+                else:
+                    # Fallback to hardcoded prompt
+                    system_prompt = (
+                        "You are a helpful research assistant that can answer questions using the user's document library. "
+                        "When users ask questions, use the retrieve_documents_tool to find relevant documents from their library. "
+                        "IMPORTANT: After retrieving documents, you must synthesize the information and provide a comprehensive, "
+                        "natural-language answer to the user's question. Do NOT simply repeat the tool output verbatim. "
+                        "Use the retrieved document content to craft a clear, well-structured response that directly answers "
+                        "the user's question. If the documents don't contain relevant information, let the user know clearly. "
+                        "The tool returns cleaned text content - use it to inform your answer. Always cite document titles and URLs "
+                        "when referencing specific documents."
+                    )
+                    logger.info(f"[Session {session_id}] Using fallback hardcoded system prompt")
                 
                 logger.info(f"[Session {session_id}] Getting checkpointer...")
                 checkpointer = await get_checkpointer()

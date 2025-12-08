@@ -10,13 +10,14 @@ from pydantic import BaseModel, Field, EmailStr
 class UserProfileResponse(BaseModel):
     """User profile response model"""
     
-    id: int
-    firebase_uid: str
+    id: str  # Changed to str to match User.id (Firebase UID)
+    firebase_uid: Optional[str] = None  # Optional for backward compatibility
     email: Optional[str] = None
     display_name: Optional[str] = None
     photo_url: Optional[str] = None
     is_active: bool
     is_verified: bool
+    role: Optional[str] = None  # Added role field
     first_login: Optional[datetime] = None
     last_login: Optional[datetime] = None
     last_active: Optional[datetime] = None

@@ -8,8 +8,27 @@ let isSidePanelOpen = false; // Track side panel state
 
 
 //Test adding comments 
-const base_url = import.meta.env.VITE_BASE_URL || 'https://stg.api.icognition.ai'
-console.log('base_url: ', base_url)
+let base_url = import.meta.env.VITE_BASE_URL || 'https://stg.api.icognition.ai'
+
+// Initialize base_url from storage
+const initializeBaseUrl = async () => {
+    try {
+        const result = await chrome.storage.local.get(['backendEnvironment']);
+        const environment = result.backendEnvironment || 'staging';
+        
+        if (environment === 'development') {
+            base_url = 'http://localhost:8000';
+        } else {
+            base_url = 'https://stg.api.icognition.ai';
+        }
+        console.log('Base URL initialized to:', base_url);
+    } catch (error) {
+        console.error('Error initializing base URL:', error);
+    }
+};
+
+// Initialize on load
+initializeBaseUrl();
 
 const Endpoints = {
     ping: '/ping',
@@ -240,6 +259,13 @@ const registerSSEConnection = async () => {
             console.log('SSE connection opened successfully');
             isConnecting = false;
             reconnectAttempts = 0;
+            
+            // Notify extension that SSE is connected
+            chrome.runtime.sendMessage({
+                name: 'sse-reconnected'
+            }).catch(() => {
+                console.log('Unable to notify extension of SSE reconnection (extension may be closed)');
+            });
 
             function processChunk() {
                 return reader.read().then(({ done, value }) => {
@@ -352,6 +378,13 @@ function handleSSEMessage(message) {
 function handleSSEDisconnect() {
     cleanupSSE();
     
+    // Notify extension that SSE is disconnected
+    chrome.runtime.sendMessage({
+        name: 'sse-disconnected'
+    }).catch(() => {
+        console.log('Unable to notify extension of SSE disconnection (extension may be closed)');
+    });
+    
     if (reconnectAttempts < maxReconnectAttempts) {
         const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
         console.log(`Scheduling reconnect attempt ${reconnectAttempts + 1} in ${delay}ms`);
@@ -363,6 +396,14 @@ function handleSSEDisconnect() {
         }, delay);
     } else {
         console.log('Maximum reconnection attempts reached, giving up');
+        // Notify extension of final failure
+        chrome.runtime.sendMessage({
+            name: 'connection-error',
+            error: 'SSE connection failed after maximum retry attempts',
+            type: 'network_error'
+        }).catch(() => {
+            console.log('Unable to notify extension of connection error (extension may be closed)');
+        });
     }
 }
 
@@ -995,6 +1036,45 @@ const deleteBookmark = async (bookmarkId) => {
     }
 }
 
+// Add fetchBookmarkDocument function
+const fetchBookmarkDocument = async (bookmarkId) => {
+    try {
+        const url = `${base_url}${Endpoints.bookmark_by_id.replace('{ID}', bookmarkId)}`;
+        const response = await makeAuthenticatedRequest(url, {
+            method: 'GET',
+        });
+        
+        if (response.ok) {
+            const bookmark = await response.json();
+            console.log('Bookmark fetched successfully:', bookmark);
+            
+            // If bookmark has a document_id, fetch the document
+            if (bookmark.document_id) {
+                const docUrl = `${base_url}${Endpoints.document_by_id.replace('{ID}', bookmark.document_id)}`;
+                const docResponse = await makeAuthenticatedRequest(docUrl, {
+                    method: 'GET',
+                });
+                
+                if (docResponse.ok) {
+                    const document = await docResponse.json();
+                    console.log('Document fetched successfully:', document);
+                    return { success: true, bookmark, document };
+                }
+            }
+            
+            // Return bookmark even if no document
+            return { success: true, bookmark, document: null };
+        } else {
+            const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+            console.error('Error fetching bookmark:', error);
+            return { success: false, error };
+        }
+    } catch (err) {
+        console.error('Error fetching bookmark:', err);
+        return { success: false, error: err };
+    }
+}
+
 // Add deleteDocument function
 const deleteDocument = async (documentId) => {
     try {
@@ -1097,6 +1177,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         } else {
             badgeOff(request.tabId);
         }
+        return true;
+    }
+    else if (request.name === 'fetch-bookmark-document') {
+        console.log('Fetching document for bookmark:', request.bookmarkId);
+        fetchBookmarkDocument(request.bookmarkId).then((result) => {
+            sendResponse(result);
+        }).catch((error) => {
+            console.error('Error fetching bookmark document:', error);
+            sendResponse({ success: false, error: error.message });
+        });
         return true;
     }
     // ... rest of existing message handlers ...
@@ -1230,6 +1320,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         console.log('Clearing shortcuts history');
         recentShortcuts = [];
         sendResponse({ success: true });
+        return true;
+    }
+    
+    // Add handler for updating environment
+    if (message.name === 'update-environment') {
+        console.log('Updating environment to:', message.environment);
+        const newUrl = message.environment === 'development' 
+            ? 'http://localhost:8000' 
+            : 'https://stg.api.icognition.ai';
+        base_url = newUrl;
+        console.log('Base URL updated to:', base_url);
+        
+        // Reconnect SSE with new URL
+        if (eventSourceController) {
+            eventSourceController.abort();
+            eventSourceController = null;
+        }
+        registerSSEConnection();
+        
+        sendResponse({ success: true, baseUrl: base_url });
         return true;
     }
     

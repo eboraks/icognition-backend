@@ -7,13 +7,14 @@ import { api } from './httpClient';
 
 // User Types (matching backend models)
 export interface UserProfileResponse {
-  id: number;
-  firebase_uid: string;
+  id: string;
+  firebase_uid?: string;
   email: string;
   display_name?: string;
   photo_url?: string;
   is_active: boolean;
   is_verified: boolean;
+  role?: string;
   first_login?: string;
   last_login?: string;
   last_active?: string;
@@ -64,14 +65,14 @@ class UserService {
    * Get current user's profile information
    */
   async getUserProfile(): Promise<UserProfileResponse> {
-    return api.get<UserProfileResponse>('/users/profile');
+    return api.get<UserProfileResponse>('/api/v1/users/profile');
   }
 
   /**
    * Update current user's profile information
    */
   async updateUserProfile(data: UserProfileUpdateRequest): Promise<UserProfileResponse> {
-    return api.put<UserProfileResponse>('/users/profile', data);
+    return api.put<UserProfileResponse>('/api/v1/users/profile', data);
   }
 
   /**

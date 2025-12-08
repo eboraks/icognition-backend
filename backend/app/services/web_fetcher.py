@@ -25,10 +25,116 @@ class WebPageFetcher:
     SELF_CLOSING_TAGS = {'br'}
     TEXT_CONTAINER_TAGS = {'p', 'li', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}
     
+    # URL patterns for problematic domains that require special handling
+    PROBLEMATIC_DOMAINS = {
+        'js_required': [
+            'x.com', 'twitter.com',  # X/Twitter requires JavaScript
+            'facebook.com', 'fb.com',  # Facebook requires JavaScript
+            'instagram.com',  # Instagram requires JavaScript
+            'linkedin.com',  # LinkedIn requires JavaScript
+        ],
+        'paywall': [
+            'nytimes.com', 'wsj.com', 'washingtonpost.com',  # News paywalls
+            'medium.com',  # Medium paywall
+        ],
+        'login_required': [
+            'yahoo.com',  # Yahoo requires login for some content
+            'reddit.com',  # Some Reddit content requires login
+        ],
+        'dynamic_content': [
+            'youtube.com', 'youtu.be',  # Video platform
+            'tiktok.com',  # Video platform
+        ]
+    }
+    
     def __init__(self, timeout: int = 30, max_redirects: int = 5):
         self.timeout = timeout
         self.max_redirects = max_redirects
         self.client = None
+    
+    @staticmethod
+    def _get_browser_headers() -> Dict[str, str]:
+        """Get realistic browser headers to avoid bot detection"""
+        return {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br, zstd',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
+        }
+    
+    @staticmethod
+    def _detect_page_type(url: str) -> Dict[str, Any]:
+        """
+        Detect page type and potential issues based on URL
+        
+        Returns:
+            Dictionary with page_type, issues, and warnings
+        """
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
+        
+        # Remove www. prefix for matching
+        if domain.startswith('www.'):
+            domain = domain[4:]
+        
+        detection = {
+            'page_type': 'standard',
+            'issues': [],
+            'warnings': [],
+            'requires_js': False,
+            'has_paywall': False,
+            'requires_login': False,
+            'is_dynamic': False
+        }
+        
+        # Check for JavaScript-required sites
+        for js_domain in WebPageFetcher.PROBLEMATIC_DOMAINS['js_required']:
+            if js_domain in domain:
+                detection['page_type'] = 'js_required'
+                detection['requires_js'] = True
+                detection['warnings'].append(f'Domain {domain} requires JavaScript to render content. Static HTML extraction may fail.')
+                break
+        
+        # Check for paywall sites
+        for paywall_domain in WebPageFetcher.PROBLEMATIC_DOMAINS['paywall']:
+            if paywall_domain in domain:
+                detection['has_paywall'] = True
+                detection['warnings'].append(f'Domain {domain} may have paywall restrictions.')
+                break
+        
+        # Check for login-required sites
+        for login_domain in WebPageFetcher.PROBLEMATIC_DOMAINS['login_required']:
+            if login_domain in domain:
+                detection['requires_login'] = True
+                detection['warnings'].append(f'Domain {domain} may require login to access content.')
+                break
+        
+        # Check for dynamic content sites
+        for dynamic_domain in WebPageFetcher.PROBLEMATIC_DOMAINS['dynamic_content']:
+            if dynamic_domain in domain:
+                detection['is_dynamic'] = True
+                detection['warnings'].append(f'Domain {domain} serves dynamic/video content that may not be extractable via static HTML.')
+                break
+        
+        # Compile issues list
+        if detection['requires_js']:
+            detection['issues'].append('javascript_required')
+        if detection['has_paywall']:
+            detection['issues'].append('paywall')
+        if detection['requires_login']:
+            detection['issues'].append('login_required')
+        if detection['is_dynamic']:
+            detection['issues'].append('dynamic_content')
+        
+        return detection
     
     async def __aenter__(self):
         """Async context manager entry"""
@@ -36,9 +142,7 @@ class WebPageFetcher:
             timeout=self.timeout,
             follow_redirects=True,
             max_redirects=self.max_redirects,
-            headers={
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
+            headers=self._get_browser_headers()
         )
         return self
     
@@ -60,6 +164,14 @@ class WebPageFetcher:
         try:
             logger.info(f"Fetching page: {url}")
             
+            # Detect page type and potential issues
+            page_detection = self._detect_page_type(url)
+            
+            # Log warnings for problematic domains
+            if page_detection['warnings']:
+                for warning in page_detection['warnings']:
+                    logger.warning(f"URL detection warning for {url}: {warning}")
+            
             response = await self.client.get(url)
             response.raise_for_status()
             
@@ -72,11 +184,27 @@ class WebPageFetcher:
                 return False, None, {
                     'error': 'Non-HTML content',
                     'content_type': content_type,
-                    'status_code': response.status_code
+                    'status_code': response.status_code,
+                    'page_detection': page_detection
                 }
             
             # Get HTML content
             html_content = response.text
+            
+            # Check for JavaScript placeholder content
+            js_placeholders = [
+                'javascript is not available',
+                'please enable javascript',
+                'javascript is disabled',
+                'enable javascript to continue',
+                'noscript',
+            ]
+            html_lower = html_content.lower()
+            has_js_placeholder = any(placeholder in html_lower for placeholder in js_placeholders)
+            
+            if has_js_placeholder and page_detection['requires_js']:
+                logger.warning(f"Detected JavaScript placeholder content for {url}. Content extraction will likely fail.")
+                page_detection['issues'].append('js_placeholder_detected')
             
             # Basic validation
             if len(html_content.strip()) < 100:
@@ -84,7 +212,8 @@ class WebPageFetcher:
                 return False, None, {
                     'error': 'Content too short',
                     'content_length': len(html_content),
-                    'status_code': response.status_code
+                    'status_code': response.status_code,
+                    'page_detection': page_detection
                 }
             
             # Extract basic metadata
@@ -93,10 +222,14 @@ class WebPageFetcher:
                 'content_type': content_type,
                 'content_length': len(html_content),
                 'final_url': str(response.url),
-                'headers': dict(response.headers)
+                'headers': dict(response.headers),
+                'page_detection': page_detection
             }
             
             logger.info(f"Successfully fetched page: {url} ({len(html_content)} chars)")
+            if page_detection['warnings']:
+                logger.info(f"Page detection warnings: {', '.join(page_detection['warnings'])}")
+            
             return True, html_content, metadata
             
         except httpx.TimeoutException:

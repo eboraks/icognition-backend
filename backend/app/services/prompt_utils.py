@@ -4,6 +4,11 @@ Utility functions for generating prompts for Gemini AI
 
 from typing import Dict, Any, List, Optional
 from enum import Enum
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.services.prompt_service import PromptService
+from app.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class PromptType(Enum):
@@ -22,30 +27,72 @@ class PromptTemplates:
     """Templates for generating prompts for different analysis tasks"""
     
     @staticmethod
-    def get_content_summary_prompt(content: str, max_length: int = 200) -> str:
+    async def _get_template_from_db(
+        prompt_type: str,
+        session: Optional[AsyncSession] = None
+    ) -> Optional[str]:
+        """Get template from database if session is available"""
+        if session:
+            try:
+                prompt_service = PromptService(session)
+                prompt = await prompt_service.get_latest_prompt(prompt_type)
+                if prompt:
+                    return prompt.content
+            except Exception as e:
+                logger.warning(f"Failed to get prompt from DB for {prompt_type}: {e}")
+        return None
+    
+    @staticmethod
+    async def get_content_summary_prompt(
+        content: str,
+        max_length: int = 200,
+        session: Optional[AsyncSession] = None
+    ) -> str:
         """Generate prompt for content summarization"""
-        return f"""Please provide a concise summary of the following content in no more than {max_length} words. Focus on the main ideas and key information.
+        # Try to get template from database
+        template = await PromptTemplates._get_template_from_db("content_summary", session)
+        
+        # Fallback to hardcoded template
+        if not template:
+            template = """Please provide a concise summary of the following content in no more than {max_length} words. Focus on the main ideas and key information.
 
 Content:
 {content}
 
 Summary:"""
+        
+        return template.format(content=content, max_length=max_length)
 
     @staticmethod
-    def get_key_points_prompt(content: str, max_points: int = 10) -> str:
+    async def get_key_points_prompt(
+        content: str,
+        max_points: int = 10,
+        session: Optional[AsyncSession] = None
+    ) -> str:
         """Generate prompt for extracting key points"""
-        return f"""Extract the {max_points} most important key points from the following content. Present each point as a clear, concise statement.
+        template = await PromptTemplates._get_template_from_db("key_points", session)
+        
+        if not template:
+            template = """Extract the {max_points} most important key points from the following content. Present each point as a clear, concise statement.
 
 Content:
 {content}
 
 Key Points:
 1."""
+        
+        return template.format(content=content, max_points=max_points)
 
     @staticmethod
-    def get_entity_extraction_prompt(content: str) -> str:
+    async def get_entity_extraction_prompt(
+        content: str,
+        session: Optional[AsyncSession] = None
+    ) -> str:
         """Generate prompt for named entity extraction"""
-        return f"""Extract all named entities from the following content. Categorize them into:
+        template = await PromptTemplates._get_template_from_db("entity_extraction", session)
+        
+        if not template:
+            template = """Extract all named entities from the following content. Categorize them into:
 - PERSON: People's names
 - ORGANIZATION: Companies, institutions, groups
 - LOCATION: Places, cities, countries
@@ -70,13 +117,22 @@ Content:
 {content}
 
 Entities:"""
+        
+        return template.format(content=content)
 
     @staticmethod
-    def get_topic_categorization_prompt(content: str, categories: Optional[List[str]] = None) -> str:
+    async def get_topic_categorization_prompt(
+        content: str,
+        categories: Optional[List[str]] = None,
+        session: Optional[AsyncSession] = None
+    ) -> str:
         """Generate prompt for topic categorization"""
-        if categories:
-            categories_text = ", ".join(categories)
-            return f"""Categorize the following content into one of these predefined categories: {categories_text}
+        template = await PromptTemplates._get_template_from_db("topic_categorization", session)
+        
+        if not template:
+            if categories:
+                categories_text = ", ".join(categories)
+                template = """Categorize the following content into one of these predefined categories: {categories_text}
 
 If the content doesn't fit any of these categories, suggest a new appropriate category.
 
@@ -84,18 +140,32 @@ Content:
 {content}
 
 Category:"""
-        else:
-            return f"""Analyze the following content and identify the main topics and categories it discusses. Provide a hierarchical categorization.
+                return template.format(content=content, categories_text=categories_text)
+            else:
+                template = """Analyze the following content and identify the main topics and categories it discusses. Provide a hierarchical categorization.
 
 Content:
 {content}
 
 Topics and Categories:"""
+        
+        # If template from DB has placeholders, format them
+        if categories and "{categories_text}" in template:
+            categories_text = ", ".join(categories)
+            return template.format(content=content, categories_text=categories_text)
+        
+        return template.format(content=content)
 
     @staticmethod
-    def get_sentiment_analysis_prompt(content: str) -> str:
+    async def get_sentiment_analysis_prompt(
+        content: str,
+        session: Optional[AsyncSession] = None
+    ) -> str:
         """Generate prompt for sentiment analysis"""
-        return f"""Analyze the sentiment of the following content. Provide:
+        template = await PromptTemplates._get_template_from_db("sentiment_analysis", session)
+        
+        if not template:
+            template = """Analyze the sentiment of the following content. Provide:
 1. Overall sentiment (positive, negative, neutral)
 2. Confidence score (0.0 to 1.0)
 3. Key phrases that indicate the sentiment
@@ -113,21 +183,37 @@ Content:
 {content}
 
 Sentiment Analysis:"""
+        
+        return template.format(content=content)
 
     @staticmethod
-    def get_language_detection_prompt(content: str) -> str:
+    async def get_language_detection_prompt(
+        content: str,
+        session: Optional[AsyncSession] = None
+    ) -> str:
         """Generate prompt for language detection"""
-        return f"""Identify the primary language of the following content. If multiple languages are present, identify the dominant language and list any secondary languages.
+        template = await PromptTemplates._get_template_from_db("language_detection", session)
+        
+        if not template:
+            template = """Identify the primary language of the following content. If multiple languages are present, identify the dominant language and list any secondary languages.
 
 Content:
 {content}
 
 Language:"""
+        
+        return template.format(content=content)
 
     @staticmethod
-    def get_content_validation_prompt(content: str) -> str:
+    async def get_content_validation_prompt(
+        content: str,
+        session: Optional[AsyncSession] = None
+    ) -> str:
         """Generate prompt for content validation"""
-        return f"""Analyze the following content and provide validation information:
+        template = await PromptTemplates._get_template_from_db("content_validation", session)
+        
+        if not template:
+            template = """Analyze the following content and provide validation information:
 1. Content quality (high, medium, low)
 2. Completeness (complete, partial, incomplete)
 3. Readability (excellent, good, fair, poor)
@@ -147,17 +233,28 @@ Content:
 {content}
 
 Validation:"""
+        
+        return template.format(content=content)
 
     @staticmethod
-    def get_bullet_points_prompt(content: str, max_points: int = 15) -> str:
+    async def get_bullet_points_prompt(
+        content: str,
+        max_points: int = 15,
+        session: Optional[AsyncSession] = None
+    ) -> str:
         """Generate prompt for creating bullet points"""
-        return f"""Create {max_points} bullet points that capture the essential information from the following content. Each bullet point should be concise but informative.
+        template = await PromptTemplates._get_template_from_db("bullet_points", session)
+        
+        if not template:
+            template = """Create {max_points} bullet points that capture the essential information from the following content. Each bullet point should be concise but informative.
 
 Content:
 {content}
 
 Bullet Points:
 •"""
+        
+        return template.format(content=content, max_points=max_points)
 
     @staticmethod
     def get_custom_prompt(content: str, instruction: str) -> str:
@@ -223,9 +320,10 @@ class PromptBuilder:
         return prompt
 
 
-def generate_prompt(
+async def generate_prompt(
     prompt_type: PromptType,
     content: str,
+    session: Optional[AsyncSession] = None,
     **kwargs
 ) -> str:
     """
@@ -234,6 +332,7 @@ def generate_prompt(
     Args:
         prompt_type: Type of prompt to generate
         content: Content to analyze
+        session: Optional database session for fetching prompts from DB
         **kwargs: Additional parameters for the prompt
         
     Returns:
@@ -253,7 +352,7 @@ def generate_prompt(
     if prompt_type not in templates:
         raise ValueError(f"Unsupported prompt type: {prompt_type}")
     
-    return templates[prompt_type](content, **kwargs)
+    return await templates[prompt_type](content, session=session, **kwargs)
 
 
 def create_analysis_prompt(

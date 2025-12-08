@@ -44,7 +44,7 @@ Edit `.env` with your configuration:
 
 ```bash
 # Database Configuration
-DATABASE_URL=postgresql://app:2214@localhost:5432/icog_dev_db
+export DATABASE_URL="postgresql+psycopg://app:2214@localhost:5432/icog_dev_db"
 
 # Firebase Configuration (Optional - set DISABLE_AUTH=true to skip)
 FIREBASE_PROJECT_ID=your-firebase-project-id

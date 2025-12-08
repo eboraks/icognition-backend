@@ -11,6 +11,8 @@ import 'primeflex/primeflex.css';
 import PrimeVue from 'primevue/config';
 import Aura from '@primeuix/themes/aura';
 import Tooltip from 'primevue/tooltip';
+import ToastService from 'primevue/toastservice';
+import Toast from 'primevue/toast';
 
 // Firebase and Auth Store
 import { useAuthStore } from './stores/auth_store.js';
@@ -31,6 +33,8 @@ app.use(PrimeVue as any, {
     ripple: true 
 });
 
+app.use(ToastService as any);
+app.component('Toast', Toast);
 app.directive('tooltip', Tooltip as any);
 
 // Initialize auth store and mount app

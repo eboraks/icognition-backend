@@ -9,6 +9,7 @@ import {
   logoutUser,
   sendVerificationEmail 
 } from '../firebase/auth';
+import { userService } from '../services/UserService';
 
 interface User {
   uid: string;
@@ -16,6 +17,7 @@ interface User {
   displayName: string | null;
   emailVerified: boolean;
   photoURL: string | null;
+  role?: string;
 }
 
 interface AuthState {
@@ -36,6 +38,7 @@ export const useAuthStore = defineStore('auth', {
   getters: {
     isAuthenticated: (state) => !!state.user,
     isVerified: (state) => state.user?.emailVerified ?? false,
+    isAdmin: (state) => state.user?.role === 'sysadmin',
     currentUser: (state) => state.user,
     isLoading: (state) => state.loading,
     authError: (state) => state.error
@@ -43,17 +46,32 @@ export const useAuthStore = defineStore('auth', {
 
   actions: {
     // Initialize authentication state observer
-    initAuth() {
+    async initAuth() {
       return new Promise((resolve) => {
-        onAuthStateChanged(auth, (firebaseUser) => {
+        onAuthStateChanged(auth, async (firebaseUser) => {
           if (firebaseUser) {
-            this.user = {
-              uid: firebaseUser.uid,
-              email: firebaseUser.email,
-              displayName: firebaseUser.displayName,
-              emailVerified: firebaseUser.emailVerified,
-              photoURL: firebaseUser.photoURL
-            };
+            // Fetch user profile from backend to get role
+            try {
+              const profile = await userService.getUserProfile();
+              this.user = {
+                uid: firebaseUser.uid,
+                email: firebaseUser.email,
+                displayName: firebaseUser.displayName || profile.display_name || null,
+                emailVerified: firebaseUser.emailVerified,
+                photoURL: firebaseUser.photoURL || profile.photo_url || null,
+                role: profile.role
+              };
+            } catch (error) {
+              // If profile fetch fails, use Firebase user data only
+              console.warn('Failed to fetch user profile:', error);
+              this.user = {
+                uid: firebaseUser.uid,
+                email: firebaseUser.email,
+                displayName: firebaseUser.displayName,
+                emailVerified: firebaseUser.emailVerified,
+                photoURL: firebaseUser.photoURL
+              };
+            }
           } else {
             this.user = null;
           }

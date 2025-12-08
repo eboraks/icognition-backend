@@ -1,7 +1,7 @@
 <template>
   <div class="filter-tree-container">
     <IconField iconPosition="left" class="w-full mb-3 filter-search-input">
-        <InputIcon class="pi pi-search" style="top: 70% !important; transform: translateY(-70%) !important;" />
+        <InputIcon class="pi pi-search" />
         <InputText
           v-model="searchQuery"
           placeholder="Search Topics"

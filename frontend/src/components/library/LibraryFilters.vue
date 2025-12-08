@@ -1,13 +1,14 @@
 <template>
   <div class="flex flex-column gap-2 w-full h-full">
     <IconField iconPosition="left" class="w-full mb-2">
-      <InputIcon class="pi pi-search" style="top: 75% !important; transform: translateY(-75%) !important;" />
+      <InputIcon class="pi pi-search" />
       <InputText v-model="searchText" placeholder="Search Topics" class="w-full" />
     </IconField>
     <div class="flex-1 overflow-auto">
       <Tree :value="filteredNodes"
             selectionMode="checkbox"
             v-model:selectionKeys="selectedKeys"
+            :key="filteredNodes.length"
             class="w-full" />
     </div>
     <!-- Use PrimeVue Divider and Chip components with PrimeFlex utilities -->
@@ -119,7 +120,22 @@ const removeFilter = (label: string) => {
 </script>
 
 <style scoped>
-/* Using PrimeFlex utilities instead of custom CSS where possible */
-/* Only minimal custom styles if needed for specific adjustments */
+/* Container styles for proper Tree rendering */
+:deep(.p-tree) {
+  border: none;
+  background: transparent;
+}
+
+:deep(.p-tree-root) {
+  padding: 0;
+}
+
+:deep(.p-tree-node-content) {
+  padding: 0.5rem;
+}
+
+:deep(.p-checkbox) {
+  margin-right: 0.5rem;
+}
 </style>
 

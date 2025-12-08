@@ -931,6 +931,9 @@ class User(SQLModel, table=True):
     is_active: bool = Field(default=True)
     is_verified: bool = Field(default=False)
     
+    # User role (e.g., "sysadmin" for admin access)
+    role: Optional[str] = Field(default=None, max_length=50, index=True)
+    
     # Timestamps for account lifecycle
     first_login: Optional[datetime] = Field(default_factory=datetime.utcnow)
     last_login: Optional[datetime] = Field(default_factory=datetime.utcnow)
@@ -1063,3 +1066,31 @@ class ChatMessage(SQLModel, table=True):
     )
     
     session: "ChatSession" = Relationship(back_populates="messages")
+
+
+class Prompt(SQLModel, table=True):
+    """Stores versioned prompts for the application"""
+    
+    __tablename__ = "prompts"
+    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    prompt_type: str = Field(max_length=100, index=True)
+    version: int = Field(default=1)
+    content: str = Field(sa_column=Column(Text))
+    description: Optional[str] = Field(default=None, sa_column=Column(Text))
+    is_active: bool = Field(default=True, index=True)
+    created_by: Optional[str] = Field(default=None, foreign_key="users.id")
+    created_at: Optional[datetime] = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), server_default=func.now())
+    )
+    updated_at: Optional[datetime] = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    )
+    
+    # Unique constraint on (prompt_type, version)
+    __table_args__ = (
+        Index('ix_prompts_type_version', 'prompt_type', 'version', unique=True),
+        Index('ix_prompts_type_active', 'prompt_type', 'is_active'),
+    )

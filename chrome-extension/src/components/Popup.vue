@@ -1,11 +1,16 @@
 <template>
     <div class="side-panel-container" tabindex="-1">        
-        <div class="header bg-primary-800 w-full h-20" tabindex="-1">
+        <div class="header w-full h-20" tabindex="-1">
             <div class="flex justify-content-between align-items-center" tabindex="-1">
                 <a tabindex="6" :href="library_url" target="_blank">
                     <img src="/icons/iCognitionLogo.png" alt="iCognition Logo" width="150px" class="m-2"/>
                 </a>
-                <div tabindex="5" class="pi pi-sign-out text-white mr-4 flex align-items-center" v-if="user" @click="handleSignOut"></div>
+                <div class="flex align-items-center gap-3 mr-4">
+                    <template v-if="user">
+                        <i tabindex="4" class="pi pi-cog text-white cursor-pointer" @click="showSettings = true" title="Settings" style="font-size: 1.2rem;"></i>
+                        <i tabindex="5" class="pi pi-sign-out text-white cursor-pointer" @click="handleSignOut" title="Sign Out" style="font-size: 1.2rem;"></i>
+                    </template>
+                </div>
             </div>
         </div>
         
@@ -141,10 +146,74 @@
             </div>
         </div>
     </div>
+
+    <!-- Settings Dialog -->
+    <Dialog v-model:visible="showSettings" modal header="Settings" :style="{ width: '450px' }">
+        <div class="flex flex-column gap-3 p-3">
+            <h4 class="m-0 mb-2">Backend Environment</h4>
+            <p class="text-sm text-600 mt-0 mb-3">Choose which backend server to connect to. Changes take effect immediately.</p>
+            
+            <div v-for="option in environmentOptions" :key="option.value" class="environment-option flex align-items-center gap-3 p-3 mb-2 border-round">
+                <RadioButton 
+                    v-model="selectedEnvironment" 
+                    :inputId="option.value" 
+                    :value="option.value" 
+                />
+                <label :for="option.value" class="cursor-pointer flex-1">
+                    <div class="font-semibold text-lg">{{ option.label }}</div>
+                    <div class="text-sm text-600">{{ option.url }}</div>
+                </label>
+            </div>
+            
+            <div class="flex align-items-center gap-2 mt-2 p-2 bg-primary-50 border-round">
+                <i class="pi pi-info-circle text-primary-500"></i>
+                <span class="text-sm text-primary-800">Current: {{ selectedEnvironment === 'staging' ? 'Staging' : 'Development' }}</span>
+            </div>
+        </div>
+        
+        <template #footer>
+            <Button label="Cancel" text @click="showSettings = false" />
+            <Button label="Save & Apply" icon="pi pi-check" @click="saveEnvironmentPreference" />
+        </template>
+    </Dialog>
+
+    <!-- URL Warning Dialog -->
+    <Dialog v-model:visible="showUrlWarning" modal header="Content Extraction Warning" :style="{ width: '500px' }">
+        <div class="flex flex-column gap-3 p-3">
+            <div class="flex align-items-center gap-2 mb-2">
+                <i class="pi pi-exclamation-triangle text-orange-500" style="font-size: 1.5rem;"></i>
+                <h4 class="m-0">Potential Content Extraction Issues</h4>
+            </div>
+            
+            <p class="text-sm text-600 mt-0 mb-3">
+                This page may have issues that prevent successful content extraction:
+            </p>
+            
+            <div v-if="urlWarningData" class="flex flex-column gap-2">
+                <div v-for="(warning, index) in urlWarningData.warnings" :key="index" 
+                     class="flex align-items-start gap-2 p-2 bg-orange-50 border-round">
+                    <i class="pi pi-info-circle text-orange-500 mt-1"></i>
+                    <span class="text-sm text-700">{{ warning }}</span>
+                </div>
+            </div>
+            
+            <div class="flex align-items-center gap-2 mt-2 p-2 bg-blue-50 border-round">
+                <i class="pi pi-info-circle text-blue-500"></i>
+                <span class="text-sm text-blue-800">
+                    You can still proceed, but the extracted content may be incomplete or contain placeholder text.
+                </span>
+            </div>
+        </div>
+        
+        <template #footer>
+            <Button label="Cancel" text @click="showUrlWarning = false; proceedWithBookmark = false" />
+            <Button label="Proceed Anyway" icon="pi pi-check" @click="confirmProceedWithBookmark" />
+        </template>
+    </Dialog>
 </template>
 <script setup>
 import { ref, onMounted, watch, nextTick, onUnmounted } from 'vue'
-import { cleanUrl, CommunicationEnum, formatUrlsAsLinks } from '../../public/js/composables/utils.js';
+import { cleanUrl, CommunicationEnum, formatUrlsAsLinks, detectPageType } from '../../public/js/composables/utils.js';
 import Button from 'primevue/button';
 import DocSummary from '../../public/js/components/DocSummary.vue';
 import GoogleLoginButton from '../../public/js/components/GoogleLoginButton.vue';
@@ -153,8 +222,10 @@ import Message from 'primevue/message';
 import useAuth from '../../public/js/composables/useAuth.js';
 import Textarea from 'primevue/textarea';
 import ProgressSpinner from 'primevue/progressspinner';
+import Dialog from 'primevue/dialog';
+import RadioButton from 'primevue/radiobutton';
 
-const { handleSignOut } = useAuth()
+const { handleSignOut, handleSignIn } = useAuth()
 
 const AppStatusEnum = {
     INITIALIZING: {
@@ -246,8 +317,75 @@ const debugExpanded = ref(true); // Default to expanded for better visibility
 // Add ref for button focus state
 const buttonHasFocus = ref(false);
 
+// Add refs for settings dialog
+const showSettings = ref(false);
+const selectedEnvironment = ref('staging');
+
+// Add refs for URL warning dialog
+const showUrlWarning = ref(false);
+const urlWarningData = ref(null);
+const proceedWithBookmark = ref(false);
+
+// Backend environment options
+const environmentOptions = [
+    { label: 'Staging', value: 'staging', url: 'https://stg.api.icognition.ai' },
+    { label: 'Development', value: 'development', url: 'http://localhost:8000' }
+];
+
+// Load environment preference from storage
+const loadEnvironmentPreference = async () => {
+    try {
+        const result = await chrome.storage.local.get(['backendEnvironment']);
+        if (result.backendEnvironment) {
+            selectedEnvironment.value = result.backendEnvironment;
+            console.log('Loaded environment preference:', selectedEnvironment.value);
+        }
+    } catch (error) {
+        console.error('Error loading environment preference:', error);
+    }
+};
+
+// Save environment preference and reload
+const saveEnvironmentPreference = async () => {
+    try {
+        await chrome.storage.local.set({ backendEnvironment: selectedEnvironment.value });
+        console.log('Saved environment preference:', selectedEnvironment.value);
+        
+        // Show success message
+        status.value = {
+            ...AppStatusEnum.SERVER_READY,
+            message: `Switched to ${selectedEnvironment.value === 'staging' ? 'Staging' : 'Development'} environment`
+        };
+        
+        // Close dialog
+        showSettings.value = false;
+        
+        // Notify background script to update base URL
+        chrome.runtime.sendMessage({
+            name: 'update-environment',
+            environment: selectedEnvironment.value
+        });
+        
+        // Clear cached data and reconnect
+        summariesByUrl.value = {};
+        bookmarksByUrl.value = {};
+        documentIdsByUrl.value = {};
+        
+        // Refresh current page data
+        if (active_tab.value && active_tab.value.url) {
+            handleTabChange(active_tab.value);
+        }
+    } catch (error) {
+        console.error('Error saving environment preference:', error);
+        handleError('Failed to save environment preference');
+    }
+};
+
 onMounted(() => {
     console.log('SidePanel component mounted');
+    
+    // Load environment preference
+    loadEnvironmentPreference();
     
     // Establish connection with background script to indicate side panel is open
     const port = chrome.runtime.connect({ name: 'sidepanel' });
@@ -467,6 +605,7 @@ const searchBookmarksByUrl = async (url) => {
     if (!user.value) {
         console.log('searchBookmarksByUrl -> user not authenticated')
         isSearchingBookmark.value = false;
+        status.value = AppStatusEnum.UNAUTHENTICATED;
         return;
     }
 
@@ -475,32 +614,60 @@ const searchBookmarksByUrl = async (url) => {
     
     try {
         // Check if we already have a summary for this URL in memory
-    if (summariesByUrl.value[cleanedUrl]) {
-        console.log('Found summary in memory for URL:', cleanedUrl);
-        document_summary.value = summariesByUrl.value[cleanedUrl];
-        bookmark.value = bookmarksByUrl.value[cleanedUrl] || null;
-        status.value = AppStatusEnum.DOCUMENT_READY;
-        console.log('Setting status to DOCUMENT_READY (found summary in memory)');
-        return;
-    }
+        if (summariesByUrl.value[cleanedUrl]) {
+            console.log('Found summary in memory for URL:', cleanedUrl);
+            document_summary.value = summariesByUrl.value[cleanedUrl];
+            bookmark.value = bookmarksByUrl.value[cleanedUrl] || null;
+            status.value = AppStatusEnum.DOCUMENT_READY;
+            console.log('Setting status to DOCUMENT_READY (found summary in memory)');
+            isSearchingBookmark.value = false;
+            return;
+        }
 
         // Check local storage first
-    const value = await chrome.storage.local.get(["bookmarks"]);
-    console.log('Got bookmarks from storage:', value.bookmarks ? value.bookmarks.length : 0);
+        const value = await chrome.storage.local.get(["bookmarks"]);
+        console.log('Got bookmarks from storage:', value.bookmarks ? value.bookmarks.length : 0);
 
-    if (value.bookmarks) {
-        value.bookmarks = value.bookmarks.filter(bookmark => bookmark != null && bookmark !== undefined);
-        console.log('Filtered bookmarks count:', value.bookmarks.length);
+        if (value.bookmarks) {
+            value.bookmarks = value.bookmarks.filter(bookmark => bookmark != null && bookmark !== undefined);
+            console.log('Filtered bookmarks count:', value.bookmarks.length);
             
             const found = value.bookmarks.find(bookmark => bookmark.url === cleanedUrl);
             if (found) {
                 console.log('Found bookmark in local storage:', found);
                 bookmark.value = found;
-                // Document will be sent via WebSocket when ready
                 status.value = AppStatusEnum.SERVER_READY;
+                isSearchingBookmark.value = false;
+                
+                // Try to fetch the document details from server
+                try {
+                    console.log('Fetching document details for bookmark:', found.id);
+                    const response = await chrome.runtime.sendMessage({
+                        name: 'fetch-bookmark-document',
+                        bookmarkId: found.id
+                    });
+                    
+                    if (response && response.success && response.document) {
+                        console.log('Got document from server:', response.document);
+                        document_summary.value = {
+                            title: response.document.title,
+                            summary: response.document.ai_is_about,
+                            bullet_points: response.document.ai_bullet_points
+                        };
+                        doc.value = response.document;
+                        status.value = AppStatusEnum.DOCUMENT_READY;
+                        
+                        // Cache the summary
+                        summariesByUrl.value[cleanedUrl] = {...document_summary.value};
+                        documentIdsByUrl.value[cleanedUrl] = response.document.id;
+                    }
+                } catch (error) {
+                    console.error('Error fetching document from server:', error);
+                    // Still show the bookmark but without document summary
+                }
                 return;
             }
-            }
+        }
 
         // If we reach here, no bookmark was found locally
         console.log('No bookmarks found in local storage, setting SERVER_READY status');
@@ -727,6 +894,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             : 'Unable to connect to server. Please try again.';
         handleConnectionError(errorMsg);
     }
+    
+    if (request.name === 'sse-disconnected') {
+        console.log('SSE disconnected notification received');
+        // Only show error if user is authenticated and not already in error state
+        if (user.value && status.value.state !== AppStatusEnum.CONNECTION_ERROR.state) {
+            console.log('SSE connection lost, backend will attempt to reconnect automatically');
+            // Don't show error UI, just log it - reconnection is automatic
+        }
+    }
+    
+    if (request.name === 'sse-reconnected') {
+        console.log('SSE reconnected notification received');
+        // Clear any connection errors
+        if (status.value.state === AppStatusEnum.CONNECTION_ERROR.state) {
+            status.value = AppStatusEnum.SERVER_READY;
+            connectionErrorMessage.value = '';
+        }
+    }
 
     if (request.name === CommunicationEnum.PROGRESS_PERCENTAGE) {
         console.log('PROGRESS_PERCENTAGE received:', request.data, 'Current status:', status.value.state, 'doc.value:', doc.value);
@@ -798,8 +983,14 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
     }
 });
 
-const handleBookmark = async () => {
-    
+const confirmProceedWithBookmark = () => {
+    showUrlWarning.value = false;
+    proceedWithBookmark.value = true;
+    // Call the actual bookmark creation
+    createBookmark();
+}
+
+const createBookmark = async () => {
     progressPercent.value = 5;
     status.value = AppStatusEnum.PROCESSING
     statusMessage.value = AppStatusEnum.PROCESSING.message
@@ -855,6 +1046,40 @@ const handleBookmark = async () => {
         console.error('handleBookmark -> Error:', error);
         handleError('Failed to create bookmark: ' + (error.message || 'Unknown error'));
     });
+}
+
+const handleBookmark = async () => {
+    // Reset proceed flag
+    proceedWithBookmark.value = false;
+    
+    // Check if we have an active tab with URL
+    if (!active_tab.value || !active_tab.value.url) {
+        handleError('No active tab URL found');
+        return;
+    }
+    
+    // Check if we can inject content (extension can get HTML from the page)
+    // For most pages, we can inject, so assume hasContent = true
+    // Only show warning if it's a critical issue that can't be resolved with content injection
+    const hasContent = true; // Extension injects content script to get HTML
+    
+    // Detect page type and potential issues
+    const pageDetection = detectPageType(active_tab.value.url, hasContent);
+    
+    // Only show warning for critical issues that can't be resolved with content
+    // Skip warning if it's an article page with content available (extension will send HTML)
+    const shouldShowWarning = pageDetection.issues && pageDetection.issues.length > 0 && 
+                              !(pageDetection.is_article && hasContent && pageDetection.has_paywall);
+    
+    if (shouldShowWarning) {
+        urlWarningData.value = pageDetection;
+        showUrlWarning.value = true;
+        // Wait for user to confirm or cancel
+        return;
+    }
+    
+    // No critical issues detected, proceed directly
+    createBookmark();
 }
 
 // Chat functions removed - will be re-implemented in future update
@@ -1641,6 +1866,7 @@ const focusQuestionInput = () => {
 }
 
 .header {
+    background: #3497BE;
     border-bottom: 1px solid #e0e0e0;
 }
 
@@ -2140,5 +2366,29 @@ button:focus {
         opacity: 0.9;
         box-shadow: 0 0 0 5000px rgba(0, 0, 0, 0.3);
     }
+}
+
+/* Settings dialog styles */
+.cursor-pointer {
+    cursor: pointer;
+}
+
+.environment-option {
+    border: 2px solid var(--surface-border);
+    transition: all 0.2s ease;
+}
+
+.environment-option:hover {
+    background-color: var(--surface-50);
+    border-color: var(--primary-300);
+}
+
+.environment-option:has(input:checked) {
+    background-color: var(--primary-50);
+    border-color: var(--primary-500);
+}
+
+.gap-3 {
+    gap: 0.75rem;
 }
 </style>

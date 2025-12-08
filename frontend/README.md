@@ -522,14 +522,23 @@ npm run dev-build
 npm run preview
 ```
 
+### Staging Build
+```bash
+npm run build -- --mode staging
+
+```
+
+
 ### Production Build
 
 ```bash
 # Build for production
-npm run build
+npm run build -- --mode production
 
 # The dist/ folder contains the built application
 ```
+
+
 
 ### Firebase Deployment
 

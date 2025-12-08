@@ -71,7 +71,7 @@
     }
 
     .p-inputicon {
-        top: 20%;
+        // Removed custom top positioning - use PrimeVue defaults
         z-index: 1;
     }
 }
@@ -138,46 +138,10 @@
     padding: .1rem .25rem;
 }
 
+// Removed most custom .p-tree overrides - using PrimeVue defaults for better consistency
 .p-tree {
     background: transparent;
     border-color: transparent;
-
-    
-    .p-tree-node-content {
-        .p-checkbox {
-            align-self: baseline;
-            padding-top: 0.4rem !important;
-        }
-    }
-
-    > .p-iconfield {
-        padding-left: 0.5rem !important;
-        padding-right: 0.5rem !important;
-
-        .p-inputtext {
-            width: 100%;
-        }
-    }
-
-    .p-iconfield .p-inputicon:last-child {
-        color: var(--p-iconfield-icon-color) !important;
-        right: var(--p-form-field-padding-x);
-    }
-    
-    .p-tree-root {
-        height: calc(100% - 2em);
-        margin-top: 1em;
-        overflow-y: auto;
-    }
-
-    .p-tree-container .p-treenode .p-treenode-content.p-treenode-selectable:not(.p-highlight):hover {
-        background: var(--surface-100);
-        color: var(--surface-800);
-    }
-
-    .p-inputicon {
-        color: var(--surface-500);
-    }
 }
 
 .set-background-image {
