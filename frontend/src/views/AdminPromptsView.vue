@@ -234,7 +234,6 @@ const formData = ref<PromptCreate>({
 // Prompt types (matching backend PromptType enum + react_agent_system)
 const promptTypes = [
   'content_summary',
-  'key_points',
   'entity_extraction',
   'topic_categorization',
   'sentiment_analysis',

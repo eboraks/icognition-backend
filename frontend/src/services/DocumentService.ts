@@ -215,6 +215,14 @@ class DocumentService {
   }
 
   /**
+   * Reprocess document content (re-extract entities, embeddings, etc.)
+   */
+  async reprocessDocument(documentId: number, refetch: boolean = false): Promise<DocumentResponse> {
+    const queryParams = refetch ? '?refetch=true' : '';
+    return api.post<DocumentResponse>(`/documents/${documentId}/reprocess${queryParams}`);
+  }
+
+  /**
    * Search for similar documents using vector similarity
    */
   async searchSimilarDocuments(params: SimilarDocumentSearchRequest): Promise<DocumentResponse[]> {

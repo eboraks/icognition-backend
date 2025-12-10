@@ -374,7 +374,7 @@ class GeminiService:
         """
         prompts = {
             "summary": "Provide a concise summary of the following content:",
-            "key_points": "Extract the key points from the following content:",
+            "bullet_points": "Extract the key points from the following content:",
             "entities": "Extract named entities (people, places, organizations, etc.) from the following content:",
             "topics": "Identify the main topics discussed in the following content:",
             "sentiment": "Analyze the sentiment of the following content:",
@@ -448,7 +448,7 @@ class GeminiService:
         # Generate mock response based on prompt content
         mock_responses = {
             "summary": "This is a mock summary of the provided content. It covers the main points and key information discussed in the original text.",
-            "key_points": "• Mock key point 1\n• Mock key point 2\n• Mock key point 3",
+            "bullet_points": "• Mock key point 1\n• Mock key point 2\n• Mock key point 3",
             "entities": '{"entities": [{"text": "Mock Entity", "category": "ORGANIZATION", "confidence": 0.95}]}',
             "sentiment": '{"sentiment": "positive", "confidence": 0.85, "tone": "professional"}',
             "default": "This is a mock response generated for testing purposes. The actual Gemini API would provide more sophisticated analysis."
@@ -459,7 +459,7 @@ class GeminiService:
         if "summary" in prompt.lower():
             response_text = mock_responses["summary"]
         elif "key points" in prompt.lower() or "bullet" in prompt.lower():
-            response_text = mock_responses["key_points"]
+            response_text = mock_responses["bullet_points"]
         elif "entities" in prompt.lower():
             response_text = mock_responses["entities"]
         elif "sentiment" in prompt.lower():

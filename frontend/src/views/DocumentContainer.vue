@@ -8,15 +8,30 @@
             <div class="rag-answer-content">{{ documentStore.answer }}</div>
         </div>
         
-        <!-- Splitter to divide documents and chat -->
-        <Splitter class="content-splitter">
-            <SplitterPanel :size="60" :minSize="30" class="splitter-panel">
-                <div class="table-section">
-                    <LibraryTable ref="docsTable" :documents="libraryStore.filteredDocuments" :loading="libraryStore.loading"/>
+        <!-- Main Splitter: Filters | Table | Chat -->
+        <Splitter class="main-splitter">
+            <!-- Filter Sidebar Panel -->
+            <SplitterPanel :size="20" :minSize="0" class="filter-panel">
+                <div class="filter-section">
+                    <LibrarySidebar />
                 </div>
             </SplitterPanel>
-            <SplitterPanel :size="40" :minSize="20" class="splitter-panel">
-                <div class="chat-section">
+            
+            <!-- Content Splitter: Table | Chat -->
+            <SplitterPanel :size="80" :minSize="40" class="splitter-panel">
+                <Splitter class="content-splitter">
+                    <SplitterPanel :size="60" :minSize="30" class="splitter-panel">
+                        <div class="table-section">
+                            <LibraryTable 
+                                ref="docsTable" 
+                                :documents="libraryStore.filteredDocuments" 
+                                :loading="libraryStore.loading"
+                                @refresh="refreshDocuments"
+                            />
+                        </div>
+                    </SplitterPanel>
+                    <SplitterPanel :size="40" :minSize="20" class="splitter-panel">
+                        <div class="chat-section">
                     <Tabs :value="activeChatTabId" @update:model-value="setActiveChatTab" class="full-height-tabs">
                         <div class="tab-header-container">
                             <TabList>
@@ -42,6 +57,8 @@
                         </div>
                     </Tabs>
                 </div>
+                    </SplitterPanel>
+                </Splitter>
             </SplitterPanel>
         </Splitter>
         
@@ -61,6 +78,7 @@
 
 <script lang="ts" setup>
     import LibraryToolbar from '@/components/library/LibraryToolbar.vue';
+    import LibrarySidebar from '@/components/library/LibrarySidebar.vue';
     import ChatPanel from '@/components/knowledge_explorer/ChatPanel.vue';
     import { useLibraryStore } from '@/stores/library_store';
     import Splitter from 'primevue/splitter';
@@ -229,14 +247,16 @@
         }
     });
 
-    // Handle filter updates from sidebar (LibraryFilters component)
-    const onCheckedIds = (checkedIds: any) => {
-        fitlerCheckedIds.value = checkedIds;
-        libraryStore.updateSelectedEntities(checkedIds);
+    // Handle refresh after document delete/reprocess
+    const refreshDocuments = async () => {
+        try {
+            await documentStore.fetchDocuments(user_state.user?.uid as string);
+            await libraryStore.fetchDocuments();
+            await libraryStore.fetchEntityTree();
+        } catch (error) {
+            console.error('Error refreshing documents:', error);
+        }
     };
-    
-    // Expose the handler for the sidebar component to use
-    defineExpose({ onCheckedIds });
 
     const socketSetup = async (user_id: string) => {
         const socket = new WebSocket('http://localhost:8889/ws/' + user_id);
@@ -348,6 +368,24 @@ const onUpload = (e: any) => {
     padding: 1rem;
 }
 
+.main-splitter {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+:deep(.main-splitter .p-splitter) {
+    height: 100%;
+    border: none;
+}
+
+:deep(.main-splitter .p-splitter-panel) {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
 .content-splitter {
     flex: 1;
     min-height: 0;
@@ -364,6 +402,23 @@ const onUpload = (e: any) => {
     flex-direction: column;
     min-height: 0;
     overflow: hidden;
+}
+
+.filter-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.filter-section {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--p-surface-0);
+    border-right: 1px solid var(--p-content-border-color);
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
 }
 
 .splitter-panel {

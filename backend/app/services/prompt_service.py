@@ -134,9 +134,29 @@ class PromptService:
             The created Prompt object
         """
         try:
-            # Get the latest version to determine the next version number
+            # Get the latest active version to determine the next version number
+            # and deactivate it
             latest = await self.get_latest_prompt(prompt_type)
             next_version = (latest.version + 1) if latest else 1
+            
+            # Deactivate ALL active versions of this prompt type
+            # (handles edge cases where multiple versions might be active)
+            stmt = (
+                select(Prompt)
+                .where(
+                    and_(
+                        Prompt.prompt_type == prompt_type,
+                        Prompt.is_active == True
+                    )
+                )
+            )
+            result = await self.session.execute(stmt)
+            active_prompts = result.scalars().all()
+            
+            for prompt in active_prompts:
+                prompt.is_active = False
+                self.session.add(prompt)
+                logger.info(f"Deactivated prompt version {prompt.version} (id: {prompt.id}) for type {prompt_type}")
             
             new_prompt = Prompt(
                 prompt_type=prompt_type,

@@ -280,7 +280,7 @@ async def get_document(
 
 @router.put("/{document_id}", response_model=DocumentResponse)
 async def update_document(
-    document_id: str,  # Changed from int to str for UUID
+    document_id: int,  # Integer ID as stored in database
     request: DocumentUpdateRequest,
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
@@ -315,7 +315,7 @@ async def update_document(
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(
-    document_id: str,  # Changed from int to str for UUID
+    document_id: int,  # Integer ID as stored in database
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
 ):
@@ -398,7 +398,7 @@ async def get_document_content(
 
 @router.patch("/{document_id}/metadata", response_model=DocumentResponse)
 async def update_document_metadata(
-    document_id: str,  # Changed from int to str for UUID
+    document_id: int,  # Integer ID as stored in database
     metadata_updates: dict,
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
@@ -430,7 +430,7 @@ async def update_document_metadata(
 
 @router.post("/{document_id}/fetch", response_model=DocumentResponse)
 async def fetch_document_content(
-    document_id: str,  # Changed from int to str for UUID
+    document_id: int,  # Integer ID as stored in database
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
 ):
@@ -540,7 +540,7 @@ async def get_entity_tree(
 
 @router.post("/{document_id}/embed", response_model=DocumentResponse)
 async def generate_document_embedding(
-    document_id: str,  # Changed from int to str for UUID
+    document_id: int,  # Integer ID as stored in database
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
 ):

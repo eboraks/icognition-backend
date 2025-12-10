@@ -101,6 +101,21 @@ class BookmarkService {
   async getBookmarksByUrl(url: string): Promise<{ bookmarks: BookmarkResponse[]; count: number }> {
     return api.get<{ bookmarks: BookmarkResponse[]; count: number }>(`/bookmarks/url/${encodeURIComponent(url)}`);
   }
+
+  /**
+   * Find bookmark by document ID
+   * Fetches user bookmarks and filters by document_id client-side
+   */
+  async findBookmarkByDocumentId(documentId: number): Promise<BookmarkResponse | null> {
+    try {
+      const response = await this.getUserBookmarks({ page_size: 100 });
+      const bookmark = response.bookmarks.find(b => b.document_id === documentId);
+      return bookmark || null;
+    } catch (error) {
+      console.error('Error finding bookmark by document ID:', error);
+      return null;
+    }
+  }
 }
 
 // Export singleton instance

@@ -14,7 +14,6 @@ logger = get_logger(__name__)
 class PromptType(Enum):
     """Types of prompts for different analysis tasks"""
     CONTENT_SUMMARY = "content_summary"
-    KEY_POINTS = "key_points"
     ENTITY_EXTRACTION = "entity_extraction"
     TOPIC_CATEGORIZATION = "topic_categorization"
     SENTIMENT_ANALYSIS = "sentiment_analysis"
@@ -62,26 +61,6 @@ Content:
 Summary:"""
         
         return template.format(content=content, max_length=max_length)
-
-    @staticmethod
-    async def get_key_points_prompt(
-        content: str,
-        max_points: int = 10,
-        session: Optional[AsyncSession] = None
-    ) -> str:
-        """Generate prompt for extracting key points"""
-        template = await PromptTemplates._get_template_from_db("key_points", session)
-        
-        if not template:
-            template = """Extract the {max_points} most important key points from the following content. Present each point as a clear, concise statement.
-
-Content:
-{content}
-
-Key Points:
-1."""
-        
-        return template.format(content=content, max_points=max_points)
 
     @staticmethod
     async def get_entity_extraction_prompt(
@@ -340,7 +319,6 @@ async def generate_prompt(
     """
     templates = {
         PromptType.CONTENT_SUMMARY: PromptTemplates.get_content_summary_prompt,
-        PromptType.KEY_POINTS: PromptTemplates.get_key_points_prompt,
         PromptType.ENTITY_EXTRACTION: PromptTemplates.get_entity_extraction_prompt,
         PromptType.TOPIC_CATEGORIZATION: PromptTemplates.get_topic_categorization_prompt,
         PromptType.SENTIMENT_ANALYSIS: PromptTemplates.get_sentiment_analysis_prompt,
@@ -379,20 +357,18 @@ def create_analysis_prompt(
     for analysis_type in analysis_types:
         if analysis_type == PromptType.CONTENT_SUMMARY:
             analysis_instructions.append("1. Provide a concise summary")
-        elif analysis_type == PromptType.KEY_POINTS:
-            analysis_instructions.append("2. Extract key points")
         elif analysis_type == PromptType.ENTITY_EXTRACTION:
-            analysis_instructions.append("3. Extract named entities")
+            analysis_instructions.append("2. Extract named entities")
         elif analysis_type == PromptType.TOPIC_CATEGORIZATION:
-            analysis_instructions.append("4. Categorize topics")
+            analysis_instructions.append("3. Categorize topics")
         elif analysis_type == PromptType.SENTIMENT_ANALYSIS:
-            analysis_instructions.append("5. Analyze sentiment")
+            analysis_instructions.append("4. Analyze sentiment")
         elif analysis_type == PromptType.LANGUAGE_DETECTION:
-            analysis_instructions.append("6. Detect language")
+            analysis_instructions.append("5. Detect language")
         elif analysis_type == PromptType.CONTENT_VALIDATION:
-            analysis_instructions.append("7. Validate content quality")
+            analysis_instructions.append("6. Validate content quality")
         elif analysis_type == PromptType.BULLET_POINTS:
-            analysis_instructions.append("8. Create bullet points")
+            analysis_instructions.append("7. Create bullet points")
     
     builder.add_instruction("\n".join(analysis_instructions))
     
@@ -400,7 +376,7 @@ def create_analysis_prompt(
         builder.add_format_requirements("""
 {
     "summary": "concise summary",
-    "key_points": ["point1", "point2"],
+    "bullet_points": ["• point1", "• point2"],
     "entities": [
         {
             "text": "entity",

@@ -1,7 +1,6 @@
 <template>
   <DataTable :value="documents"
              v-model:expandedRows="expandedRows"
-             v-model:selection="selection"
              dataKey="id"
              responsiveLayout="scroll"
              class="w-full"
@@ -28,14 +27,26 @@
         </div>
       </template>
     </Column>
-    <Column field="updatedAt" header="Last updated" />
-    <Column header="Source">
+    <Column field="updatedAt" header="Last updated" style="width:10rem"/>
+    <Column header="Source" style="width:10rem">
       <template #body="{ data }">
         <a v-if="data.sourceUrl" :href="data.sourceUrl" target="_blank" rel="noopener noreferrer" class="text-primary">{{ data.sourceHost }}</a>
         <span v-else class="text-600">-</span>
       </template>
     </Column>
-    <Column selectionMode="multiple" style="width:3rem" />
+    <Column header="Actions" style="width:10rem">
+      <template #body="{ data }">
+        <SplitButton 
+          label="Delete" 
+          icon="pi pi-trash" 
+          :model="getActionItems(data)" 
+          @click="handleDelete(data)"
+          size="small"
+          severity="danger"
+          outlined
+        />
+      </template>
+    </Column>
 
     <template #expansion="{ data }">
       <div class="p-4 bg-white border-round">
@@ -55,7 +66,12 @@
 import { ref, watchEffect, computed } from 'vue';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
+import SplitButton from 'primevue/splitbutton';
+import { useConfirm } from 'primevue/useconfirm';
+import { useToast } from 'primevue/usetoast';
 import { formatUrlsAsLinks } from '@/composables/useUrlFormatter';
+import { documentService } from '@/services/DocumentService';
+import { bookmarkService } from '@/services/BookmarkService';
 
 interface DocRow {
   id: string | number;
@@ -70,10 +86,11 @@ interface DocRow {
 }
 
 const props = defineProps<{ documents: DocRow[]; expandAllKey?: number; loading?: boolean }>();
-const emit = defineEmits(['open']);
+const emit = defineEmits(['open', 'refresh']);
 
 const expandedRows = ref<any>({});
-const selection = ref<DocRow[]>([]);
+const confirm = useConfirm();
+const toast = useToast();
 
 const getIconForType = (type?: string) => {
   switch (type) {
@@ -88,13 +105,95 @@ const getIconForType = (type?: string) => {
   }
 };
 
+const getActionItems = (doc: DocRow) => {
+  return [
+    {
+      label: 'Reprocess',
+      icon: 'pi pi-refresh',
+      command: () => handleReprocess(doc)
+    }
+  ];
+};
+
+const handleDelete = async (doc: DocRow) => {
+  confirm.require({
+    message: `Are you sure you want to delete "${doc.title}"? This will also delete any associated bookmark.`,
+    header: 'Confirm Delete',
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    accept: async () => {
+      try {
+        console.log(`Starting delete process for document ${doc.id}`);
+        
+        // CRITICAL: Must delete bookmark FIRST due to foreign key constraint
+        const bookmark = await bookmarkService.findBookmarkByDocumentId(Number(doc.id));
+        
+        if (bookmark) {
+          console.log(`Found bookmark ${bookmark.id} for document ${doc.id}, deleting bookmark first...`);
+          await bookmarkService.deleteBookmark(bookmark.id);
+          console.log(`Successfully deleted bookmark ${bookmark.id}`);
+        } else {
+          console.log(`No bookmark found for document ${doc.id}`);
+        }
+        
+        // Now delete the document
+        console.log(`Deleting document ${doc.id}...`);
+        await documentService.deleteDocument(Number(doc.id));
+        console.log(`Successfully deleted document ${doc.id}`);
+        
+        toast.add({ 
+          severity: 'success', 
+          summary: 'Deleted', 
+          detail: `Document "${doc.title}" has been deleted`, 
+          life: 3000 
+        });
+        
+        // Emit refresh event to parent
+        emit('refresh');
+      } catch (error: any) {
+        console.error('Error deleting document:', error);
+        toast.add({ 
+          severity: 'error', 
+          summary: 'Error', 
+          detail: error.message || 'Failed to delete document', 
+          life: 5000 
+        });
+      }
+    }
+  });
+};
+
+const handleReprocess = async (doc: DocRow) => {
+  try {
+    await documentService.reprocessDocument(Number(doc.id), false);
+    
+    toast.add({ 
+      severity: 'info', 
+      summary: 'Reprocessing', 
+      detail: `Document "${doc.title}" is being reprocessed`, 
+      life: 3000 
+    });
+    
+    // Optionally emit refresh event
+    setTimeout(() => emit('refresh'), 2000);
+  } catch (error: any) {
+    console.error('Error reprocessing document:', error);
+    toast.add({ 
+      severity: 'error', 
+      summary: 'Error', 
+      detail: error.message || 'Failed to reprocess document', 
+      life: 5000 
+    });
+  }
+};
+
 watchEffect(() => {
   // Re-compute when expandAllKey changes to support external expand/collapse toggles
   // Parent can toggle by changing the key and setting expandedRows appropriately
 });
 
 // Expose methods for parent to control expansion
-defineExpose({ expandedRows, selection });
+defineExpose({ expandedRows });
 </script>
 
 <style scoped>

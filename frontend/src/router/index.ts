@@ -70,10 +70,7 @@ const routes: Array<RouteRecordRaw> = [
   {
     path: '/library',
     name: 'library',
-    components: {
-      default: () => import("../views/DocumentContainer.vue"),
-      sidebar: () => import("@/components/library/LibrarySidebar.vue")
-    }
+    component: () => import("../views/DocumentContainer.vue")
   },
   {
     path: '/learning-qa',

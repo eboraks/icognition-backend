@@ -1111,7 +1111,8 @@ async def get_user_bookmarks(
                 processing_status=bm.processing_status,
                 created_at=bm.created_at,
                 updated_at=bm.updated_at,
-                user_id=bm.user_id
+                user_id=bm.user_id,
+                document_id=bm.document_id  # Include document_id for relationship tracking
             )
             for bm in bookmarks
         ]

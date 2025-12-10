@@ -3,7 +3,7 @@
     <!-- Top Bar -->
     <div class="layout-topbar bg-primary-500">
       <div class="layout-topbar-left">
-        <button class="layout-menu-button p-link" @click="onMenuToggle">
+        <button v-if="hasSidebar" class="layout-menu-button p-link" @click="onMenuToggle">
           <i class="pi pi-bars"></i>
         </button>
         <div class="layout-topbar-logo">

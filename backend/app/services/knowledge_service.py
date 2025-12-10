@@ -264,7 +264,7 @@ class KnowledgeService:
 
                 actions = [
                     {"id": "summarize", "label": "Summarize this document"},
-                    {"id": "key_points", "label": "Show key points"},
+                    {"id": "bullet_points", "label": "Show key points"},
                     {"id": "entities", "label": "Show entities mentioned"},
                 ]
 
@@ -379,11 +379,26 @@ class KnowledgeService:
                     "message": "Latest news feature will be available soon. This will show recent information about the selected entity.",
                 }
 
-            elif action_id == "key_points" and document_id:
-                # Placeholder for key points feature
-                return {
-                    "message": "Key points extraction will be available soon.",
-                }
+            elif action_id == "bullet_points" and document_id:
+                # Get bullet points for the document
+                doc_stmt = select(Document).where(
+                    and_(Document.id == document_id, Document.user_id == user_id)
+                )
+                doc_result = await self.session.execute(doc_stmt)
+                document = doc_result.scalar_one_or_none()
+
+                if not document:
+                    raise ValueError(f"Document {document_id} not found")
+
+                if document.ai_bullet_points and len(document.ai_bullet_points) > 0:
+                    bullet_points_text = "\n".join([f"• {point}" for point in document.ai_bullet_points])
+                    return {
+                        "message": f"Key points for '{document.title or 'Untitled'}':\n\n{bullet_points_text}",
+                    }
+                else:
+                    return {
+                        "message": f"No bullet points available for '{document.title or 'Untitled'}'. The document may still be processing.",
+                    }
 
             elif action_id == "entities" and document_id:
                 # Get entities related to this document
