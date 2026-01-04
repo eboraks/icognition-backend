@@ -13,7 +13,9 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY pyproject.toml uv.lock README.md ./
 RUN uv pip install --system --no-cache .
 
-# Copy the app to the container
+# Copy the app and migration files to the container
+COPY alembic.ini .
+COPY ./migrations ./migrations
 COPY ./app ./app
 
 # Run the app

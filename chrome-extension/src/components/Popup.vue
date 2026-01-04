@@ -7,8 +7,18 @@
                 </a>
                 <div class="flex align-items-center gap-3 mr-4">
                     <template v-if="user">
-                        <i tabindex="4" class="pi pi-cog text-white cursor-pointer" @click="showSettings = true" title="Settings" style="font-size: 1.2rem;"></i>
-                        <i tabindex="5" class="pi pi-sign-out text-white cursor-pointer" @click="handleSignOut" title="Sign Out" style="font-size: 1.2rem;"></i>
+                        <Button 
+                            @click="handleQuickBookmark" 
+                            label="Quick Save" 
+                            icon="pi pi-bookmark" 
+                            tabindex="4"
+                            class="p-button-sm p-button-outlined"
+                            :loading="isQuickSaving"
+                            :disabled="isQuickSaving || !active_tab || !active_tab.url"
+                            title="Quick Save (LinkPresentation Style) - Testing Only"
+                            style="font-size: 0.75rem; padding: 0.25rem 0.5rem;"></Button>
+                        <i tabindex="5" class="pi pi-cog text-white cursor-pointer" @click="showSettings = true" title="Settings" style="font-size: 1.2rem;"></i>
+                        <i tabindex="6" class="pi pi-sign-out text-white cursor-pointer" @click="handleSignOut" title="Sign Out" style="font-size: 1.2rem;"></i>
                     </template>
                 </div>
             </div>
@@ -325,6 +335,7 @@ const selectedEnvironment = ref('staging');
 const showUrlWarning = ref(false);
 const urlWarningData = ref(null);
 const proceedWithBookmark = ref(false);
+const isQuickSaving = ref(false);
 
 // Backend environment options
 const environmentOptions = [
@@ -1091,6 +1102,178 @@ const getCurrentPageTitle = () => {
             : active_tab.value.title;
     }
     return 'Current Page';
+}
+
+// Extract metadata from page (mimics LinkPresentation behavior)
+// Extracts og:title, og:description, and other Open Graph metadata
+const extractPageMetadata = async (tabId) => {
+    const metadata = {
+        title: null,
+        description: null,
+        ogTitle: null,
+        ogDescription: null
+    };
+    
+    try {
+        // Inject script to extract Open Graph metadata
+        const results = await chrome.scripting.executeScript({
+            target: { tabId: tabId },
+            func: () => {
+                const meta = {};
+                
+                // Get og:title
+                const ogTitle = document.querySelector('meta[property="og:title"]');
+                if (ogTitle) {
+                    meta.ogTitle = ogTitle.getAttribute('content');
+                }
+                
+                // Get og:description
+                const ogDescription = document.querySelector('meta[property="og:description"]');
+                if (ogDescription) {
+                    meta.ogDescription = ogDescription.getAttribute('content');
+                }
+                
+                // Get article:title as fallback
+                const articleTitle = document.querySelector('meta[property="article:title"]');
+                if (articleTitle) {
+                    meta.articleTitle = articleTitle.getAttribute('content');
+                }
+                
+                // Get article.headline (WSJ specific)
+                const articleHeadline = document.querySelector('meta[name="article.headline"]');
+                if (articleHeadline) {
+                    meta.articleHeadline = articleHeadline.getAttribute('content');
+                }
+                
+                // Get <title> tag
+                meta.pageTitle = document.title;
+                
+                return meta;
+            }
+        });
+        
+        if (results && results[0] && results[0].result) {
+            const extracted = results[0].result;
+            
+            // Priority: og:title > article.headline > article:title > page title
+            metadata.ogTitle = extracted.ogTitle;
+            metadata.ogDescription = extracted.ogDescription;
+            metadata.title = extracted.ogTitle || extracted.articleHeadline || extracted.articleTitle || extracted.pageTitle;
+            metadata.description = extracted.ogDescription;
+            
+            // Clean up title (remove common suffixes)
+            if (metadata.title) {
+                metadata.title = metadata.title
+                    .replace(/ - WSJ$/, '')
+                    .replace(/ \| WSJ$/, '')
+                    .replace(/ - The Wall Street Journal$/, '')
+                    .trim();
+            }
+            
+            console.log('✅ Extracted metadata:', metadata);
+        }
+    } catch (error) {
+        console.error('❌ Error extracting metadata:', error);
+        // Fallback to tab title if extraction fails
+        if (active_tab.value && active_tab.value.title) {
+            metadata.title = active_tab.value.title;
+        }
+    }
+    
+    return metadata;
+}
+
+// Quick bookmark creation (LinkPresentation style)
+// Extracts URL, title, and description without full analysis
+const handleQuickBookmark = async () => {
+    if (!active_tab.value || !active_tab.value.url) {
+        handleError('No active tab URL found');
+        return;
+    }
+    
+    isQuickSaving.value = true;
+    
+    try {
+        console.log('🔗 Quick bookmark: Extracting metadata from page...');
+        
+        // Extract metadata from the page
+        const metadata = await extractPageMetadata(active_tab.value.id);
+        
+        // Get base URL from storage
+        const result = await chrome.storage.local.get(['backendEnvironment']);
+        const environment = result.backendEnvironment || 'staging';
+        const baseUrl = environment === 'development' 
+            ? 'http://localhost:8000' 
+            : 'https://stg.api.icognition.ai';
+        
+        // Get auth token
+        const session_user = await chrome.storage.session.get(["session_user"]);
+        if (!session_user.session_user || !session_user.session_user.stsTokenManager) {
+            handleError('User not authenticated');
+            isQuickSaving.value = false;
+            return;
+        }
+        
+        const authToken = session_user.session_user.stsTokenManager.accessToken;
+        
+        // Prepare bookmark data
+        const bookmarkData = {
+            url: cleanUrl(active_tab.value.url),
+            title: metadata.title || active_tab.value.title || 'Untitled',
+            description: metadata.description || null,
+            content: null, // No HTML content for quick save
+            metadata: {
+                source: 'chrome_extension_quick_save',
+                extractedTitle: metadata.title,
+                extractedDescription: metadata.description,
+                ogTitle: metadata.ogTitle,
+                ogDescription: metadata.ogDescription,
+                linkPresentationStyle: true
+            }
+        };
+        
+        console.log('📤 Quick bookmark: Creating bookmark with data:', bookmarkData);
+        
+        // Create bookmark with metadata (mimics LinkPresentation - URL, title, description)
+        const response = await fetch(`${baseUrl}/bookmarks/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${authToken}`
+            },
+            body: JSON.stringify(bookmarkData)
+        });
+        
+        if (response.ok) {
+            const bookmarkResponse = await response.json();
+            console.log('✅ Quick bookmark created:', bookmarkResponse);
+            
+            // Update local state
+            bookmark.value = bookmarkResponse;
+            if (active_tab.value && active_tab.value.url) {
+                bookmarksByUrl.value[cleanUrl(active_tab.value.url)] = bookmarkResponse;
+            }
+            
+            status.value = {
+                ...AppStatusEnum.SERVER_READY,
+                message: 'Bookmark saved successfully!'
+            };
+            
+            // Show success message briefly
+            setTimeout(() => {
+                status.value = AppStatusEnum.SERVER_READY;
+            }, 2000);
+        } else {
+            const errorData = await response.json();
+            console.error('❌ Quick bookmark error:', errorData);
+            handleError(errorData.detail || 'Failed to create bookmark');
+        }
+    } catch (error) {
+        console.error('❌ Quick bookmark error:', error);
+        handleError('Failed to create bookmark: ' + (error.message || 'Unknown error'));
+    } finally {
+        isQuickSaving.value = false;
+    }
 }
 
 const handleCancelProcessing = async () => {

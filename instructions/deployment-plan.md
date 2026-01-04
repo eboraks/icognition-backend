@@ -7,6 +7,8 @@
 - [x] FastAPI backend deployed to Cloud Run (private VPC egress, custom domain `stg.api.icognition.ai`)
 - [x] Secrets stored in Secret Manager and injected via Cloud Build/Cloud Run
 - [x] Cloud Build config for backend fixed (correct Dockerfile path, build context, secret injection)
+- [x] Automated DB migrations integrated into `cloudbuild-backend.yaml`
+- [x] IAM permissions configured for Cloud Build service account
 
 ### 🔄 In Progress
 - [ ] **Task #2: Frontend Manual Deployment** (CURRENT FOCUS)
@@ -18,7 +20,6 @@
 ### 📋 Next Up (Priority Order)
 1. **Task #1: Backend CI/CD Automation**
    - Create Cloud Build trigger (GitHub → Cloud Build)
-   - Add database migration step to `cloudbuild-backend.yaml`
    - Test full pipeline: build → migrate → deploy
 
 2. **Task #3: Frontend CI/CD**

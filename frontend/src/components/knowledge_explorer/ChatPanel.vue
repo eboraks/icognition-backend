@@ -104,6 +104,7 @@ const messages = ref<ChatMessage[]>([]);
 const inputMessage = ref('');
 const messagesContainer = ref<any>(null);
 const loading = ref(false);
+const isLoadingInitialMessage = ref(false); // Prevent duplicate calls
 
 const scrollToBottom = () => {
   nextTick(() => {
@@ -117,6 +118,11 @@ const scrollToBottom = () => {
 };
 
 const loadInitialMessage = async () => {
+  // Prevent duplicate calls
+  if (isLoadingInitialMessage.value) {
+    return;
+  }
+  
   if (!authStore.currentUser) {
     messages.value = [{
       type: 'system',
@@ -126,65 +132,95 @@ const loadInitialMessage = async () => {
     return;
   }
 
-  // Switch chat store to the session provided by the prop
-  await chatStore.switchActiveSession(props.chatSessionId);
+  isLoadingInitialMessage.value = true;
+  
+  try {
+    // Switch chat store to the session provided by the prop
+    await chatStore.switchActiveSession(props.chatSessionId);
 
-  // After switching, populate local messages from the active session's messages
-  if (chatStore.activeSession) {
-    messages.value = chatStore.activeSession.messages.map(msg => ({
-      type: msg.senderId === authStore.currentUser?.uid ? 'user' : 'system',
-      content: msg.content,
-      actions: (msg as any).actions,
-      resources: (msg as any).resources,
-      pending: (msg as any).pending ?? false,
-    }));
-  } else {
-    messages.value = [];
-  }
+    // After switching, populate local messages from the active session's messages
+    if (chatStore.activeSession) {
+      messages.value = chatStore.activeSession.messages.map(msg => ({
+        type: msg.senderId === authStore.currentUser?.uid ? 'user' : 'system',
+        content: msg.content,
+        actions: (msg as any).actions,
+        resources: (msg as any).resources,
+        pending: (msg as any).pending ?? false,
+      }));
+    } else {
+      messages.value = [];
+    }
 
-  // Add specific contextual message if no messages yet or selection changed
-  if (messages.value.length === 0 || chatStore.activeSession?.scope_id !== (props.selectedEntityId || props.selectedDocumentId)) {
-    try {
-      loading.value = true;
-      const response = await knowledgeService.getContextualMessage(
-        props.selectedEntityId || undefined,
-        props.selectedDocumentId || undefined
-      );
-      
-      const contextualData: ContextualMessageResponse = response.data;
-      
-      if (props.selectedEntityId || props.selectedDocumentId) {
-        let filterMessage = '';
-        if (props.selectedEntityId) {
-          filterMessage = `You filtered by ${contextualData.entity?.name || 'an entity'}`;
-        } else if (props.selectedDocumentId) {
-          filterMessage = `You filtered by ${contextualData.document?.title || 'a document'}`;
+    // Check if we already have a contextual message in the loaded messages
+    // (to avoid adding duplicate opening messages)
+    const hasContextualMessage = messages.value.some(
+      msg => msg.type === 'system' && 
+      msg.content && 
+      !msg.content.includes('Please log in') &&
+      (msg.content.includes('recently bookmarked') || 
+       msg.content.includes('Hello! I\'m your knowledge exploration assistant'))
+    );
+
+    // Add specific contextual message if no messages yet or selection changed
+    // AND we don't already have a contextual message
+    if (!hasContextualMessage && 
+        (messages.value.length === 0 || chatStore.activeSession?.scope_id !== (props.selectedEntityId || props.selectedDocumentId))) {
+      try {
+        loading.value = true;
+        const response = await knowledgeService.getContextualMessage(
+          props.selectedEntityId || undefined,
+          props.selectedDocumentId || undefined
+        );
+        
+        const contextualData: ContextualMessageResponse = response.data;
+        
+        if (props.selectedEntityId || props.selectedDocumentId) {
+          let filterMessage = '';
+          if (props.selectedEntityId) {
+            filterMessage = `You filtered by ${contextualData.entity?.name || 'an entity'}`;
+          } else if (props.selectedDocumentId) {
+            filterMessage = `You filtered by ${contextualData.document?.title || 'a document'}`;
+          }
+          
+          if (filterMessage) {
+            messages.value.push({
+              type: 'filter',
+              content: toParagraphHtml(filterMessage),
+            });
+          }
         }
         
-        if (filterMessage) {
+        // Only add if we don't already have a similar message
+        const messageExists = messages.value.some(
+          msg => msg.type === 'system' && 
+          msg.content === contextualData.message
+        );
+        
+        if (!messageExists) {
           messages.value.push({
-            type: 'filter',
-            content: toParagraphHtml(filterMessage),
+            type: 'system',
+            content: contextualData.message,
+            actions: contextualData.actions,
           });
         }
+      } catch (error) {
+        console.error('Failed to load contextual message:', error);
+        // Only add fallback if we don't already have a message
+        if (messages.value.length === 0) {
+          messages.value.push({
+            type: 'system',
+            content: toParagraphHtml('Hello! I\'m your knowledge exploration assistant. Use the filters on the left to navigate your knowledge graph, or ask me a question directly.'),
+            actions: [],
+          });
+        }
+      } finally {
+        loading.value = false;
       }
-      
-      messages.value.push({
-        type: 'system',
-        content: contextualData.message,
-        actions: contextualData.actions,
-      });
-    } catch (error) {
-      console.error('Failed to load contextual message:', error);
-      messages.value.push({
-        type: 'system',
-        content: toParagraphHtml('Hello! I\'m your knowledge exploration assistant. Use the filters on the left to navigate your knowledge graph, or ask me a question directly.'),
-        actions: [],
-      });
-    } finally {
-      loading.value = false;
     }
+  } finally {
+    isLoadingInitialMessage.value = false;
   }
+  
   scrollToBottom();
 };
 
@@ -322,23 +358,32 @@ watch(
   { deep: true }
 );
 
-// Watch for selection changes
+// Watch for selection changes with debouncing to prevent duplicate calls
+let watchTimeout: ReturnType<typeof setTimeout> | null = null;
 watch(
   () => [props.selectedEntityId, props.selectedDocumentId, props.chatSessionId],
   (newValues, oldValues) => {
-    // Extract new and old values safely
-    const [newEntityId, newDocumentId, newChatSessionId] = newValues;
-    const [oldEntityId, oldDocumentId, oldChatSessionId] = oldValues || [undefined, undefined, undefined];
-
-    // Only reload if the chat session itself changed, or if selections changed within the same session
-    if (
-      (oldValues === undefined) || // First run
-      newChatSessionId !== oldChatSessionId ||
-      (newChatSessionId === oldChatSessionId && (newEntityId !== oldEntityId || newDocumentId !== oldDocumentId))
-    ) {
-      messages.value = [];
-      loadInitialMessage();
+    // Clear any pending timeout
+    if (watchTimeout) {
+      clearTimeout(watchTimeout);
     }
+    
+    // Debounce the call to prevent rapid multiple calls
+    watchTimeout = setTimeout(() => {
+      // Extract new and old values safely
+      const [newEntityId, newDocumentId, newChatSessionId] = newValues;
+      const [oldEntityId, oldDocumentId, oldChatSessionId] = oldValues || [undefined, undefined, undefined];
+
+      // Only reload if the chat session itself changed, or if selections changed within the same session
+      if (
+        (oldValues === undefined) || // First run
+        newChatSessionId !== oldChatSessionId ||
+        (newChatSessionId === oldChatSessionId && (newEntityId !== oldEntityId || newDocumentId !== oldDocumentId))
+      ) {
+        messages.value = [];
+        loadInitialMessage();
+      }
+    }, 100); // 100ms debounce
   },
   { immediate: true }
 );

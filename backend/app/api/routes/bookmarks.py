@@ -131,9 +131,27 @@ async def _process_document_content(
                 }, user_id)
             return
         
-        # Check if content is NOT_AVAILABLE or empty and skip processing
-        if document.content_type == "not_available" or not document.content or not document.content.strip():
-            logger.info(f"Skipping content analysis for document {doc_id} - content is NOT_AVAILABLE or empty")
+        # Check if content is NOT_AVAILABLE, empty, or unavailable
+        content_unavailable = False
+        
+        # Check content_type
+        if document.content_type in ["not_available", "fetch_failed"]:
+            content_unavailable = True
+        
+        # Check if content is empty
+        if not document.content or not document.content.strip():
+            content_unavailable = True
+        
+        # Check content_availability metadata
+        if document.document_metadata and document.document_metadata.get('content_availability'):
+            content_status = document.document_metadata['content_availability']
+            if not content_status.get('content_available', True):
+                content_unavailable = True
+            elif content_status.get('content_status') == 'unavailable':
+                content_unavailable = True
+        
+        if content_unavailable:
+            logger.info(f"Skipping content analysis for document {doc_id} - content is NOT_AVAILABLE, empty, or unavailable")
             
             # Mark as processed without AI analysis
             document.ai_is_about = "Content not available for analysis"
@@ -253,13 +271,31 @@ async def _process_document_entities(
             )
             document = result.scalar_one_or_none()
             
-            if not document or not document.content:
-                logger.warning(f"Document {doc_id} not found or has no content for entity extraction")
+            if not document:
+                logger.warning(f"Document {doc_id} not found for entity extraction")
                 return
             
-            # Skip if content is NOT_AVAILABLE
-            if document.content_type == "not_available":
-                logger.info(f"Skipping entity extraction for document {doc_id} - content is NOT_AVAILABLE")
+            # Check if content is available
+            content_unavailable = False
+            
+            # Check if content is empty
+            if not document.content or not document.content.strip():
+                content_unavailable = True
+            
+            # Check content_type
+            if document.content_type in ["not_available", "fetch_failed"]:
+                content_unavailable = True
+            
+            # Check content_availability metadata
+            if document.document_metadata and document.document_metadata.get('content_availability'):
+                content_status = document.document_metadata['content_availability']
+                if not content_status.get('content_available', True):
+                    content_unavailable = True
+                elif content_status.get('content_status') == 'unavailable':
+                    content_unavailable = True
+            
+            if content_unavailable:
+                logger.info(f"Skipping entity extraction for document {doc_id} - content is NOT_AVAILABLE, empty, or unavailable")
                 return
             
             # Get DSPy entity service
@@ -338,28 +374,69 @@ async def _process_html_content_to_document(
                     logger.error(f"Document {bookmark.document_id} not found for bookmark {bookmark_id}")
                     return
             else:
-                # Create document from HTML content (no embeddings)
-                logger.info(f"Creating new document for bookmark {bookmark_id}")
-                document_service = DocumentService(session)
-                document = await document_service.create_document_from_content(
-                    user_id=user_id,
-                    content=html_content,
-                    content_type="html",
-                    title=title,
-                    url=url
-                )
-                
-                if not document:
-                    logger.error(f"Failed to create document from HTML content for bookmark {bookmark_id}")
-                    bookmark.processing_status = "failed"
+                # Check if document already exists for this URL
+                if url:
+                    result = await session.execute(
+                        select(Document).where(
+                            Document.url == url,
+                            Document.user_id == user_id
+                        )
+                    )
+                    existing_doc = result.scalar_one_or_none()
+                    
+                    if existing_doc:
+                        logger.info(f"Document already exists for URL {url}, reusing existing document {existing_doc.id}")
+                        document = existing_doc
+                        # Update bookmark with existing document ID
+                        bookmark.document_id = document.id
+                        await session.commit()
+                        await session.refresh(bookmark)
+                    else:
+                        # Create document from HTML content (no embeddings)
+                        logger.info(f"Creating new document for bookmark {bookmark_id}")
+                        document_service = DocumentService(session)
+                        document = await document_service.create_document_from_content(
+                            user_id=user_id,
+                            content=html_content,
+                            content_type="html",
+                            title=title,
+                            url=url
+                        )
+                        
+                        if not document:
+                            logger.error(f"Failed to create document from HTML content for bookmark {bookmark_id}")
+                            bookmark.processing_status = "failed"
+                            await session.commit()
+                            return
+                        
+                        # Update bookmark with document ID
+                        bookmark.document_id = document.id
+                        await session.commit()
+                        await session.refresh(bookmark)
+                        logger.info(f"Successfully created document {document.id} from HTML content for bookmark {bookmark_id}")
+                else:
+                    # No URL provided, create new document
+                    logger.info(f"Creating new document for bookmark {bookmark_id} (no URL)")
+                    document_service = DocumentService(session)
+                    document = await document_service.create_document_from_content(
+                        user_id=user_id,
+                        content=html_content,
+                        content_type="html",
+                        title=title,
+                        url=url
+                    )
+                    
+                    if not document:
+                        logger.error(f"Failed to create document from HTML content for bookmark {bookmark_id}")
+                        bookmark.processing_status = "failed"
+                        await session.commit()
+                        return
+                    
+                    # Update bookmark with document ID
+                    bookmark.document_id = document.id
                     await session.commit()
-                    return
-                
-                # Update bookmark with document ID
-                bookmark.document_id = document.id
-                await session.commit()
-                await session.refresh(bookmark)
-                logger.info(f"Successfully created document {document.id} from HTML content for bookmark {bookmark_id}")
+                    await session.refresh(bookmark)
+                    logger.info(f"Successfully created document {document.id} from HTML content for bookmark {bookmark_id}")
             
             # Update bookmark processing status
             bookmark.is_processed = True
@@ -733,6 +810,17 @@ async def create_bookmark(
     try:
         logger.info(f"Creating bookmark for URL: {bookmark_data.url}")
         
+        document_service = DocumentService(session)
+        
+        # First, check for existing document by URL (not just bookmark)
+        existing_document = await session.execute(
+            select(Document).where(
+                Document.url == bookmark_data.url,
+                Document.user_id == user_context.user.id
+            )
+        )
+        existing_document = existing_document.scalar_one_or_none()
+        
         # Check for duplicate bookmark (same URL and user)
         existing_bookmark = await session.execute(
             select(Bookmark).where(
@@ -742,7 +830,205 @@ async def create_bookmark(
         )
         existing_bookmark = existing_bookmark.scalar_one_or_none()
         
-        document_service = DocumentService(session)
+        # If both bookmark and document exist, check if update is needed
+        if existing_bookmark and existing_document:
+            # Prepare content for comparison
+            new_raw_html = None
+            if bookmark_data.content and bookmark_data.content.strip() and bookmark_data.content != "NOT_AVAILABLE":
+                # If content is HTML, use it as raw_html
+                if not _is_clean_text_content(bookmark_data.content):
+                    new_raw_html = sanitize_content_for_db(bookmark_data.content)
+            
+            # Compare raw_html and description
+            raw_html_changed = False
+            description_changed = False
+            
+            if new_raw_html is not None:
+                existing_raw_html = existing_document.raw_html or ""
+                if new_raw_html != existing_raw_html:
+                    raw_html_changed = True
+                    logger.info(f"raw_html changed for document {existing_document.id}")
+            
+            new_description = bookmark_data.description or ""
+            existing_description = existing_bookmark.description or ""
+            if new_description != existing_description:
+                description_changed = True
+                logger.info(f"description changed for bookmark {existing_bookmark.id}")
+            
+            # If nothing changed, return "bookmark exists"
+            if not raw_html_changed and not description_changed:
+                logger.info(f"Bookmark and document exist with same content for URL: {bookmark_data.url}, returning existing bookmark")
+                
+                # Refresh to ensure all attributes are loaded
+                await session.refresh(existing_bookmark)
+                await session.refresh(existing_document)
+                
+                # Still check if document needs AI processing
+                if existing_document.ai_is_about is None or existing_document.ai_bullet_points is None:
+                    background_tasks.add_task(
+                        _process_document_content,
+                        existing_document.id,
+                        existing_bookmark.title,
+                        existing_bookmark.url,
+                        user_context.user.id
+                    )
+                    background_tasks.add_task(
+                        _process_document_entities,
+                        existing_document.id,
+                        user_context.user.id
+                    )
+                    background_tasks.add_task(
+                        _process_document_embeddings,
+                        existing_document.id
+                    )
+                elif existing_document.ai_is_about and existing_document.ai_bullet_points:
+                    await _send_document_ready_message(
+                        existing_document, 
+                        user_context.user.id, 
+                        existing_bookmark.title, 
+                        existing_bookmark.url
+                    )
+                
+                return BookmarkResponse(
+                    id=existing_bookmark.id,
+                    url=existing_bookmark.url,
+                    title=existing_bookmark.title,
+                    description=existing_bookmark.description,
+                    content=existing_bookmark.content,
+                    bookmark_metadata=existing_bookmark.bookmark_metadata,
+                    is_processed=existing_bookmark.is_processed,
+                    processing_status=existing_bookmark.processing_status,
+                    created_at=existing_bookmark.created_at,
+                    updated_at=existing_bookmark.updated_at,
+                    user_id=existing_bookmark.user_id,
+                    document_id=existing_bookmark.document_id
+                )
+            
+            # If something changed, update the existing bookmark and document
+            logger.info(f"Updating existing bookmark {existing_bookmark.id} and document {existing_document.id} with new content")
+            
+            # Update bookmark
+            if description_changed:
+                existing_bookmark.description = bookmark_data.description
+            if bookmark_data.title and bookmark_data.title != existing_bookmark.title:
+                existing_bookmark.title = bookmark_data.title
+            if bookmark_data.metadata:
+                existing_bookmark.bookmark_metadata = bookmark_data.metadata
+            existing_bookmark.updated_at = datetime.now()
+            
+            # Update document
+            if raw_html_changed:
+                existing_document.raw_html = new_raw_html
+                # Also update content if we have it
+                if bookmark_data.content and bookmark_data.content.strip():
+                    existing_document.content = sanitize_content_for_db(bookmark_data.content)
+                existing_document.updated_at = datetime.now()
+                # Reset AI processing if content changed
+                if existing_document.ai_is_about or existing_document.ai_bullet_points:
+                    existing_document.ai_is_about = None
+                    existing_document.ai_bullet_points = []
+            
+            await session.commit()
+            await session.refresh(existing_bookmark)
+            await session.refresh(existing_document)
+            
+            # Trigger background processing if content was updated
+            if raw_html_changed:
+                background_tasks.add_task(
+                    _process_document_content,
+                    existing_document.id,
+                    existing_bookmark.title,
+                    existing_bookmark.url,
+                    user_context.user.id
+                )
+                background_tasks.add_task(
+                    _process_document_entities,
+                    existing_document.id,
+                    user_context.user.id
+                )
+                background_tasks.add_task(
+                    _process_document_embeddings,
+                    existing_document.id
+                )
+            
+            return BookmarkResponse(
+                id=existing_bookmark.id,
+                url=existing_bookmark.url,
+                title=existing_bookmark.title,
+                description=existing_bookmark.description,
+                content=existing_bookmark.content,
+                bookmark_metadata=existing_bookmark.bookmark_metadata,
+                is_processed=existing_bookmark.is_processed,
+                processing_status=existing_bookmark.processing_status,
+                created_at=existing_bookmark.created_at,
+                updated_at=existing_bookmark.updated_at,
+                user_id=existing_bookmark.user_id,
+                document_id=existing_bookmark.document_id
+            )
+        
+        # If document exists but no bookmark, create bookmark linked to existing document
+        if existing_document and not existing_bookmark:
+            logger.info(f"Document exists for URL {bookmark_data.url} but no bookmark, creating bookmark linked to document {existing_document.id}")
+            
+            # Create bookmark linked to existing document
+            bookmark = Bookmark(
+                url=bookmark_data.url,
+                title=bookmark_data.title or existing_document.title or "Untitled",
+                description=bookmark_data.description,
+                content=sanitize_content_for_db(bookmark_data.content) if bookmark_data.content else None,
+                bookmark_metadata=bookmark_data.metadata or {},
+                user_id=user_context.user.id,
+                document_id=existing_document.id,
+                is_processed=True,
+                processing_status="completed" if (existing_document.ai_is_about and existing_document.ai_bullet_points) else "pending"
+            )
+            
+            session.add(bookmark)
+            await session.commit()
+            await session.refresh(bookmark)
+            
+            # If document needs AI processing, trigger it
+            if existing_document.ai_is_about is None or existing_document.ai_bullet_points is None:
+                background_tasks.add_task(
+                    _process_document_content,
+                    existing_document.id,
+                    bookmark.title,
+                    bookmark.url,
+                    user_context.user.id
+                )
+                background_tasks.add_task(
+                    _process_document_entities,
+                    existing_document.id,
+                    user_context.user.id
+                )
+                background_tasks.add_task(
+                    _process_document_embeddings,
+                    existing_document.id
+                )
+            elif existing_document.ai_is_about and existing_document.ai_bullet_points:
+                await _send_document_ready_message(
+                    existing_document, 
+                    user_context.user.id, 
+                    bookmark.title, 
+                    bookmark.url
+                )
+            
+            return BookmarkResponse(
+                id=bookmark.id,
+                url=bookmark.url,
+                title=bookmark.title,
+                description=bookmark.description,
+                content=bookmark.content,
+                bookmark_metadata=bookmark.bookmark_metadata,
+                is_processed=bookmark.is_processed,
+                processing_status=bookmark.processing_status,
+                created_at=bookmark.created_at,
+                updated_at=bookmark.updated_at,
+                user_id=bookmark.user_id,
+                document_id=bookmark.document_id
+            )
+        
+        # If only bookmark exists but no document, handle it
         if existing_bookmark:
             ## Get the document, and if it doesn't have AI content, re-analyze it
             document = await document_service.get_document_by_id(
@@ -852,31 +1138,54 @@ async def create_bookmark(
         # Check if we have content provided or need to fetch HTML
         _doc = None
         
+        # Normalize content - treat empty/whitespace as None
+        content_provided = bookmark_data.content and bookmark_data.content.strip()
+        
         # Handle NOT_AVAILABLE content case - create bookmark and document without AI analysis
         if bookmark_data.content == "NOT_AVAILABLE":
             logger.info(f"Content NOT_AVAILABLE for URL: {bookmark_data.url}, creating bookmark and document without AI analysis")
             
-            # Create document without content for NOT_AVAILABLE case
-            _doc = await document_service.create_document_from_content(
-                user_id=user_context.user.id,
-                content="",  # Empty content
-                content_type="not_available",
-                title=bookmark_data.title,
-                url=bookmark_data.url
-            )
-            
-            if _doc:
-                logger.info(f"Created document {_doc.id} for NOT_AVAILABLE content")
+            # Check if document already exists for this URL
+            if existing_document:
+                logger.info(f"Document already exists for URL: {bookmark_data.url}, reusing existing document {existing_document.id}")
+                _doc = existing_document
             else:
-                logger.error(f"Failed to create document for NOT_AVAILABLE content")
+                # Create document without content for NOT_AVAILABLE case
+                _doc = await document_service.create_document_from_content(
+                    user_id=user_context.user.id,
+                    content="",  # Empty content
+                    content_type="not_available",
+                    title=bookmark_data.title,
+                    url=bookmark_data.url
+                )
+                
+                if _doc:
+                    logger.info(f"Created document {_doc.id} for NOT_AVAILABLE content")
+                else:
+                    logger.error(f"Failed to create document for NOT_AVAILABLE content")
         
-        elif bookmark_data.content and _is_clean_text_content(bookmark_data.content):
+        elif content_provided and _is_clean_text_content(bookmark_data.content):
             logger.info(f"Processing clean text content for URL: {bookmark_data.url}")
             _doc = await _create_document_from_clean_text(
                 bookmark_data, user_context, session
             )
             logger.info(f"Document created from clean text: {_doc.id if _doc else 'None'}")
-        elif bookmark_data.content:
+            
+            # If document was created but has no raw_html and we have a URL, try to fetch content
+            if _doc and not _doc.raw_html and _doc.url:
+                logger.info(f"Document {_doc.id} created from clean text but has no raw_html, attempting to fetch from URL")
+                try:
+                    updated_doc = await document_service.fetch_and_update_document(
+                        user_id=user_context.user.id,
+                        document_id=str(_doc.id)
+                    )
+                    if updated_doc:
+                        _doc = updated_doc
+                        logger.info(f"Successfully fetched content for document {_doc.id}")
+                except Exception as e:
+                    logger.warning(f"Failed to fetch content for document {_doc.id}: {e}")
+                    # Continue with existing document even if fetch failed
+        elif content_provided:
             logger.info(f"Processing HTML content provided by client for URL: {bookmark_data.url}")
             
             # Sanitize content once for both bookmark and document creation
@@ -926,23 +1235,63 @@ async def create_bookmark(
                 document_id=bookmark.document_id  # Will be None initially, updated in background task
             )
         else:
-            logger.info(f"No content provided, fetching HTML content for URL: {bookmark_data.url}")
-            # Create document by fetching URL content
+            # No content provided (iPhone app case) - fetch content from URL
+            logger.info(f"No content provided for URL: {bookmark_data.url}, fetching HTML content")
             document_service = DocumentService(session)
             
-            try:
-                _doc = await document_service.create_document_from_url(
-                    user_id=user_context.user.id,
-                    url=bookmark_data.url,
-                    title=bookmark_data.title
-                )
-                logger.info(f"Document created from URL fetch: {_doc.id if _doc else 'None'}")
-            except Exception as e:
-                logger.warning(f"Failed to create document from URL {bookmark_data.url}: {e}")
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Unable to process the provided URL"
-                )
+            # Check if document already exists for this URL
+            if existing_document:
+                logger.info(f"Document already exists for URL: {bookmark_data.url}, reusing existing document {existing_document.id}")
+                _doc = existing_document
+            else:
+                try:
+                    _doc = await document_service.create_document_from_url(
+                        user_id=user_context.user.id,
+                        url=bookmark_data.url,
+                        title=bookmark_data.title
+                    )
+                    logger.info(f"Document created from URL fetch: {_doc.id if _doc else 'None'}")
+                    
+                    # Log content availability status if available
+                    if _doc and _doc.document_metadata and _doc.document_metadata.get('content_availability'):
+                        content_status = _doc.document_metadata['content_availability']
+                        logger.info(
+                            f"Document {_doc.id} content status: {content_status.get('content_status')} "
+                            f"(available: {content_status.get('content_available')}, "
+                            f"issues: {content_status.get('issues')})"
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to create document from URL {bookmark_data.url}: {e}")
+                    # Don't raise exception - create document without content instead
+                    # This allows the bookmark to be created even if fetch fails
+                    try:
+                        _doc = await document_service.create_document_from_content(
+                            user_id=user_context.user.id,
+                            content="",  # Empty content
+                            content_type="fetch_failed",
+                            title=bookmark_data.title,
+                            url=bookmark_data.url
+                        )
+                        if _doc and _doc.document_metadata is None:
+                            _doc.document_metadata = {}
+                        _doc.document_metadata.update({
+                            'fetch_error': str(e),
+                            'content_availability': {
+                                'status': 'unavailable',
+                                'content_available': False,
+                                'content_status': 'unavailable',
+                                'issues': ['fetch_failed'],
+                            }
+                        })
+                        await session.commit()
+                        await session.refresh(_doc)
+                        logger.info(f"Created document {_doc.id} without content due to fetch failure")
+                    except Exception as create_error:
+                        logger.error(f"Failed to create document after fetch failure: {create_error}")
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="Unable to process the provided URL"
+                        )
         
         logger.info(f"Final document status: {_doc.id if _doc else 'None'}")
         
@@ -962,25 +1311,47 @@ async def create_bookmark(
         await session.commit()
         await session.refresh(bookmark)
         
-        # Skip AI processing for NOT_AVAILABLE content
+        # Skip AI processing for NOT_AVAILABLE content or unavailable content
         if bookmark_data.content == "NOT_AVAILABLE":
             logger.info(f"Skipping AI processing for NOT_AVAILABLE content - bookmark {bookmark.id} created with document {_doc.id if _doc else 'None'}")
-        elif _doc is not None and (_doc.ai_is_about is None or _doc.ai_bullet_points is None):
-            # Start background processing tasks
-            background_tasks.add_task(
-                _process_document_content,
-                _doc.id,
-                bookmark.title,
-                bookmark.url,
-                user_context.user.id
-            )
+        elif _doc is not None:
+            # Check if content is available before triggering background tasks
+            content_available = True
+            if _doc.document_metadata and _doc.document_metadata.get('content_availability'):
+                content_status = _doc.document_metadata['content_availability']
+                content_available = content_status.get('content_available', True)
+                content_status_value = content_status.get('content_status', 'unknown')
+                
+                if not content_available or content_status_value == 'unavailable':
+                    logger.info(
+                        f"Skipping AI processing for document {_doc.id} - "
+                        f"content status: {content_status_value}, "
+                        f"available: {content_available}"
+                    )
+                    content_available = False
             
-            # Add entity extraction as separate background task
-            background_tasks.add_task(
-                _process_document_entities,
-                _doc.id,
-                user_context.user.id
-            )
+            # Also check if document has actual content
+            if content_available and (not _doc.content or not _doc.content.strip()):
+                logger.info(f"Skipping AI processing for document {_doc.id} - no content available")
+                content_available = False
+            
+            # Only trigger background tasks if content is available
+            if content_available and (_doc.ai_is_about is None or _doc.ai_bullet_points is None):
+                # Start background processing tasks
+                background_tasks.add_task(
+                    _process_document_content,
+                    _doc.id,
+                    bookmark.title,
+                    bookmark.url,
+                    user_context.user.id
+                )
+                
+                # Add entity extraction as separate background task
+                background_tasks.add_task(
+                    _process_document_entities,
+                    _doc.id,
+                    user_context.user.id
+                )
             
             # Find documents without embeddings
             # Legacy embedding handler call removed - using modern services instead

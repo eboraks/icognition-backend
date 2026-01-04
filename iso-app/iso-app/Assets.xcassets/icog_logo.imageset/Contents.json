@@ -1,0 +1,14 @@
+{
+  "images" : [
+    {
+      "filename" : "icog_logo.png",
+      "idiom" : "universal",
+      "scale" : "1x"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}
+

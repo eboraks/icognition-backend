@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<plist version="1.0">
+<dict>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>NSManagedObjectModel_CurrentVersionName</key>
+	<string>iCognition</string>
+	<key>NSManagedObjectModel_VersionHashes</key>
+	<dict>
+		<key>Article</key>
+		<dict>
+			<key>entityVersion</key>
+			<string>1</string>
+			<key>hashModifier</key>
+			<string></string>
+		</dict>
+	</dict>
+	<key>NSManagedObjectModel_VersionHashesVersion</key>
+	<integer>3</integer>
+</dict>
+</plist>
+

@@ -128,33 +128,58 @@ def create_retrieve_documents_tool(user_id: str, scope_type: str, scope_id: Opti
         try:
             document_service = DocumentService(db_session)
             
-            # Get relevant documents using vector search
+            # Get relevant documents with matching chunks using vector search
             # user_id is Firebase UID (string), which matches Document.user_id type
-            documents = await document_service.get_relevant_documents_for_chat(
+            documents_with_chunks = await document_service.get_relevant_documents_with_chunks_for_chat(
                 user_id=user_id,
                 query=query,
                 scope_type=scope_type,
                 scope_id=scope_id,
-                limit=5
+                limit=5,
+                similarity_threshold=0.55,  # Lower threshold for broader matching
+                chunks_per_document=5  # Include up to 5 top chunks per document
             )
             
-            if not documents:
+            if not documents_with_chunks:
                 return f"No relevant documents found in your library for the query: '{query}'"
             
-            # Format documents for the agent with clean, readable content
-            result_parts = [f"Found {len(documents)} relevant document(s):"]
-            for i, doc in enumerate(documents, 1):
-                # Strip HTML and clean content for better readability
-                raw_content = doc.content if doc.content else "No content available"
-                cleaned_content = strip_html_and_clean(raw_content)
-                # Truncate very long content to avoid token limits
-                if len(cleaned_content) > 2000:
-                    cleaned_content = cleaned_content[:2000] + "... [content truncated]"
+            # Format documents for the agent with matching chunks prominently displayed
+            result_parts = [f"Found {len(documents_with_chunks)} relevant document(s):"]
+            
+            for i, doc_data in enumerate(documents_with_chunks, 1):
+                doc = doc_data['document']
+                chunks = doc_data['chunks']
+                best_score = doc_data['best_score']
                 
                 result_parts.append(f"\n{i}. **{doc.title}**")
                 if doc.url:
                     result_parts.append(f"   URL: {doc.url}")
-                result_parts.append(f"   Content: {cleaned_content}")
+                
+                # Show matching chunks first - these are the actual text that matched the query
+                if chunks:
+                    result_parts.append(f"   Matching Content (similarity: {best_score:.2f}):")
+                    for j, chunk in enumerate(chunks, 1):
+                        # Clean chunk text
+                        chunk_text = strip_html_and_clean(chunk['text'])
+                        # Limit chunk length to avoid token limits (1500 chars per chunk)
+                        if len(chunk_text) > 1500:
+                            chunk_text = chunk_text[:1500] + "... [chunk truncated]"
+                        
+                        result_parts.append(f"   [{j}] {chunk_text}")
+                        result_parts.append("")  # Empty line between chunks
+                
+                # Optionally include full document content as additional context
+                # Only if chunks don't provide enough information or document is short
+                if doc.content:
+                    raw_content = doc.content
+                    cleaned_content = strip_html_and_clean(raw_content)
+                    # Only include full content if it's relatively short or chunks are few
+                    if len(cleaned_content) < 3000 or len(chunks) < 2:
+                        if len(cleaned_content) > 2000:
+                            cleaned_content = cleaned_content[:2000] + "... [content truncated]"
+                        result_parts.append(f"   Full Document Content: {cleaned_content}")
+                else:
+                    result_parts.append("   [No full content available]")
             
             return "\n".join(result_parts)
         except Exception as e:

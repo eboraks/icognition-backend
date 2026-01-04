@@ -54,18 +54,46 @@ class WebPageFetcher:
     
     @staticmethod
     def _get_browser_headers() -> Dict[str, str]:
-        """Get realistic browser headers to avoid bot detection"""
+        """
+        Get realistic browser headers optimized for content access.
+        Uses Windows User-Agent with Google Referer to increase chances of
+        accessing content behind paywalls or authentication.
+        """
         return {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br, zstd',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            # Set Referer to Google to trick server into thinking you came from Google
+            # This can help bypass paywalls that allow access from search engines
+            'Referer': 'https://www.google.com/',
             'DNT': '1',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
             'Sec-Fetch-Dest': 'document',
             'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-Site': 'cross-site',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
+        }
+    
+    @staticmethod
+    def _get_googlebot_headers() -> Dict[str, str]:
+        """
+        Get Googlebot headers as fallback option.
+        """
+        return {
+            'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br, zstd',
+            'Referer': 'https://www.google.com/',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'cross-site',
             'Sec-Fetch-User': '?1',
             'Cache-Control': 'max-age=0',
         }
@@ -136,6 +164,135 @@ class WebPageFetcher:
         
         return detection
     
+    @staticmethod
+    def _detect_content_availability(
+        html_content: str, 
+        page_detection: Dict[str, Any], 
+        has_js_placeholder: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Detect if content is fully available, partially available, or unavailable
+        due to paywalls, authentication, or other restrictions.
+        
+        Args:
+            html_content: The fetched HTML content
+            page_detection: Page detection metadata from _detect_page_type
+            has_js_placeholder: Whether JavaScript placeholder content was detected
+            
+        Returns:
+            Dictionary with content availability status and detected issues
+        """
+        html_lower = html_content.lower()
+        
+        # Paywall indicators
+        paywall_indicators = [
+            'subscribe to continue reading',
+            'subscribe now',
+            'sign in to continue',
+            'create an account to continue',
+            'you have reached your article limit',
+            'free articles remaining',
+            'premium content',
+            'members only',
+            'paywall',
+            'subscription required',
+            'unlock this article',
+            'become a member',
+            'join to read',
+            'this article is for subscribers only',
+            'please log in to continue',
+            'register to read',
+        ]
+        
+        # Authentication/login indicators
+        auth_indicators = [
+            'please sign in',
+            'log in to access',
+            'sign in required',
+            'authentication required',
+            'please log in',
+            'login to continue',
+            'create account',
+            'register to access',
+            'you must be logged in',
+        ]
+        
+        # Content blocked/restricted indicators
+        blocked_indicators = [
+            'access denied',
+            'content not available',
+            'this content is not available',
+            'restricted content',
+            'content blocked',
+            'unavailable in your region',
+            'geographic restrictions',
+        ]
+        
+        # Check for paywall indicators
+        paywall_detected = any(indicator in html_lower for indicator in paywall_indicators)
+        
+        # Check for authentication indicators
+        auth_detected = any(indicator in html_lower for indicator in auth_indicators)
+        
+        # Check for blocked/restricted content
+        blocked_detected = any(indicator in html_lower for indicator in blocked_indicators)
+        
+        # Analyze content length and structure
+        # If content is very short, it might be a placeholder
+        content_length = len(html_content.strip())
+        is_short_content = content_length < 500
+        
+        # Try to extract text content to check if meaningful content exists
+        try:
+            soup = BeautifulSoup(html_content, 'html.parser')
+            # Remove script and style tags
+            for script in soup(["script", "style"]):
+                script.decompose()
+            text_content = soup.get_text(separator=' ', strip=True)
+            text_length = len(text_content)
+            is_short_text = text_length < 200
+        except Exception:
+            text_length = 0
+            is_short_text = True
+        
+        # Determine content availability status
+        issues = []
+        if paywall_detected or page_detection.get('has_paywall'):
+            issues.append('paywall')
+        if auth_detected or page_detection.get('requires_login'):
+            issues.append('authentication_required')
+        if blocked_detected:
+            issues.append('content_blocked')
+        if page_detection.get('requires_js') and has_js_placeholder:
+            issues.append('javascript_required')
+        
+        # Determine status
+        if issues:
+            # If we have issues but still got some content, it's partial
+            if text_length > 200 and not is_short_text:
+                content_status = 'partial'
+            else:
+                content_status = 'unavailable'
+        elif is_short_text or is_short_content:
+            # Content is too short, likely not meaningful
+            content_status = 'partial'
+            issues.append('insufficient_content')
+        else:
+            # Content appears to be available
+            content_status = 'full'
+        
+        return {
+            'status': content_status,  # 'full', 'partial', or 'unavailable'
+            'issues': issues,
+            'paywall_detected': paywall_detected,
+            'authentication_required': auth_detected,
+            'content_blocked': blocked_detected,
+            'content_length': content_length,
+            'text_length': text_length,
+            'is_short_content': is_short_content,
+            'is_short_text': is_short_text,
+        }
+    
     async def __aenter__(self):
         """Async context manager entry"""
         self.client = httpx.AsyncClient(
@@ -151,18 +308,19 @@ class WebPageFetcher:
         if self.client:
             await self.client.aclose()
     
-    async def fetch_page(self, url: str) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
+    async def fetch_page(self, url: str, retry_with_browser: bool = True) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
         """
-        Fetch web page content from URL
+        Fetch web page content from URL with fallback to browser headers if Googlebot is blocked
         
         Args:
             url: URL to fetch
+            retry_with_browser: If True, retry with regular browser headers if Googlebot fails with 403
             
         Returns:
             Tuple of (success, html_content, metadata)
         """
         try:
-            logger.info(f"Fetching page: {url}")
+            logger.info(f"Fetching page: {url} (using Windows browser with Google Referer headers)")
             
             # Detect page type and potential issues
             page_detection = self._detect_page_type(url)
@@ -206,6 +364,12 @@ class WebPageFetcher:
                 logger.warning(f"Detected JavaScript placeholder content for {url}. Content extraction will likely fail.")
                 page_detection['issues'].append('js_placeholder_detected')
             
+            # Detect paywall and authentication requirements from HTML content
+            content_availability = WebPageFetcher._detect_content_availability(
+                html_content, page_detection, has_js_placeholder
+            )
+            page_detection['content_availability'] = content_availability
+            
             # Basic validation
             if len(html_content.strip()) < 100:
                 logger.warning(f"Page content too short: {len(html_content)} characters")
@@ -241,11 +405,98 @@ class WebPageFetcher:
             return False, None, {'error': 'Too many redirects'}
             
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error fetching page: {url} - {e.response.status_code}")
-            return False, None, {
-                'error': f'HTTP {e.response.status_code}',
-                'status_code': e.response.status_code
-            }
+            # If we get 403 and retry is enabled, try with Googlebot headers as fallback
+            if e.response.status_code == 403 and retry_with_browser:
+                logger.warning(f"Got 403 with browser headers for {url}, retrying with Googlebot headers")
+                try:
+                    # Close current client
+                    await self.client.aclose()
+                    # Create new client with Googlebot headers as fallback
+                    self.client = httpx.AsyncClient(
+                        timeout=self.timeout,
+                        follow_redirects=True,
+                        max_redirects=self.max_redirects,
+                        headers=self._get_googlebot_headers()
+                    )
+                    # Retry the request
+                    response = await self.client.get(url)
+                    response.raise_for_status()
+                    
+                    # Get content type
+                    content_type = response.headers.get('content-type', '').lower()
+                    
+                    # Check if it's HTML content
+                    if 'text/html' not in content_type:
+                        logger.warning(f"Non-HTML content type: {content_type}")
+                        return False, None, {
+                            'error': 'Non-HTML content',
+                            'content_type': content_type,
+                            'status_code': response.status_code,
+                            'page_detection': page_detection
+                        }
+                    
+                    # Get HTML content
+                    html_content = response.text
+                    
+                    # Check for JavaScript placeholder content
+                    html_lower = html_content.lower()
+                    has_js_placeholder = any(placeholder in html_lower for placeholder in [
+                        'javascript is not available',
+                        'please enable javascript',
+                        'javascript is disabled',
+                        'enable javascript to continue',
+                        'noscript',
+                    ])
+                    
+                    if has_js_placeholder and page_detection['requires_js']:
+                        logger.warning(f"Detected JavaScript placeholder content for {url}. Content extraction will likely fail.")
+                        page_detection['issues'].append('js_placeholder_detected')
+                    
+                    # Detect paywall and authentication requirements from HTML content
+                    content_availability = WebPageFetcher._detect_content_availability(
+                        html_content, page_detection, has_js_placeholder
+                    )
+                    page_detection['content_availability'] = content_availability
+                    
+                    # Basic validation
+                    if len(html_content.strip()) < 100:
+                        logger.warning(f"Page content too short: {len(html_content)} characters")
+                        return False, None, {
+                            'error': 'Content too short',
+                            'content_length': len(html_content),
+                            'status_code': response.status_code,
+                            'page_detection': page_detection
+                        }
+                    
+                    # Extract basic metadata
+                    metadata = {
+                        'status_code': response.status_code,
+                        'content_type': content_type,
+                        'content_length': len(html_content),
+                        'final_url': str(response.url),
+                        'headers': dict(response.headers),
+                        'page_detection': page_detection,
+                        'retried_with_googlebot': True
+                    }
+                    
+                    logger.info(f"Successfully fetched {url} with Googlebot headers after browser headers were blocked ({len(html_content)} chars)")
+                    if page_detection['warnings']:
+                        logger.info(f"Page detection warnings: {', '.join(page_detection['warnings'])}")
+                    
+                    return True, html_content, metadata
+                except Exception as retry_error:
+                    logger.error(f"HTTP error fetching page with Googlebot headers: {url} - {retry_error}")
+                    return False, None, {
+                        'error': f'HTTP {e.response.status_code} (Browser headers blocked, Googlebot headers also failed)',
+                        'status_code': e.response.status_code,
+                        'retry_failed': True
+                    }
+            else:
+                logger.error(f"HTTP error fetching page: {url} - {e.response.status_code}")
+                return False, None, {
+                    'error': f'HTTP {e.response.status_code}',
+                    'status_code': e.response.status_code
+                }
             
         except httpx.RequestError as e:
             logger.error(f"Request error fetching page: {url} - {str(e)}")

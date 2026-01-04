@@ -137,22 +137,29 @@ class GeminiService:
                 logger.debug(f"Generating content with {model.value} (attempt {attempt + 1})")
                 
                 # Prepare generation config for the new SDK
-                generation_config = types.GenerationConfig(
+                # Use GenerateContentConfig (not GenerationConfig) and pass as 'config' parameter
+                generation_config = types.GenerateContentConfig(
                     temperature=config.temperature,
                     top_p=config.top_p,
                     top_k=config.top_k,
                     max_output_tokens=config.max_output_tokens,
                 )
-                # TODO: Migrated from old SDK. `response_mime_type` and `response_schema` are not
-                # directly supported in the new `GenerateContentConfig`.
-                # Structured output might require a different approach.
+                
+                # Handle response_mime_type if specified
+                if config.response_mime_type:
+                    generation_config.response_mime_type = config.response_mime_type
+                
+                # Handle response_schema if specified (for structured output)
+                if config.response_schema:
+                    generation_config.response_schema = config.response_schema
                 
                 # Generate content using the new client, wrapped for async execution
+                # Note: contents should be a list, and parameter is 'config' not 'generation_config'
                 response = await asyncio.to_thread(
                     self.client.models.generate_content,
                     model=model.value,
-                    contents=prompt,
-                    generation_config=generation_config
+                    contents=[prompt],  # contents must be a list
+                    config=generation_config  # parameter name is 'config', not 'generation_config'
                 )
                 
                 # Simplified check for successful response

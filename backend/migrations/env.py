@@ -26,6 +26,11 @@ from app.models import *  # Import all models
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
+
+# Escape % as %% to avoid interpolation errors with URL-encoded passwords
+if connection_string:
+    connection_string = connection_string.replace("%", "%%")
+
 config.set_main_option("sqlalchemy.url", connection_string)
 
 # Interpret the config file for Python logging.

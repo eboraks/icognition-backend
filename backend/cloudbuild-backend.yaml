@@ -2,7 +2,7 @@ substitutions:
   _SERVICE_NAME: icognition-api
   _REGION: us-central1
   _VPC_CONNECTOR: run-sql-connector
-  _CLOUDSQL_INSTANCE: stg-icognition:us-central1:sm-stg-icongition-psql
+  _CLOUDSQL_INSTANCE: stg-icognition:us-central1:sm-stg-icongition-psql-01
 
 steps:
   # Build the backend container image from Dockerfile (build context is current directory)
@@ -21,8 +21,45 @@ steps:
       - push
       - gcr.io/${PROJECT_ID}/icognition-backend:${SHORT_SHA}
 
+  # Run database migrations
+  - name: gcr.io/${PROJECT_ID}/icognition-backend:${SHORT_SHA}
+    id: 'run-migrations'
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        echo "Starting migration process..."
+        
+        # Download the Cloud SQL Proxy
+        curl -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.2/cloud-sql-proxy.linux.amd64
+        chmod +x cloud-sql-proxy
+
+        # Start the proxy in the background using a Unix socket
+        # We use /tmp because /workspace might have permission issues in some environments
+        mkdir -p /tmp/cloudsql
+        ./cloud-sql-proxy --unix-socket /tmp/cloudsql ${_CLOUDSQL_INSTANCE} &
+        PROXY_PID=$$!
+
+        # Wait for the proxy to be ready
+        echo "Waiting for Cloud SQL Proxy..."
+        sleep 5
+
+        # Dynamically update the connection string to use the local proxy socket
+        # We take the secret from Secret Manager and replace the /cloudsql path with /tmp/cloudsql
+        export DATABASE_URL=$$(echo $$DATABASE_URL_SECRET | sed 's|/cloudsql/|/tmp/cloudsql/|g')
+        
+        echo "Running Alembic migrations..."
+        alembic upgrade head
+
+        # Clean up
+        kill $$PROXY_PID
+        echo "Migrations completed successfully."
+    secretEnv: ['DATABASE_URL_SECRET']
+
   # Deploy the image to Cloud Run
   - name: gcr.io/cloud-builders/gcloud
+    id: 'deploy-to-cloud-run'
     entrypoint: bash
     args:
       - -c
@@ -42,6 +79,11 @@ steps:
           --concurrency 80 \
           --set-secrets DATABASE_URL=DB_CONNECTION_URL:latest,FIREBASE_SERVICE_ACCOUNT_JSON=FIREBASE_SERVICE_ACCOUNT_JSON:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest,SECRET_KEY=SECRET_KEY:latest,GEMINI_FLASH_MODEL=GEMINI_FLASH_MODEL:latest,GEMINI_FLASH_LITE=GEMINI_FLASH_LITE:latest,GEMINI_EMBEDDING_MODEL=GEMINI_EMBEDDING_MODEL:latest \
           --allow-unauthenticated
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/${PROJECT_ID}/secrets/DB_CONNECTION_URL/versions/latest
+      env: 'DATABASE_URL_SECRET'
 
 images:
   - gcr.io/${PROJECT_ID}/icognition-backend:${SHORT_SHA}

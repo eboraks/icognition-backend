@@ -1,0 +1,30 @@
+substitutions:
+  _FIREBASE_PROJECT: icognition-app
+
+steps:
+  # 1. Install dependencies
+  - name: 'node:20'
+    id: 'install-dependencies'
+    entrypoint: 'npm'
+    args: ['ci']
+    dir: 'frontend'
+
+  # 2. Build the application for staging
+  - name: 'node:20'
+    id: 'build-staging'
+    entrypoint: 'npm'
+    args: ['run', 'build', '--', '--mode', 'staging']
+    dir: 'frontend'
+
+  # 3. Deploy to Firebase Hosting
+  - name: 'node:20'
+    id: 'deploy-to-firebase'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        npx firebase-tools deploy --only hosting --project ${_FIREBASE_PROJECT} --non-interactive
+    dir: 'frontend'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

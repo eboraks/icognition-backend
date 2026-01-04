@@ -123,6 +123,20 @@ class DocumentService(UserIsolatedService[Document]):
                     page_detection = fetch_metadata['page_detection']
                     document.document_metadata['page_detection'] = page_detection
                     
+                    # Store content availability status
+                    if page_detection.get('content_availability'):
+                        content_availability = page_detection['content_availability']
+                        document.document_metadata['content_availability'] = {
+                            'status': content_availability.get('status', 'unknown'),
+                            'content_available': content_availability.get('status') in ['full', 'partial'],
+                            'content_status': content_availability.get('status'),  # 'full', 'partial', or 'unavailable'
+                            'issues': content_availability.get('issues', []),
+                            'paywall_detected': content_availability.get('paywall_detected', False),
+                            'authentication_required': content_availability.get('authentication_required', False),
+                            'content_blocked': content_availability.get('content_blocked', False),
+                        }
+                        logger.info(f"Document {document.id} content availability: {content_availability.get('status')} (issues: {content_availability.get('issues')})")
+                    
                     # Log warnings if any
                     if page_detection.get('warnings'):
                         for warning in page_detection['warnings']:
@@ -160,7 +174,16 @@ class DocumentService(UserIsolatedService[Document]):
                 # Document fetch failed
                 document.document_metadata = {
                     'fetch_error': fetch_metadata.get('error', 'Unknown error'),
-                    'fetch_metadata': fetch_metadata
+                    'fetch_metadata': fetch_metadata,
+                    'content_availability': {
+                        'status': 'unavailable',
+                        'content_available': False,
+                        'content_status': 'unavailable',
+                        'issues': ['fetch_failed'],
+                        'paywall_detected': False,
+                        'authentication_required': False,
+                        'content_blocked': False,
+                    }
                 }
                 logger.error(f"Failed to fetch content for document {document.id}: {fetch_metadata}")
             
@@ -171,7 +194,16 @@ class DocumentService(UserIsolatedService[Document]):
             # Handle unexpected errors
             # Document fetch error
             document.document_metadata = {
-                'fetch_error': f'Unexpected error: {str(e)}'
+                'fetch_error': f'Unexpected error: {str(e)}',
+                'content_availability': {
+                    'status': 'unavailable',
+                    'content_available': False,
+                    'content_status': 'unavailable',
+                    'issues': ['fetch_error'],
+                    'paywall_detected': False,
+                    'authentication_required': False,
+                    'content_blocked': False,
+                }
             }
             await self.session.commit()
             await self.session.refresh(document)
@@ -989,6 +1021,20 @@ Return your response as JSON in this exact format, if the fields are not present
                     page_detection = fetch_metadata['page_detection']
                     document.document_metadata['page_detection'] = page_detection
                     
+                    # Store content availability status
+                    if page_detection.get('content_availability'):
+                        content_availability = page_detection['content_availability']
+                        document.document_metadata['content_availability'] = {
+                            'status': content_availability.get('status', 'unknown'),
+                            'content_available': content_availability.get('status') in ['full', 'partial'],
+                            'content_status': content_availability.get('status'),  # 'full', 'partial', or 'unavailable'
+                            'issues': content_availability.get('issues', []),
+                            'paywall_detected': content_availability.get('paywall_detected', False),
+                            'authentication_required': content_availability.get('authentication_required', False),
+                            'content_blocked': content_availability.get('content_blocked', False),
+                        }
+                        logger.info(f"Document {document.id} content availability: {content_availability.get('status')} (issues: {content_availability.get('issues')})")
+                    
                     # Log warnings if any
                     if page_detection.get('warnings'):
                         for warning in page_detection['warnings']:
@@ -1028,7 +1074,16 @@ Return your response as JSON in this exact format, if the fields are not present
                     document.document_metadata = {}
                 document.document_metadata.update({
                     'fetch_error': fetch_metadata.get('error', 'Unknown error'),
-                    'fetch_metadata': fetch_metadata
+                    'fetch_metadata': fetch_metadata,
+                    'content_availability': {
+                        'status': 'unavailable',
+                        'content_available': False,
+                        'content_status': 'unavailable',
+                        'issues': ['fetch_failed'],
+                        'paywall_detected': False,
+                        'authentication_required': False,
+                        'content_blocked': False,
+                    }
                 })
                 logger.error(f"Failed to fetch content for document {document.id}: {fetch_metadata}")
             
@@ -1040,7 +1095,18 @@ Return your response as JSON in this exact format, if the fields are not present
             # Document fetch error
             if document.document_metadata is None:
                 document.document_metadata = {}
-            document.document_metadata['fetch_error'] = f'Unexpected error: {str(e)}'
+            document.document_metadata.update({
+                'fetch_error': f'Unexpected error: {str(e)}',
+                'content_availability': {
+                    'status': 'unavailable',
+                    'content_available': False,
+                    'content_status': 'unavailable',
+                    'issues': ['fetch_error'],
+                    'paywall_detected': False,
+                    'authentication_required': False,
+                    'content_blocked': False,
+                }
+            })
             await self.session.commit()
             await self.session.refresh(document)
             logger.error(f"Unexpected error fetching content for document {document.id}: {str(e)}")
@@ -1248,6 +1314,32 @@ Return your response as JSON in this exact format, if the fields are not present
         result = await self.session.execute(query)
         return result.scalars().all()
 
+    async def get_latest_documents(
+        self,
+        user_id: str,
+        limit: int = 2
+    ) -> List[Document]:
+        """
+        Get the N latest documents for a user, ordered by created_at descending.
+        
+        Args:
+            user_id: User ID (Firebase UID)
+            limit: Number of latest documents to retrieve (default: 2)
+            
+        Returns:
+            List of Document objects, ordered by most recent first
+        """
+        user = await UserService.get_user_by_firebase_uid(self.session, user_id)
+        if not user:
+            return []
+        
+        query = select(Document).where(
+            Document.user_id == user.id
+        ).order_by(Document.created_at.desc()).limit(limit)
+        
+        result = await self.session.execute(query)
+        return list(result.scalars().all())
+
     async def count_user_documents(
         self,
         user_id: str
@@ -1404,6 +1496,124 @@ Return your response as JSON in this exact format, if the fields are not present
         
         logger.info(f"Found {len(documents)} relevant documents for query '{query}'")
         return documents
+
+    async def get_relevant_documents_with_chunks_for_chat(
+        self, 
+        user_id: str, 
+        query: str, 
+        scope_type: str, 
+        scope_id: Optional[int] = None, 
+        limit: int = 5, 
+        similarity_threshold: float = 0.55,
+        chunks_per_document: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        Get relevant documents for a chat query with their matching chunks.
+        Returns documents along with the actual chunk text that matched the query.
+        
+        Args:
+            user_id: User ID
+            query: Search query
+            scope_type: Scope type ('all_library', 'collection', etc.)
+            scope_id: Optional scope ID (e.g., collection ID)
+            limit: Maximum number of documents to return
+            similarity_threshold: Minimum similarity score (default 0.55 for broader matching)
+            chunks_per_document: Maximum number of top chunks to include per document (default 5)
+            
+        Returns:
+            List of dictionaries with structure:
+            {
+                'document': Document,
+                'chunks': [
+                    {'text': str, 'similarity_score': float, 'field': str},
+                    ...
+                ],
+                'best_score': float
+            }
+        """
+        logger.info(f"Getting relevant documents with chunks for user {user_id} with query '{query}'")
+
+        embedding_service: EmbeddingService = get_embedding_service()
+        
+        # 1. Search the Embedding table for relevant content
+        # Get more results to account for multiple chunks per document
+        embedding_results = await embedding_service.search_embeddings(
+            session=self.session,
+            query_text=query,
+            user_id=user_id,
+            source_types=['document'],  # Only search documents for chat
+            limit=limit * 10,  # Get more results to have enough chunks per document
+            similarity_threshold=similarity_threshold
+        )
+        
+        if not embedding_results:
+            logger.info(f"No matching embeddings found for query '{query}'")
+            return []
+        
+        # 2. Group results by document_id and collect chunks
+        document_chunks = {}  # document_id -> list of chunks with scores
+        document_scores = {}  # document_id -> best similarity score
+        
+        for result in embedding_results:
+            doc_id = result['source_id']
+            score = result['similarity_score']
+            chunk_data = {
+                'text': result['text'],
+                'similarity_score': score,
+                'field': result.get('field', 'content')
+            }
+            
+            if doc_id not in document_chunks:
+                document_chunks[doc_id] = []
+                document_scores[doc_id] = score
+            
+            document_chunks[doc_id].append(chunk_data)
+            
+            # Update best score if this chunk has a higher score
+            if score > document_scores[doc_id]:
+                document_scores[doc_id] = score
+        
+        # 3. Sort chunks within each document by similarity score (descending)
+        for doc_id in document_chunks:
+            document_chunks[doc_id].sort(key=lambda x: x['similarity_score'], reverse=True)
+            # Take only top N chunks per document
+            document_chunks[doc_id] = document_chunks[doc_id][:chunks_per_document]
+        
+        # 4. Sort documents by best similarity score and get top results
+        sorted_doc_ids = sorted(document_scores.items(), key=lambda x: x[1], reverse=True)[:limit]
+        doc_ids = [doc_id for doc_id, _ in sorted_doc_ids]
+        
+        if not doc_ids:
+            return []
+        
+        # 5. Fetch the actual Document objects
+        stmt = select(Document).where(
+            Document.id.in_(doc_ids),
+            Document.user_id == user_id
+        )
+        
+        # If scope_type is 'collection', further filter by scope_id
+        # TODO: Implement collection filtering when CollectionDocumentLink is available
+        if scope_type == 'collection' and scope_id is not None:
+            logger.warning("Collection-scoped search is not yet fully implemented.")
+        
+        results = await self.session.execute(stmt)
+        documents = list(results.scalars().all())
+        
+        # 6. Build result list with documents and their chunks
+        doc_map = {doc.id: doc for doc in documents}
+        result_list = []
+        
+        for doc_id, best_score in sorted_doc_ids:
+            if doc_id in doc_map:
+                result_list.append({
+                    'document': doc_map[doc_id],
+                    'chunks': document_chunks.get(doc_id, []),
+                    'best_score': best_score
+                })
+        
+        logger.info(f"Found {len(result_list)} relevant documents with chunks for query '{query}'")
+        return result_list
 
     async def get_entity_tree(self, user_id: str) -> List[Dict[str, Any]]:
         """
