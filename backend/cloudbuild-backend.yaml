@@ -5,15 +5,15 @@ substitutions:
   _CLOUDSQL_INSTANCE: stg-icognition:us-central1:sm-stg-icongition-psql-01
 
 steps:
-  # Build the backend container image from Dockerfile (build context is current directory)
+  # Build the backend container image from Dockerfile
   - name: gcr.io/cloud-builders/docker
     args:
       - build
       - -t
       - gcr.io/${PROJECT_ID}/icognition-backend:${SHORT_SHA}
       - -f
-      - Dockerfile
-      - .
+      - backend/Dockerfile
+      - backend/
 
   # Push the image to Artifact Registry / Container Registry
   - name: gcr.io/cloud-builders/docker
