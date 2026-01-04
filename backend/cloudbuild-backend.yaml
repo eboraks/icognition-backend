@@ -50,6 +50,7 @@ steps:
         export DATABASE_URL=$$(echo $$DATABASE_URL_SECRET | sed 's|/cloudsql/|/tmp/cloudsql/|g')
         
         echo "Running Alembic migrations..."
+        cd /app
         alembic upgrade head
 
         # Clean up
