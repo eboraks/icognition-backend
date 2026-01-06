@@ -1,0 +1,56 @@
+name: icognition-app
+services:
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: icognition-backend
+    ports:
+      - "8000:8080"  # Maps host port 8000 to container port 8080
+    env_file:
+      - ../backend/.env  # Your .env file with cloud database URL
+    environment:
+      - DISABLE_AUTH=true  # Disable auth for development (override if needed)
+    volumes:
+      # Mount app directory for hot-reload in development
+      - ../backend/app:/app/app
+      - ../backend/migrations:/app/migrations
+    restart: unless-stopped
+    networks:
+      - icognition-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: icognition-frontend
+    ports:
+      - "8080:8080"
+    volumes:
+      # Mount source directories for hot-reload in development
+      - ../frontend/src:/app/src
+      - ../frontend/public:/app/public
+      - ../frontend/index.html:/app/index.html
+      - ../frontend/vite.config.js:/app/vite.config.js
+      - ../frontend/package.json:/app/package.json
+    environment:
+      - NODE_ENV=development
+      - VITE_APP_API_BASE_URL=http://localhost:8000
+      - VITE_APP_FB_API_KEY=AIzaSyAA1hrqYpKC6jcrjDyPtwKlDDpwDg4WM_U
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - icognition-network
+
+networks:
+  icognition-network:
+    driver: bridge
+

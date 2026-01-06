@@ -29,11 +29,27 @@ const firebaseConfig = {
 };
 const key = import.meta.env.VITE_APP_FB_API_KEY
 console.log("Key: ",  key); 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
 
-// Initialize Firebase Authentication and get a reference to the service
-const auth = getAuth(app);
+// Only initialize Firebase if API key is provided (auth is enabled)
+let app: any = null;
+let auth: any = null;
+
+if (key && key !== 'undefined') {
+  // Initialize Firebase
+  app = initializeApp(firebaseConfig);
+  // Initialize Firebase Authentication and get a reference to the service
+  auth = getAuth(app);
+} else {
+  console.log("Firebase disabled - no API key provided (DISABLE_AUTH mode)");
+  // Create mock auth object for compatibility
+  auth = {
+    currentUser: null,
+    onAuthStateChanged: (callback: any) => {
+      callback(null);
+      return () => {};
+    }
+  };
+}
 
 // Initialize Cloud Firestore and get a reference to the service
 //const db = getFirestore(app);
