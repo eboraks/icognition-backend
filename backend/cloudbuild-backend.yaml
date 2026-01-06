@@ -51,7 +51,7 @@ steps:
         
         echo "Running Alembic migrations..."
         cd /app
-        alembic upgrade head
+        alembic -c /app/alembic.ini upgrade head
 
         # Clean up
         kill $$PROXY_PID
