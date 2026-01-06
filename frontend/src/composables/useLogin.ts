@@ -1,11 +1,11 @@
 import { ref } from "vue";
-import { auth, signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup } from '../firebase/config.ts';
-import user_state  from './getUser.ts';
+import { auth, signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup } from '../firebase/config.js';
+import user_state from './getUser.js';
 
 export function useSignin() {
     const login_error = ref<null | string>(null);
     const isPending = ref(false);
-    const login = async(email: string, password: string) => {
+    const login = async (email: string, password: string) => {
         login_error.value = null
         isPending.value = true
 
@@ -15,7 +15,7 @@ export function useSignin() {
             console.log(res)
             isPending.value = false
             return res
-        } catch(err: any) {
+        } catch (err: any) {
             console.log(err)
             login_error.value = 'Incorrect Login credentials'
             isPending.value = false
@@ -31,7 +31,7 @@ export function useSignin() {
             // The signed-in user info.
             user_state.user = result.user;
             console.log("Google Login user state: ", user_state.user)
-            
+
             return true;
             // IdP data available using getAdditionalUserInfo(result)
             // ...
@@ -47,6 +47,6 @@ export function useSignin() {
         });
     }
 
-    return { login_error, login, isPending, loginGoogle } 
+    return { login_error, login, isPending, loginGoogle }
 
 }

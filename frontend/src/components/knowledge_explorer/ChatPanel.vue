@@ -70,9 +70,9 @@ import Button from 'primevue/button';
 import InputText from 'primevue/inputtext';
 import ScrollPanel from 'primevue/scrollpanel';
 import ProgressSpinner from 'primevue/progressspinner';
-import { knowledgeService, type ContextualMessageResponse, type ActionResponse } from '@/services/knowledgeService';
-import { useChatStore, type ChatMessage as ChatStoreMessage } from '@/stores/chat_store';
-import { useAuthStore } from '@/stores/auth_store';
+import { knowledgeService, type ContextualMessageResponse, type ActionResponse } from '@/services/knowledgeService.js';
+import { useChatStore, type ChatMessage as ChatStoreMessage } from '@/stores/chat_store.js';
+import { useAuthStore } from '@/stores/auth_store.js';
 
 interface ChatMessage {
   type: 'system' | 'user' | 'filter';
@@ -123,7 +123,7 @@ const loadInitialMessage = async () => {
     return;
   }
   
-  if (!authStore.currentUser) {
+  if (!authStore.currentUser && !authStore.isAuthDisabled) {
     messages.value = [{
       type: 'system',
       content: toParagraphHtml('Please log in to start exploring your knowledge graph and chat.'),

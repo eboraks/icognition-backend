@@ -3,7 +3,7 @@
  * Handles all user-related API calls to the FastAPI backend
  */
 
-import { api } from './httpClient';
+import { api } from './httpClient.js';
 
 // User Types (matching backend models)
 export interface UserProfileResponse {
@@ -113,14 +113,14 @@ class UserService {
     active_only?: boolean;
   }): Promise<UserListResponse> {
     const queryParams = new URLSearchParams();
-    
+
     if (params?.page) queryParams.append('page', params.page.toString());
     if (params?.page_size) queryParams.append('page_size', params.page_size.toString());
     if (params?.active_only !== undefined) queryParams.append('active_only', params.active_only.toString());
-    
+
     const queryString = queryParams.toString();
     const url = queryString ? `/users/admin/list?${queryString}` : '/users/admin/list';
-    
+
     return api.get<UserListResponse>(url);
   }
 }

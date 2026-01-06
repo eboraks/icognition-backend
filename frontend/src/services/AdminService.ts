@@ -3,7 +3,7 @@
  * Handles all admin-related API calls to the FastAPI backend
  */
 
-import { api } from './httpClient';
+import { api } from './httpClient.js';
 
 export interface PromptResponse {
   id: number;
@@ -39,15 +39,15 @@ class AdminService {
     offset?: number;
   }): Promise<PromptResponse[]> {
     const queryParams = new URLSearchParams();
-    
+
     if (params?.prompt_type) queryParams.append('prompt_type', params.prompt_type);
     if (params?.include_inactive !== undefined) queryParams.append('include_inactive', params.include_inactive.toString());
     if (params?.limit) queryParams.append('limit', params.limit.toString());
     if (params?.offset) queryParams.append('offset', params.offset.toString());
-    
+
     const queryString = queryParams.toString();
     const url = queryString ? `/api/admin/prompts?${queryString}` : '/api/admin/prompts';
-    
+
     return api.get<PromptResponse[]>(url);
   }
 
@@ -60,12 +60,12 @@ class AdminService {
   ): Promise<PromptResponse[]> {
     const queryParams = new URLSearchParams();
     if (includeInactive) queryParams.append('include_inactive', 'true');
-    
+
     const queryString = queryParams.toString();
-    const url = queryString 
+    const url = queryString
       ? `/api/admin/prompts/${promptType}?${queryString}`
       : `/api/admin/prompts/${promptType}`;
-    
+
     return api.get<PromptResponse[]>(url);
   }
 

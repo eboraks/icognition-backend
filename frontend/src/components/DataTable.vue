@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import DocDataCard from '@/components/DocDataCard.vue';
-  import { DocModel } from './models/DocModel';
+  import { DocModel } from './models/DocModel.js';
 
   export interface DataTableProps {
     documents?: Array<DocModel>;

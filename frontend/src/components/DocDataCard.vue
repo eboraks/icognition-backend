@@ -47,7 +47,7 @@
 </template>
 <script setup lang="ts">
     import { ref, computed} from 'vue';
-    import { DocModel } from './models/DocModel';
+    import { DocModel } from './models/DocModel.js';
     import moment from 'moment';
 
     const showmore = ref(false);

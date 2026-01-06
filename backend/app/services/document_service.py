@@ -15,6 +15,7 @@ from app.services.base_service import UserIsolatedService
 from app.services.web_fetcher import WebPageFetcher, fetch_web_page
 from app.services.user_service import UserService
 from app.services.gemini_service import get_gemini_service, GeminiModel, GeminiConfig
+from app.core.config import settings
 from app.utils.logging import get_logger
 from bs4 import BeautifulSoup
 from app.services.content_validation_service import get_content_validation_service
@@ -57,11 +58,14 @@ class DocumentService(UserIsolatedService[Document]):
         }
         
         document = Document(**document_data)
-        self.session.add(document)
-        await self.session.commit()
-        await self.session.refresh(document)
-        
-        logger.info(f"Created document {document.id} for user {user.id}")
+        try:
+            self.session.add(document)
+            await self.session.commit()
+            await self.session.refresh(document)
+            logger.info(f"Created document {document.id} for user {user.id}")
+            return document
+        except Exception as e:
+            raise
         return document
 
     async def create_document_from_url(
@@ -1177,29 +1181,37 @@ Return your response as JSON in this exact format, if the fields are not present
     ) -> Tuple[List[Document], int]:
         """Get paginated list of user documents"""
         
-        user = await UserService.get_user_by_firebase_uid(self.session, user_id)
-        if not user:
-            return [], 0
-        
         # Build query
-        query = select(Document).where(Document.user_id == user.id)
+        query = select(Document)
+        count_query = select(func.count(Document.id))
+        
+        if not settings.DISABLE_AUTH:
+            user = await UserService.get_user_by_firebase_uid(self.session, user_id)
+            if not user:
+                return [], 0
+            query = query.where(Document.user_id == user.id)
+            count_query = count_query.where(Document.user_id == user.id)
         
         # Status filtering removed (status field no longer exists)
         
         # Get total count
-        count_query = select(func.count(Document.id)).where(Document.user_id == user.id)
-        
-        total_result = await self.session.execute(count_query)
-        total = total_result.scalar()
-        
-        # Apply pagination
-        offset = (page - 1) * page_size
-        query = query.offset(offset).limit(page_size).order_by(Document.created_at.desc())
-        
-        result = await self.session.execute(query)
-        documents = result.scalars().all()
-        
-        return documents, total
+        try:
+            total_result = await self.session.execute(count_query)
+            total = total_result.scalar()
+            
+            # Apply pagination
+            offset = (page - 1) * page_size
+            query = query.offset(offset).limit(page_size).order_by(Document.created_at.desc())
+            
+            result = await self.session.execute(query)
+            documents = result.scalars().all()
+            
+            return documents, total
+        except Exception as e:
+            if settings.DISABLE_AUTH:
+                logger.warning(f"Database error in get_user_documents (No-Auth mode): {e}")
+                return [], 0
+            raise
 
     async def get_document_by_id(
         self,
@@ -1208,9 +1220,10 @@ Return your response as JSON in this exact format, if the fields are not present
     ) -> Optional[Document]:
         """Get a specific document by ID for a user"""
         
-        query = select(Document).where(
-            and_(Document.id == document_id, Document.user_id == user_id)
-        )
+        query = select(Document).where(Document.id == document_id)
+        
+        if not settings.DISABLE_AUTH:
+            query = query.where(Document.user_id == user_id)
         
         result = await self.session.execute(query)
         return result.scalar_one_or_none()
@@ -1303,16 +1316,23 @@ Return your response as JSON in this exact format, if the fields are not present
     ) -> List[Document]:
         """Get all documents for a user"""
         
-        user = await UserService.get_user_by_firebase_uid(self.session, user_id)
-        if not user:
-            return []
+        query = select(Document)
+        if not settings.DISABLE_AUTH:
+            user = await UserService.get_user_by_firebase_uid(self.session, user_id)
+            if not user:
+                return []
+            query = query.where(Document.user_id == user.id)
+            
+        query = query.order_by(Document.created_at.desc())
         
-        query = select(Document).where(
-            Document.user_id == user.id
-        ).order_by(Document.created_at.desc())
-        
-        result = await self.session.execute(query)
-        return result.scalars().all()
+        try:
+            result = await self.session.execute(query)
+            return list(result.scalars().all())
+        except Exception as e:
+            if settings.DISABLE_AUTH:
+                logger.warning(f"Database error in get_user_documents_all (No-Auth mode): {e}")
+                return []
+            raise
 
     async def get_latest_documents(
         self,
@@ -1320,25 +1340,25 @@ Return your response as JSON in this exact format, if the fields are not present
         limit: int = 2
     ) -> List[Document]:
         """
-        Get the N latest documents for a user, ordered by created_at descending.
-        
-        Args:
-            user_id: User ID (Firebase UID)
-            limit: Number of latest documents to retrieve (default: 2)
-            
-        Returns:
-            List of Document objects, ordered by most recent first
+        Get the N latest documents, ordered by created_at descending.
         """
-        user = await UserService.get_user_by_firebase_uid(self.session, user_id)
-        if not user:
-            return []
+        query = select(Document)
+        if not settings.DISABLE_AUTH:
+            user = await UserService.get_user_by_firebase_uid(self.session, user_id)
+            if not user:
+                return []
+            query = query.where(Document.user_id == user.id)
+            
+        query = query.order_by(Document.created_at.desc()).limit(limit)
         
-        query = select(Document).where(
-            Document.user_id == user.id
-        ).order_by(Document.created_at.desc()).limit(limit)
-        
-        result = await self.session.execute(query)
-        return list(result.scalars().all())
+        try:
+            result = await self.session.execute(query)
+            return list(result.scalars().all())
+        except Exception as e:
+            if settings.DISABLE_AUTH:
+                logger.warning(f"Database error in get_latest_documents (No-Auth mode): {e}")
+                return []
+            raise
 
     async def count_user_documents(
         self,
@@ -1346,16 +1366,22 @@ Return your response as JSON in this exact format, if the fields are not present
     ) -> int:
         """Count user documents"""
         
-        user = await UserService.get_user_by_firebase_uid(self.session, user_id)
-        if not user:
-            return 0
+        query = select(func.count(Document.id))
         
-        query = select(func.count(Document.id)).where(Document.user_id == user.id)
+        if not settings.DISABLE_AUTH:
+            user = await UserService.get_user_by_firebase_uid(self.session, user_id)
+            if not user:
+                return 0
+            query = query.where(Document.user_id == user.id)
         
-        # Status filtering removed (status field no longer exists)
-        
-        result = await self.session.execute(query)
-        return result.scalar()
+        try:
+            result = await self.session.execute(query)
+            return result.scalar() or 0
+        except Exception as e:
+            if settings.DISABLE_AUTH:
+                logger.warning(f"Database error in count_user_documents (No-Auth mode): {e}")
+                return 0
+            raise
     
     async def _validate_document_content(self, document: Document) -> None:
         """Validate document content"""
@@ -1587,10 +1613,9 @@ Return your response as JSON in this exact format, if the fields are not present
             return []
         
         # 5. Fetch the actual Document objects
-        stmt = select(Document).where(
-            Document.id.in_(doc_ids),
-            Document.user_id == user_id
-        )
+        stmt = select(Document).where(Document.id.in_(doc_ids))
+        if not settings.DISABLE_AUTH:
+            stmt = stmt.where(Document.user_id == user_id)
         
         # If scope_type is 'collection', further filter by scope_id
         # TODO: Implement collection filtering when CollectionDocumentLink is available
@@ -1667,9 +1692,14 @@ Return your response as JSON in this exact format, if the fields are not present
                 EntityDocument.document_id
             )
             .join(EntityDocument, Entity.id == EntityDocument.entity_id)
-            .where(Entity.user_id == user.id)
-            .order_by(Entity.type, Entity.name, Entity.id)
         )
+        if not settings.DISABLE_AUTH:
+            user = await UserService.get_user_by_firebase_uid(self.session, user_id)
+            if not user:
+                return []
+            query = query.where(Entity.user_id == user.id)
+            
+        query = query.order_by(Entity.type, Entity.name, Entity.id)
         
         result = await self.session.execute(query)
         entity_doc_mappings = result.all()

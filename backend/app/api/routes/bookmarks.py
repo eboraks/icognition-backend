@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlmodel import select
 from asyncio import create_task
 from app.db.database import get_session
+from app.core.config import settings
 from app.core.user_context import UserContext, get_authenticated_user_context, get_active_user_context
 from app.services.bookmark_service import BookmarkService
 from app.api.models.user_models import UserProfileResponse

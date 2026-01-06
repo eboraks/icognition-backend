@@ -12,6 +12,7 @@ logger = get_logger(__name__)
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Depends, HTTPException, status
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse, JSONResponse
@@ -27,6 +28,7 @@ from app.api.errors import (
     api_error_handler,
     http_error_handler, 
     validation_error_handler,
+    general_exception_handler,
     APIError
 )
 from app.api.routes import users, bookmarks, documents, websocket, system, chat, knowledge, notifications, admin
@@ -103,15 +105,6 @@ def custom_openapi():
 
 app.openapi = custom_openapi
 
-# Configure CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.BACKEND_CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["icognition-answer-type"],
-)
 
 # Add security middleware
 app.add_middleware(
@@ -127,10 +120,21 @@ app.add_middleware(
 # app.add_middleware(AuditLoggingMiddleware)
 app.add_middleware(SecurityAuditMiddleware)
 
+# Configure CORS middleware (MUST be added last to be the outermost)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.BACKEND_CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["icognition-answer-type"],
+)
+
 # Register exception handlers
 app.add_exception_handler(APIError, api_error_handler)
-app.add_exception_handler(Exception, http_error_handler)
+app.add_exception_handler(StarletteHTTPException, http_error_handler)
 app.add_exception_handler(RequestValidationError, validation_error_handler)
+app.add_exception_handler(Exception, general_exception_handler)
 
 # Register API routes
 app.include_router(users.router)

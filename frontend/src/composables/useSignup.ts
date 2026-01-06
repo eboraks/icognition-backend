@@ -1,14 +1,14 @@
 import { ref } from "vue"
-import { auth, createUserWithEmailAndPassword } from '../firebase/config.ts'
+import { auth, createUserWithEmailAndPassword } from '../firebase/config.js'
 
 export function useSignup() {
     const error = ref(null);
     const isPending = ref(false);
-    
+
     const signup = async (email: string, password: string, displayName: string) => {
         error.value = null;
         isPending.value = true;
-    
+
         try {
             console.log(auth)
             const res = await createUserWithEmailAndPassword(auth, email, password)
@@ -20,8 +20,8 @@ export function useSignup() {
             isPending.value = false
             error.value = null
             return res
-    
-        } catch(err: any) {
+
+        } catch (err: any) {
             console.log(err.message)
             error.value = err.message
             isPending.value = false

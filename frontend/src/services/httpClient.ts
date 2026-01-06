@@ -3,9 +3,9 @@
  * Centralized Axios configuration for API calls to the FastAPI backend
  */
 
-import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, AxiosError } from 'axios';
+import axios, { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse, AxiosError, AxiosRequestConfig } from 'axios';
 import { getAuth } from 'firebase/auth';
-import { API_CONFIG } from '../config/api';
+import { API_CONFIG } from '../config/api.js';
 
 // Create Axios instance with configuration
 const httpClient: AxiosInstance = axios.create({
@@ -16,12 +16,12 @@ const httpClient: AxiosInstance = axios.create({
 
 // Request interceptor to add authentication headers
 httpClient.interceptors.request.use(
-  async (config: AxiosRequestConfig) => {
+  async (config: InternalAxiosRequestConfig) => {
     try {
       // Get Firebase auth token
       const auth = getAuth();
       const user = auth.currentUser;
-      
+
       if (user) {
         const token = await user.getIdToken();
         config.headers = config.headers || {};
@@ -30,7 +30,7 @@ httpClient.interceptors.request.use(
     } catch (error) {
       console.warn('Failed to get auth token:', error);
     }
-    
+
     return config;
   },
   (error: AxiosError) => {
@@ -44,26 +44,26 @@ httpClient.interceptors.response.use(
     return response;
   },
   async (error: AxiosError) => {
-    const config = error.config as AxiosRequestConfig & { _retry?: boolean; _retryCount?: number };
-    
+    const config = error.config as InternalAxiosRequestConfig & { _retry?: boolean; _retryCount?: number };
+
     // Retry logic for network errors
     if (!error.response && !config._retry && (config._retryCount || 0) < API_CONFIG.MAX_RETRIES) {
       config._retry = true;
       config._retryCount = (config._retryCount || 0) + 1;
-      
+
       console.warn(`Retrying request (attempt ${config._retryCount}/${API_CONFIG.MAX_RETRIES})`);
-      
+
       // Wait before retrying
       await new Promise(resolve => setTimeout(resolve, API_CONFIG.RETRY_DELAY));
-      
+
       return httpClient(config);
     }
-    
+
     // Handle common error cases
     if (error.response) {
       // Server responded with error status
       const { status, data } = error.response;
-      
+
       switch (status) {
         case 401:
           console.error('Unauthorized - please log in again');
@@ -91,7 +91,7 @@ httpClient.interceptors.response.use(
       // Other error
       console.error('Request setup error:', error.message);
     }
-    
+
     return Promise.reject(error);
   }
 );

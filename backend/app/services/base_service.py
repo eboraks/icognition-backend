@@ -10,6 +10,7 @@ import logging
 from datetime import datetime
 import traceback
 
+from app.core.config import settings
 from app.services.user_service import UserService
 from app.utils.logging import get_logger
 
@@ -89,12 +90,17 @@ class UserIsolatedService(Generic[T]):
         This is the base method that all user-scoped queries should use.
         """
         try:
-            user_id = await self._ensure_user_isolation(session, firebase_uid, "get_records")
-            
-            # Build query with user isolation
-            query = select(self.model_class).where(
-                getattr(self.model_class, 'user_id') == user_id
-            )
+            if settings.DISABLE_AUTH:
+                # Bypass user isolation if auth is disabled
+                query = select(self.model_class)
+                logger.info(f"Bypassing user isolation for {self.model_class.__name__} (DISABLE_AUTH=true)")
+            else:
+                user_id = await self._ensure_user_isolation(session, firebase_uid, "get_records")
+                
+                # Build query with user isolation
+                query = select(self.model_class).where(
+                    getattr(self.model_class, 'user_id') == user_id
+                )
             
             # Apply additional filters
             for key, value in filters.items():
@@ -137,13 +143,21 @@ class UserIsolatedService(Generic[T]):
         This prevents users from accessing other users' data.
         """
         try:
-            user_id = await self._ensure_user_isolation(session, firebase_uid, "get_record")
-            
-            result = await session.execute(
-                select(self.model_class)
-                .where(self.model_class.id == record_id)
-                .where(getattr(self.model_class, 'user_id') == user_id)
-            )
+            if settings.DISABLE_AUTH:
+                # Bypass user isolation if auth is disabled
+                result = await session.execute(
+                    select(self.model_class)
+                    .where(self.model_class.id == record_id)
+                )
+                logger.info(f"Bypassing user isolation for {self.model_class.__name__} ID {record_id} (DISABLE_AUTH=true)")
+            else:
+                user_id = await self._ensure_user_isolation(session, firebase_uid, "get_record")
+                
+                result = await session.execute(
+                    select(self.model_class)
+                    .where(self.model_class.id == record_id)
+                    .where(getattr(self.model_class, 'user_id') == user_id)
+                )
             
             record = result.scalar_one_or_none()
             
@@ -183,7 +197,12 @@ class UserIsolatedService(Generic[T]):
         This prevents users from modifying other users' data.
         """
         try:
-            user_id = await self._ensure_user_isolation(session, firebase_uid, "update_record")
+            if settings.DISABLE_AUTH:
+                # Bypass user isolation if auth is disabled
+                user_id = None
+                logger.info(f"Bypassing user isolation for update of {self.model_class.__name__} ID {record_id} (DISABLE_AUTH=true)")
+            else:
+                user_id = await self._ensure_user_isolation(session, firebase_uid, "update_record")
             
             # Remove user_id from update_data if present (should not be updatable)
             update_data.pop('user_id', None)
@@ -200,11 +219,12 @@ class UserIsolatedService(Generic[T]):
                 )
                 return False
             
+            update_query = update(self.model_class).where(self.model_class.id == record_id)
+            if user_id is not None:
+                update_query = update_query.where(getattr(self.model_class, 'user_id') == user_id)
+            
             await session.execute(
-                update(self.model_class)
-                .where(self.model_class.id == record_id)
-                .where(getattr(self.model_class, 'user_id') == user_id)
-                .values(**update_data)
+                update_query.values(**update_data)
             )
             await session.commit()
             
@@ -237,7 +257,12 @@ class UserIsolatedService(Generic[T]):
         This prevents users from deleting other users' data.
         """
         try:
-            user_id = await self._ensure_user_isolation(session, firebase_uid, "delete_record")
+            if settings.DISABLE_AUTH:
+                # Bypass user isolation if auth is disabled
+                user_id = None
+                logger.info(f"Bypassing user isolation for deletion of {self.model_class.__name__} ID {record_id} (DISABLE_AUTH=true)")
+            else:
+                user_id = await self._ensure_user_isolation(session, firebase_uid, "delete_record")
             
             # Check if record exists and belongs to user before deleting
             existing_record = await self.get_user_record_by_id(session, record_id, firebase_uid)
@@ -247,11 +272,11 @@ class UserIsolatedService(Generic[T]):
                 )
                 return False
             
-            await session.execute(
-                delete(self.model_class)
-                .where(self.model_class.id == record_id)
-                .where(getattr(self.model_class, 'user_id') == user_id)
-            )
+            delete_query = delete(self.model_class).where(self.model_class.id == record_id)
+            if user_id is not None:
+                delete_query = delete_query.where(getattr(self.model_class, 'user_id') == user_id)
+            
+            await session.execute(delete_query)
             await session.commit()
             
             # Log successful deletion
@@ -284,12 +309,17 @@ class UserIsolatedService(Generic[T]):
         Useful for pagination and statistics.
         """
         try:
-            user_id = await self._ensure_user_isolation(session, firebase_uid, "count_records")
-            
-            # Build query with user isolation
-            query = select(self.model_class).where(
-                getattr(self.model_class, 'user_id') == user_id
-            )
+            if settings.DISABLE_AUTH:
+                # Bypass user isolation if auth is disabled
+                query = select(self.model_class)
+                logger.info(f"Bypassing user isolation for count of {self.model_class.__name__} (DISABLE_AUTH=true)")
+            else:
+                user_id = await self._ensure_user_isolation(session, firebase_uid, "count_records")
+                
+                # Build query with user isolation
+                query = select(self.model_class).where(
+                    getattr(self.model_class, 'user_id') == user_id
+                )
             
             # Apply additional filters
             for key, value in filters.items():

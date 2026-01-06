@@ -1,14 +1,14 @@
-import { 
-  auth, 
-  createUserWithEmailAndPassword, 
-  signInWithEmailAndPassword, 
+import {
+  auth,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
   GoogleAuthProvider,
   GithubAuthProvider,
   signInWithPopup,
   signOut,
   sendEmailVerification,
   updateProfile
-} from './config';
+} from './config.js';
 
 // Password validation function
 export function validatePassword(password: string) {
@@ -17,14 +17,14 @@ export function validatePassword(password: string) {
   const hasLowerCase = /[a-z]/.test(password);
   const hasNumbers = /\d/.test(password);
   const hasSpecialChars = /[!@#$%^&*(),.?":{}|<>]/.test(password);
-  
+
   const errors = [];
   if (password.length < minLength) errors.push(`Password must be at least ${minLength} characters`);
   if (!hasUpperCase) errors.push("Password must contain at least one uppercase letter");
   if (!hasLowerCase) errors.push("Password must contain at least one lowercase letter");
   if (!hasNumbers) errors.push("Password must contain at least one number");
   if (!hasSpecialChars) errors.push("Password must contain at least one special character");
-  
+
   return { valid: errors.length === 0, errors };
 }
 
@@ -38,13 +38,13 @@ export async function registerUser(email: string, password: string, displayName:
     }
 
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-    
+
     // Update profile with display name
     await updateProfile(userCredential.user, { displayName });
-    
+
     // Send email verification
     await sendEmailVerification(userCredential.user);
-    
+
     return userCredential.user;
   } catch (error: any) {
     console.error("Error registering user:", error);
@@ -56,12 +56,12 @@ export async function registerUser(email: string, password: string, displayName:
 export async function loginUser(email: string, password: string) {
   try {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
-    
+
     // Check if email is verified
     if (!userCredential.user.emailVerified) {
       throw new Error("Please verify your email before logging in. Check your inbox.");
     }
-    
+
     return userCredential.user;
   } catch (error: any) {
     console.error("Error logging in:", error);

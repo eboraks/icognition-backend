@@ -1,6 +1,6 @@
 import { ref } from "vue"
-import { auth } from '../firebase/config.ts'
-import user_state from "./getUser.ts"
+import { auth } from '../firebase/config.js'
+import user_state from "./getUser.js"
 
 export function useLogout() {
     const error = ref(null);
@@ -9,7 +9,7 @@ export function useLogout() {
     const logout = async () => {
         error.value = null
         isPending.value = true
-        
+
         try {
             await auth.signOut()
             isPending.value = false
@@ -21,5 +21,5 @@ export function useLogout() {
         }
     }
 
-    return { error, logout, isPending}
+    return { error, logout, isPending }
 }

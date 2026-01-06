@@ -6,6 +6,7 @@ from typing import List, Optional
 from fastapi import Depends
 from datetime import datetime, timezone
 from app.utils.chat_formatting import format_chat_message
+from app.core.config import settings
 import logging
 
 logger = logging.getLogger(__name__)
@@ -28,20 +29,23 @@ class ChatSessionService:
             scope_type=scope_type,
             scope_id=scope_id
         )
-        self.session.add(chat_session)
-        await self.session.commit()
-        await self.session.refresh(chat_session)
-        return chat_session
+        try:
+            self.session.add(chat_session)
+            await self.session.commit()
+            await self.session.refresh(chat_session)
+            return chat_session
+        except Exception as e:
+            raise
 
     async def get_user_sessions(self, user_id: str) -> List[ChatSession]:
         """
         Get all chat sessions for a user.
         """
-        stmt = (
-            select(ChatSession)
-            .where(ChatSession.user_id == user_id)
-            .order_by(ChatSession.updated_at.desc(), ChatSession.id.desc())
-        )
+        stmt = select(ChatSession)
+        if not settings.DISABLE_AUTH:
+            stmt = stmt.where(ChatSession.user_id == user_id)
+        
+        stmt = stmt.order_by(ChatSession.updated_at.desc(), ChatSession.id.desc())
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
@@ -62,18 +66,19 @@ class ChatSessionService:
             select(ChatMessage)
             .join(ChatSession, ChatSession.id == ChatMessage.session_id)
             .where(ChatSession.id == session_id)
-            .where(ChatSession.user_id == user_id)
-            .order_by(ChatMessage.created_at, ChatMessage.id)
         )
+        if not settings.DISABLE_AUTH:
+            stmt = stmt.where(ChatSession.user_id == user_id)
+        
+        stmt = stmt.order_by(ChatMessage.created_at, ChatMessage.id)
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
     async def get_session_by_id(self, session_id: int, user_id: str) -> Optional[ChatSession]:
-        stmt = (
-            select(ChatSession)
-            .where(ChatSession.id == session_id)
-            .where(ChatSession.user_id == user_id)
-        )
+        stmt = select(ChatSession).where(ChatSession.id == session_id)
+        if not settings.DISABLE_AUTH:
+            stmt = stmt.where(ChatSession.user_id == user_id)
+            
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -99,23 +104,26 @@ class ChatSessionService:
 
         formatted_content = format_chat_message(content or "")
 
-        message = ChatMessage(
-            session_id=session_id,
-            role=role,  # "user" or "assistant"
-            content=formatted_content
-        )
-        self.session.add(message)
+        try:
+            message = ChatMessage(
+                session_id=session_id,
+                role=role,  # "user" or "assistant"
+                content=formatted_content
+            )
+            self.session.add(message)
 
-        if role == "user" and not has_prior_user_message:
-            new_title = (content or "").strip()[:60]
-            chat_session.title = new_title or chat_session.title
+            if role == "user" and not has_prior_user_message:
+                new_title = (content or "").strip()[:60]
+                chat_session.title = new_title or chat_session.title
 
-        chat_session.updated_at = datetime.now(timezone.utc)
+            chat_session.updated_at = datetime.now(timezone.utc)
 
-        await self.session.commit()
-        await self.session.refresh(message)
-        logger.info(f"Saved {role} message to session {session_id}, message_id: {message.id}")
-        return message
+            await self.session.commit()
+            await self.session.refresh(message)
+            logger.info(f"Saved {role} message to session {session_id}, message_id: {message.id}")
+            return message
+        except Exception as e:
+            raise
 
     async def delete_session(self, session_id: int, user_id: str):
         """
@@ -132,10 +140,10 @@ class ChatSessionService:
             
             # Then delete the session itself using direct DELETE statement
             # This is more reliable than session.delete() as it executes the SQL directly
-            delete_session_stmt = delete(ChatSession).where(
-                ChatSession.id == session_id,
-                ChatSession.user_id == user_id
-            )
+            delete_session_stmt = delete(ChatSession).where(ChatSession.id == session_id)
+            if not settings.DISABLE_AUTH:
+                delete_session_stmt = delete_session_stmt.where(ChatSession.user_id == user_id)
+            
             session_result = await self.session.execute(delete_session_stmt)
             sessions_deleted = session_result.rowcount
             logger.info(f"Deleted {sessions_deleted} session(s) for session_id {session_id}")
@@ -156,11 +164,10 @@ class ChatSessionService:
             raise
 
     async def update_session_title(self, session_id: int, user_id: str, title: str) -> Optional[ChatSession]:
-        stmt = (
-            select(ChatSession)
-            .where(ChatSession.id == session_id)
-            .where(ChatSession.user_id == user_id)
-        )
+        stmt = select(ChatSession).where(ChatSession.id == session_id)
+        if not settings.DISABLE_AUTH:
+            stmt = stmt.where(ChatSession.user_id == user_id)
+            
         result = await self.session.execute(stmt)
         chat_session = result.scalar_one_or_none()
         if not chat_session:

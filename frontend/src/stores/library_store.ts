@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import { useDocumentStore } from './documents_store';
-import { documentService, type EntityTreeNode, type EntityTreeResponse } from '@/services/DocumentService';
+import { useDocumentStore } from './documents_store.js';
+import { documentService, type EntityTreeNode, type EntityTreeResponse } from '@/services/DocumentService.js';
 import type { TreeSelectionKeys } from 'primevue/tree';
 
 interface DocRow {
@@ -68,20 +68,20 @@ export const useLibraryStore = defineStore('library', () => {
     try {
       // Get real documents from documentStore instead of using mock data
       const documentStore = useDocumentStore();
-      
+
       // Transform documentStore documents to library store format
       documents.value = documentStore.docs.map(doc => ({
-        id: doc.id,
+        id: doc.id || 0,
         title: doc.title || 'Untitled',
         updatedAt: doc.updateAt ? doc.updateAt.format('YYYY-MM-DD') : new Date().toISOString(),
-        url: doc.url,
-        sourceUrl: doc.url,
+        url: doc.url || '',
+        sourceUrl: doc.url || '',
         sourceHost: doc.url ? new URL(doc.url).hostname : undefined,
         summary: doc.is_about,
         keyPoints: doc.tldr || [],
         type: 'web'
       }));
-      
+
       console.log('Library store updated with real documents:', documents.value.length);
     } catch (error) {
       console.error('Error fetching documents for library store:', error);
@@ -110,7 +110,7 @@ export const useLibraryStore = defineStore('library', () => {
 
   function buildEntityDocumentMap() {
     const map = new Map<number, Set<number>>();
-    
+
     const traverse = (nodes: EntityTreeNode[]) => {
       for (const node of nodes) {
         if (node.data && node.data.entity_id && node.data.document_ids) {
@@ -121,7 +121,7 @@ export const useLibraryStore = defineStore('library', () => {
         }
       }
     };
-    
+
     traverse(entityTree.value);
     entityDocumentMap.value = map;
     console.log('Built entity document map:', map.size, 'entities');
@@ -129,14 +129,14 @@ export const useLibraryStore = defineStore('library', () => {
 
   function updateSelectedEntities(selectedKeys: TreeSelectionKeys) {
     const newSelectedIds = new Set<number>();
-    
+
     // Parse entity IDs from tree keys (format: "entity-{type}-{id}")
     Object.keys(selectedKeys || {}).forEach(key => {
       const checked = (selectedKeys as any)[key]?.checked;
       if (checked && key.startsWith('entity-')) {
         // Extract entity ID from key like "entity-location-1"
         const parts = key.split('-');
-        if (parts.length >= 3) {
+        if (parts.length >= 3 && parts[2]) {
           const entityId = parseInt(parts[2], 10);
           if (!isNaN(entityId)) {
             newSelectedIds.add(entityId);
@@ -144,7 +144,7 @@ export const useLibraryStore = defineStore('library', () => {
         }
       }
     });
-    
+
     selectedEntityIds.value = newSelectedIds;
     console.log('Updated selected entities:', newSelectedIds.size, 'entities');
   }

@@ -52,6 +52,33 @@ class UserContextManager:
         """
         Extract user context from request using Firebase authentication.
         """
+        if settings.DISABLE_AUTH:
+            # Attempt to get or create the mock user in the database
+            # This ensures foreign key constraints work for chat sessions, etc.
+            try:
+                user = await UserService.get_or_create_user(
+                    session=session,
+                    firebase_uid="test_user_12345",
+                    email="test@example.com",
+                    display_name="Test User",
+                    email_verified=True
+                )
+                if user:
+                    return UserContext(user=user)
+            except Exception as e:
+                logger.warning(f"Failed to provision mock user in DB (No-Auth mode): {e}")
+            
+            # Fallback to in-memory model if DB is unreachable
+            # Note: This may cause Foreign Key errors if DB operations are attempted
+            # but it allows the request to proceed for read-only No-Auth scenarios.
+            return UserContext(user=User(
+                id="test_user_12345",
+                email="test@example.com",
+                display_name="Test User",
+                is_active=True,
+                role="sysadmin"
+            ))
+
         try:
             decoded_token = None
             
@@ -144,23 +171,6 @@ async def get_authenticated_user_context(
 ) -> UserContext:
     """FastAPI dependency to get authenticated user context"""
     user_context = await UserContextManager.get_user_from_request(request, session)
-    
-    # If auth is disabled, create a default test user context
-    if settings.DISABLE_AUTH:
-        logger.warning("Creating default test user context (DISABLE_AUTH enabled)")
-        
-        # Create a simple mock user object for testing
-        class MockUser:
-            def __init__(self):
-                self.id = "test_user_12345"  # Simple test user ID
-                self.email = "test@example.com"
-                self.name = "Test User"
-                self.display_name = "Test User"  # Add display_name attribute
-                self.is_active = True
-        
-        mock_user = MockUser()
-        user_context = UserContext(user=mock_user)
-    
     UserContextManager.require_authentication(user_context)
     return user_context
 
@@ -171,22 +181,5 @@ async def get_active_user_context(
 ) -> UserContext:
     """FastAPI dependency to get active user context"""
     user_context = await UserContextManager.get_user_from_request(request, session)
-    
-    # If auth is disabled, create a default test user context
-    if settings.DISABLE_AUTH:
-        logger.warning("Creating default test user context (DISABLE_AUTH enabled)")
-        
-        # Create a simple mock user object for testing
-        class MockUser:
-            def __init__(self):
-                self.id = "test_user_12345"  # Simple test user ID
-                self.email = "test@example.com"
-                self.name = "Test User"
-                self.display_name = "Test User"  # Add display_name attribute
-                self.is_active = True
-        
-        mock_user = MockUser()
-        user_context = UserContext(user=mock_user)
-    
     UserContextManager.require_active_user(user_context)
     return user_context

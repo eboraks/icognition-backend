@@ -16,6 +16,7 @@ from app.services.prompt_service import PromptService
 from app.services.gemini_service import get_gemini_service, GeminiModel, GeminiConfig
 from app.utils.logging import get_logger
 from app.utils.text_utils import extract_text_from_html
+from app.core.config import settings
 
 logger = get_logger(__name__)
 
@@ -318,7 +319,10 @@ class KnowledgeService:
         """
         try:
             # Get all documents for the user
-            doc_stmt = select(Document).where(Document.user_id == user_id)
+            doc_stmt = select(Document)
+            if not settings.DISABLE_AUTH:
+                doc_stmt = doc_stmt.where(Document.user_id == user_id)
+                
             doc_result = await self.session.execute(doc_stmt)
             documents = doc_result.scalars().all()
 
@@ -328,7 +332,10 @@ class KnowledgeService:
             doc_ids = [d.id for d in documents]
 
             # Get all entities for the user
-            entity_stmt = select(Entity).where(Entity.user_id == user_id)
+            entity_stmt = select(Entity)
+            if not settings.DISABLE_AUTH:
+                entity_stmt = entity_stmt.where(Entity.user_id == user_id)
+                
             entity_result = await self.session.execute(entity_stmt)
             entities = entity_result.scalars().all()
             entities_dict = {e.id: e for e in entities}
@@ -492,14 +499,17 @@ class KnowledgeService:
         try:
             if entity_id:
                 # Get entity information
-                entity_stmt = select(Entity).where(
-                    and_(Entity.id == entity_id, Entity.user_id == user_id)
-                )
+                entity_stmt = select(Entity).where(Entity.id == entity_id)
+                if not settings.DISABLE_AUTH:
+                    entity_stmt = entity_stmt.where(Entity.user_id == user_id)
                 entity_result = await self.session.execute(entity_stmt)
                 entity = entity_result.scalar_one_or_none()
 
                 if not entity:
-                    raise ValueError(f"Entity {entity_id} not found for user {user_id}")
+                    entity_not_found_msg = f"Entity {entity_id} not found"
+                    if not settings.DISABLE_AUTH:
+                        entity_not_found_msg += f" for user {user_id}"
+                    raise ValueError(entity_not_found_msg)
 
                 # Get documents related to this entity
                 ed_stmt = select(EntityDocument).where(EntityDocument.entity_id == entity_id)
@@ -507,9 +517,9 @@ class KnowledgeService:
                 entity_docs = ed_result.scalars().all()
 
                 doc_ids = [ed.document_id for ed in entity_docs]
-                doc_stmt = select(Document).where(
-                    and_(Document.id.in_(doc_ids), Document.user_id == user_id)
-                )
+                doc_stmt = select(Document).where(Document.id.in_(doc_ids))
+                if not settings.DISABLE_AUTH:
+                    doc_stmt = doc_stmt.where(Document.user_id == user_id)
                 doc_result = await self.session.execute(doc_stmt)
                 documents = doc_result.scalars().all()
 
@@ -541,14 +551,18 @@ class KnowledgeService:
 
             elif document_id:
                 # Get document information
-                doc_stmt = select(Document).where(
-                    and_(Document.id == document_id, Document.user_id == user_id)
-                )
+                doc_stmt = select(Document).where(Document.id == document_id)
+                if not settings.DISABLE_AUTH:
+                    doc_stmt = doc_stmt.where(Document.user_id == user_id)
+                    
                 doc_result = await self.session.execute(doc_stmt)
                 document = doc_result.scalar_one_or_none()
 
                 if not document:
-                    raise ValueError(f"Document {document_id} not found for user {user_id}")
+                    doc_not_found_msg = f"Document {document_id} not found"
+                    if not settings.DISABLE_AUTH:
+                        doc_not_found_msg += f" for user {user_id}"
+                    raise ValueError(doc_not_found_msg)
 
                 message = f"You've selected '{document.title or 'Untitled'}'. What would you like to know about this document?"
 
@@ -569,27 +583,19 @@ class KnowledgeService:
 
             else:
                 # Default case: Generate opening message based on latest documents
-                try:
-                    document_service = DocumentService(self.session)
-                    # Get latest documents (default 2, configurable)
-                    latest_documents = await document_service.get_latest_documents(
-                        user_id=user_id,
-                        limit=2  # Can be made configurable via settings
-                    )
-                    
-                    # Generate opening message using LLM
-                    return await self._generate_opening_message_from_documents(
-                        user_id=user_id,
-                        documents=latest_documents,
-                        limit=2
-                    )
-                except Exception as e:
-                    logger.error(f"Error generating opening message from latest documents: {e}", exc_info=True)
-                    # Fallback to default welcome message
-                    return {
-                        "message": "Hello! I'm your knowledge exploration assistant. Use the filters on the left to navigate your knowledge graph, or ask me a question directly.",
-                        "actions": [],
-                    }
+                document_service = DocumentService(self.session)
+                # Get latest documents (default 2, configurable)
+                latest_documents = await document_service.get_latest_documents(
+                    user_id=user_id,
+                    limit=2  # Can be made configurable via settings
+                )
+                
+                # Generate opening message using LLM
+                return await self._generate_opening_message_from_documents(
+                    user_id=user_id,
+                    documents=latest_documents,
+                    limit=2
+                )
 
         except Exception as e:
             logger.error(f"Error generating contextual message: {e}", exc_info=True)
@@ -623,9 +629,14 @@ class KnowledgeService:
                 
                 # Now query document using user.id (which is the Firebase UID stored in users table)
                 # Document.user_id is a foreign key to users.id, so it stores the Firebase UID
-                doc_stmt = select(Document).where(
-                    and_(Document.id == doc_id, Document.user_id == user.id)
-                )
+                doc_stmt = select(Document).where(Document.id == doc_id)
+                if not settings.DISABLE_AUTH:
+                    # Get the user object to ensure user exists and get proper user.id
+                    user = await UserService.get_user_by_firebase_uid(self.session, user_id)
+                    if not user:
+                        raise ValueError(f"User {user_id} not found")
+                    doc_stmt = doc_stmt.where(Document.user_id == user.id)
+                    
                 doc_result = await self.session.execute(doc_stmt)
                 document = doc_result.scalar_one_or_none()
                 
@@ -710,9 +721,9 @@ class KnowledgeService:
             
             if action_id == "learn_more" and entity_id:
                 # Get entity information
-                entity_stmt = select(Entity).where(
-                    and_(Entity.id == entity_id, Entity.user_id == user_id)
-                )
+                entity_stmt = select(Entity).where(Entity.id == entity_id)
+                if not settings.DISABLE_AUTH:
+                    entity_stmt = entity_stmt.where(Entity.user_id == user_id)
                 entity_result = await self.session.execute(entity_stmt)
                 entity = entity_result.scalar_one_or_none()
 
@@ -725,9 +736,9 @@ class KnowledgeService:
                 entity_docs = ed_result.scalars().all()
 
                 doc_ids = [ed.document_id for ed in entity_docs]
-                doc_stmt = select(Document).where(
-                    and_(Document.id.in_(doc_ids), Document.user_id == user_id)
-                )
+                doc_stmt = select(Document).where(Document.id.in_(doc_ids))
+                if not settings.DISABLE_AUTH:
+                    doc_stmt = doc_stmt.where(Document.user_id == user_id)
                 doc_result = await self.session.execute(doc_stmt)
                 documents = doc_result.scalars().all()
 

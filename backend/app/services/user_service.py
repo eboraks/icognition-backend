@@ -26,7 +26,9 @@ class UserService:
             result = await session.execute(
                 select(User).where(User.id == firebase_uid)
             )
-            return result.scalar_one_or_none()
+            user = result.scalar_one_or_none()
+            
+            return user
         except Exception as e:
             logger.error(f"Error getting user by Firebase UID {firebase_uid}: {e}")
             return None

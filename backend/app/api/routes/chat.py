@@ -9,6 +9,7 @@ from app.api.routes.websocket import manager
 from app.services.chat_agent_service import get_chat_agent_service, ChatAgentService
 from app.db.database import get_session
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.config import settings
 import json
 import logging
 import uuid
@@ -58,7 +59,14 @@ async def get_user_sessions(
     """
     Get all chat sessions for the authenticated user.
     """
-    return await chat_session_service.get_user_sessions(user_id=user_context.user.id)
+    try:
+        return await chat_session_service.get_user_sessions(user_id=user_context.user.id)
+    except Exception as e:
+        from app.core.config import settings
+        if settings.DISABLE_AUTH:
+            logger.warning(f"Database error in get_user_sessions (No-Auth mode): {e}")
+            return []
+        raise
 
 @router.get("/sessions/{session_id}/messages", response_model=List[ChatMessage])
 async def get_session_messages(
@@ -69,8 +77,15 @@ async def get_session_messages(
     """
     Get all messages for a specific chat session.
     """
-    # TODO: Add validation to ensure the user owns the session
-    return await chat_session_service.get_session_messages(session_id=session_id, user_id=user_context.user.id)
+    try:
+        # TODO: Add validation to ensure the user owns the session
+        return await chat_session_service.get_session_messages(session_id=session_id, user_id=user_context.user.id)
+    except Exception as e:
+        from app.core.config import settings
+        if settings.DISABLE_AUTH:
+            logger.warning(f"Database error in get_session_messages (No-Auth mode): {e}")
+            return []
+        raise
 
 @router.delete("/sessions/{session_id}", status_code=204)
 async def delete_chat_session(

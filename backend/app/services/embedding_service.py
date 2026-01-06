@@ -18,6 +18,7 @@ from app.services.gemini_service import GeminiService, GeminiModel, get_gemini_s
 from app.models import Document, User, Embedding, Entity
 from app.utils.logging import get_logger
 from app.utils.text_utils import extract_text_from_html
+from app.core.config import settings
 from langchain_text_splitters import HTMLSectionSplitter, RecursiveCharacterTextSplitter
 
 logger = get_logger(__name__)
@@ -828,8 +829,18 @@ class EmbeddingService:
             # Build source_types list for IN clause
             source_types_str = ','.join([f"'{st}'" for st in source_types])
             
-            # Simplified query following pgvector GitHub examples
-            # Using direct string format with ::vector cast (safe since we control vector generation)
+            # Build WHERE clause
+            where_clauses = [
+                f"e.source_type IN ({source_types_str})",
+                "e.vector IS NOT NULL",
+                f"1 - (e.vector <=> '{vector_str}'::vector) >= :threshold"
+            ]
+            
+            if not settings.DISABLE_AUTH:
+                where_clauses.append("e.user_id = :user_id")
+            
+            where_clause_str = " AND ".join(where_clauses)
+            
             stmt = text(f"""
                 SELECT 
                     e.id as embedding_id,
@@ -839,10 +850,7 @@ class EmbeddingService:
                     e.text,
                     1 - (e.vector <=> '{vector_str}'::vector) as similarity_score
                 FROM embedding e
-                WHERE e.user_id = :user_id
-                AND e.source_type IN ({source_types_str})
-                AND e.vector IS NOT NULL
-                AND 1 - (e.vector <=> '{vector_str}'::vector) >= :threshold
+                WHERE {where_clause_str}
                 ORDER BY e.vector <=> '{vector_str}'::vector
                 LIMIT :limit
             """)

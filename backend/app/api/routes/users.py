@@ -24,6 +24,25 @@ async def get_user_profile(
     """
     Get current user's profile information
     """
+    from app.core.config import settings
+    if settings.DISABLE_AUTH:
+        return UserProfileResponse(
+            id="test_user_12345",
+            firebase_uid="test_user_12345",
+            email="test@example.com",
+            display_name="Test User",
+            photo_url=None,
+            is_active=True,
+            is_verified=True,
+            role="sysadmin",
+            first_login=None,
+            last_login=None,
+            last_active=None,
+            created_at=None,
+            updated_at=None,
+            preferences={}
+        )
+
     if not user_context.user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

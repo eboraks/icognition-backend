@@ -162,6 +162,16 @@ async def get_documents(
         )
         
     except Exception as e:
+        from app.core.config import settings
+        if settings.DISABLE_AUTH:
+            logger.warning(f"Database error in get_documents (No-Auth mode): {e}")
+            return DocumentListResponse(
+                documents=[],
+                total=0,
+                page=page,
+                page_size=page_size,
+                total_pages=0
+            )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve documents: {str(e)}"
@@ -185,6 +195,10 @@ async def get_all_documents(
         return [DocumentResponse.model_validate(doc) for doc in documents]
         
     except Exception as e:
+        from app.core.config import settings
+        if settings.DISABLE_AUTH:
+            logger.warning(f"Database error in get_all_documents (No-Auth mode): {e}")
+            return []
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve all documents: {str(e)}"
@@ -531,6 +545,10 @@ async def get_entity_tree(
         return EntityTreeResponse(tree=tree_data)
         
     except Exception as e:
+        from app.core.config import settings
+        if settings.DISABLE_AUTH:
+            logger.warning(f"Database error in get_entity_tree (No-Auth mode): {e}")
+            return EntityTreeResponse(tree=[])
         logger.error(f"Failed to retrieve entity tree: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

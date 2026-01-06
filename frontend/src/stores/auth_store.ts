@@ -1,15 +1,16 @@
 import { defineStore } from 'pinia';
 import { onAuthStateChanged } from 'firebase/auth';
-import { auth } from '../firebase/config';
-import { 
-  registerUser, 
-  loginUser, 
-  signInWithGoogle, 
-  signInWithGithub, 
+import { auth } from '../firebase/config.js';
+import {
+  registerUser,
+  loginUser,
+  signInWithGoogle,
+  signInWithGithub,
   logoutUser,
-  sendVerificationEmail 
-} from '../firebase/auth';
-import { userService } from '../services/UserService';
+  sendVerificationEmail
+} from '../firebase/auth.js';
+import { userService } from '../services/UserService.js';
+import { systemService } from '../services/systemService.js';
 
 interface User {
   uid: string;
@@ -25,6 +26,7 @@ interface AuthState {
   loading: boolean;
   error: string | null;
   initialized: boolean;
+  isAuthDisabled: boolean;
 }
 
 export const useAuthStore = defineStore('auth', {
@@ -32,11 +34,12 @@ export const useAuthStore = defineStore('auth', {
     user: null,
     loading: true,
     error: null,
-    initialized: false
+    initialized: false,
+    isAuthDisabled: false
   }),
 
   getters: {
-    isAuthenticated: (state) => !!state.user,
+    isAuthenticated: (state) => !!state.user || state.isAuthDisabled,
     isVerified: (state) => state.user?.emailVerified ?? false,
     isAdmin: (state) => state.user?.role === 'sysadmin',
     currentUser: (state) => state.user,
@@ -47,6 +50,28 @@ export const useAuthStore = defineStore('auth', {
   actions: {
     // Initialize authentication state observer
     async initAuth() {
+      // Check if auth is disabled on the backend
+      try {
+        const status = await systemService.getAuthStatus();
+        this.isAuthDisabled = status.disable_auth;
+        if (this.isAuthDisabled) {
+          console.log('Auth store: Backend reported DISABLE_AUTH=true, skipping Firebase initialization');
+          this.user = {
+            uid: 'no-auth-user',
+            email: 'no-auth@example.com',
+            displayName: 'No-Auth Developer',
+            emailVerified: true,
+            photoURL: null,
+            role: 'sysadmin'
+          };
+          this.loading = false;
+          this.initialized = true;
+          return Promise.resolve(null);
+        }
+      } catch (error) {
+        console.warn('Auth store: Failed to check auth status, proceeding with Firebase:', error);
+      }
+
       return new Promise((resolve) => {
         onAuthStateChanged(auth, async (firebaseUser) => {
           if (firebaseUser) {

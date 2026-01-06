@@ -3,7 +3,7 @@
  * Handles all document-related API calls to the FastAPI backend
  */
 
-import { api } from './httpClient';
+import { api } from './httpClient.js';
 
 // Document Types (matching backend models)
 export interface DocumentCreateRequest {
@@ -140,14 +140,14 @@ class DocumentService {
     status?: string;
   }): Promise<DocumentListResponse> {
     const queryParams = new URLSearchParams();
-    
+
     if (params?.page) queryParams.append('page', params.page.toString());
     if (params?.page_size) queryParams.append('page_size', params.page_size.toString());
     if (params?.status) queryParams.append('status', params.status);
-    
+
     const queryString = queryParams.toString();
     const url = queryString ? `/documents/?${queryString}` : '/documents/';
-    
+
     return api.get<DocumentListResponse>(url);
   }
 
