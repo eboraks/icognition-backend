@@ -38,23 +38,33 @@ async def get_checkpointer() -> AsyncPostgresSaver:
     """
     global _checkpointer
     global _checkpointer_cm
-    if _checkpointer is None:
-        # Get database URL and ensure it's in the right format for the checkpointer
-        db_url = get_database_url()
-        # The checkpointer expects a sync postgresql:// URL (not asyncpg)
-        if db_url.startswith("postgresql+asyncpg://"):
-            db_url = db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
-        elif db_url.startswith("postgresql+psycopg://"):
-            db_url = db_url.replace("postgresql+psycopg://", "postgresql://", 1)
+    
+    if _checkpointer is not None:
+        return _checkpointer
+
+    # Get database URL and ensure it's in the right format for the checkpointer
+    db_url = get_database_url()
+    # The checkpointer expects a sync postgresql:// URL (not asyncpg)
+    if db_url.startswith("postgresql+asyncpg://"):
+        db_url = db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    elif db_url.startswith("postgresql+psycopg://"):
+        db_url = db_url.replace("postgresql+psycopg://", "postgresql://", 1)
+    
+    try:
+        logger.info("Initializing LangGraph PostgreSQL checkpointer...")
+        _checkpointer_cm = AsyncPostgresSaver.from_conn_string(db_url)
+        _checkpointer = await _checkpointer_cm.__aenter__()
+        # setup() creates the necessary tables and indexes. 
+        # By calling this during startup, we avoid deadlocks with request transactions.
+        await _checkpointer.setup()
+        logger.info("✅ LangGraph PostgreSQL checkpointer initialized successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize checkpointer: {e}", exc_info=True)
+        # Reset globals if initialization failed so it can be retried
+        _checkpointer = None
+        _checkpointer_cm = None
+        raise
         
-        try:
-            _checkpointer_cm = AsyncPostgresSaver.from_conn_string(db_url)
-            _checkpointer = await _checkpointer_cm.__aenter__()
-            await _checkpointer.setup()
-            logger.info("Initialized LangGraph PostgreSQL checkpointer")
-        except Exception as e:
-            logger.error(f"Failed to initialize checkpointer: {e}", exc_info=True)
-            raise
     return _checkpointer
 
 

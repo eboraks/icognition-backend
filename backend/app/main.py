@@ -32,6 +32,8 @@ from app.api.errors import (
     APIError
 )
 from app.api.routes import users, bookmarks, documents, websocket, system, chat, knowledge, notifications, admin
+from app.services.chat_agent_service import get_checkpointer
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -48,6 +50,13 @@ async def lifespan(app: FastAPI):
         # Don't fail startup, but log the error
     
     # TODO: Initialize database connections, background tasks, etc.
+    try:
+        await get_checkpointer()
+    except Exception as e:
+        logger.error(f"Failed to initialize checkpointer during startup: {e}")
+        # We don't want to fail the entire app startup if possible, 
+        # but chat will likely fail later.
+    
     # chat_session_manager.start_cleanup_task()
     
     yield
