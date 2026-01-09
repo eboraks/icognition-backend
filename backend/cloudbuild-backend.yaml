@@ -75,22 +75,22 @@ steps:
         # Start the proxy
         mkdir -p /tmp/cloudsql
         ./cloud-sql-proxy --unix-socket /tmp/cloudsql ${_CLOUDSQL_INSTANCE} &
-        PROXY_PID=$!
+        PROXY_PID=$$!
 
         # Wait for the proxy
         echo "Waiting for Cloud SQL Proxy..."
         sleep 5
 
         # Update connection string
-        export DATABASE_URL=$(echo $DATABASE_URL_SECRET | sed 's|/cloudsql/|/tmp/cloudsql/|g')
+        export DATABASE_URL=$$(echo $$DATABASE_URL_SECRET | sed 's|/cloudsql/|/tmp/cloudsql/|g')
         
         echo "Running entity merge script..."
         cd /app
-        export PYTHONPATH=$PYTHONPATH:/app
+        export PYTHONPATH=$$PYTHONPATH:/app
         python scripts/merge_entities.py
 
         # Clean up
-        kill $PROXY_PID
+        kill $$PROXY_PID
         echo "Entity merge completed successfully."
     secretEnv: ['DATABASE_URL_SECRET']
 
