@@ -58,6 +58,42 @@ steps:
         echo "Migrations completed successfully."
     secretEnv: ['DATABASE_URL_SECRET']
 
+  # Run entity deduplication and Wikidata anchoring
+  - name: gcr.io/${PROJECT_ID}/icognition-backend:${SHORT_SHA}
+    id: 'run-entity-merge'
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        echo "Starting entity merge process..."
+        
+        # Download the Cloud SQL Proxy
+        curl -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.2/cloud-sql-proxy.linux.amd64
+        chmod +x cloud-sql-proxy
+
+        # Start the proxy
+        mkdir -p /tmp/cloudsql
+        ./cloud-sql-proxy --unix-socket /tmp/cloudsql ${_CLOUDSQL_INSTANCE} &
+        PROXY_PID=$!
+
+        # Wait for the proxy
+        echo "Waiting for Cloud SQL Proxy..."
+        sleep 5
+
+        # Update connection string
+        export DATABASE_URL=$(echo $DATABASE_URL_SECRET | sed 's|/cloudsql/|/tmp/cloudsql/|g')
+        
+        echo "Running entity merge script..."
+        cd /app
+        export PYTHONPATH=$PYTHONPATH:/app
+        python scripts/merge_entities.py
+
+        # Clean up
+        kill $PROXY_PID
+        echo "Entity merge completed successfully."
+    secretEnv: ['DATABASE_URL_SECRET']
+
   # Deploy the image to Cloud Run
   - name: gcr.io/cloud-builders/gcloud
     id: 'deploy-to-cloud-run'
