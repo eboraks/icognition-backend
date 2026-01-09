@@ -988,9 +988,13 @@ class Entity(SQLModel, table=True):
     wikidata_id: Optional[str] = Field(default=None, index=True, max_length=50)
     wikidata_label: Optional[str] = Field(default=None, max_length=255)
     wikidata_description: Optional[str] = Field(default=None, sa_column=Column(Text))
+    wikidata_url: Optional[str] = Field(default=None, max_length=500)
     aliases: Optional[List[str]] = Field(default=None, sa_column=Column(ARRAY(Text)))
     # vector removed - embeddings now stored in centralized Embedding table
-    user_id: str = Field(foreign_key="users.id", index=True)
+    
+    # user_id is now optional for global shared entities
+    user_id: Optional[str] = Field(default=None, foreign_key="users.id", index=True, nullable=True)
+    
     created_at: Optional[datetime] = Field(
         default_factory=datetime.now,   
         sa_column=Column(DateTime(timezone=True), server_default=func.now())

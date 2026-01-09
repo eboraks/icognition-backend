@@ -1,15 +1,11 @@
-"""
-Adapter to convert DSPy entity extraction results to database Entity models
-Bridges DSPy entity service with existing database logic
-"""
-
 from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, or_
 
 from app.models import Entity, EntityDocument
 from app.services.user_service import UserService
 from app.services.embedding_service import get_embedding_service
+from app.services.wikidata_service import get_wikidata_service
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -18,7 +14,7 @@ logger = get_logger(__name__)
 class DspyEntityAdapter:
     """
     Adapter for converting DSPy entity extraction results to database models.
-    Reuses existing database logic for entity storage and relationships.
+    Refactored to support global shared entities and Wikidata anchoring.
     """
     
     def __init__(self, session: AsyncSession):
@@ -29,6 +25,7 @@ class DspyEntityAdapter:
             session: Database session for entity operations
         """
         self.session = session
+        self.wikidata_service = get_wikidata_service()
     
     async def process_document_entities(
         self,
@@ -69,9 +66,9 @@ class DspyEntityAdapter:
             processed_count = 0
             for entity_data in entities:
                 try:
-                    # Find or create entity
+                    # Find or create entity (Global)
                     entity = await self._find_or_create_entity(
-                        user.id, entity_data
+                        entity_data
                     )
                     
                     if entity:
@@ -102,70 +99,108 @@ class DspyEntityAdapter:
     
     async def _find_or_create_entity(
         self,
-        user_id: str,
         entity_data: Dict[str, Any]
     ) -> Optional[Entity]:
         """
-        Find existing entity or create new one
+        Find existing entity (globally) or create new one with Wikidata anchoring.
         
         Args:
-            user_id: User ID
             entity_data: Entity data from DSPy (name, type, description)
             
         Returns:
             Entity object or None
         """
         try:
-            # Try to find existing entity by name and type
+            name = entity_data['name']
+            entity_type = entity_data['type']
+            description = entity_data['description']
+            
+            # 1. Exact Match (Global) by name and type
             query = select(Entity).where(
                 and_(
-                    Entity.user_id == user_id,
-                    Entity.name == entity_data['name'],
-                    Entity.type == entity_data['type']
+                    Entity.name == name,
+                    Entity.type == entity_type
                 )
             )
-            
             result = await self.session.execute(query)
             existing_entity = result.scalar_one_or_none()
             
             if existing_entity:
-                # Check if entity has embeddings, if not generate them
-                from app.models import Embedding
-                emb_check = select(Embedding).where(
-                    Embedding.source_type == "entity",
-                    Embedding.source_id == existing_entity.id,
-                    Embedding.user_id == user_id
-                )
-                emb_result = await self.session.execute(emb_check)
-                if not emb_result.scalar_one_or_none():
-                    # Entity exists but has no embeddings - generate them
-                    embedding_service = get_embedding_service()
-                    await embedding_service.generate_and_store_entity_embeddings(
-                        session=self.session,
-                        entity=existing_entity,
-                        user_id=user_id,
-                        force_regenerate=False
-                    )
-                    await self.session.flush()
+                # If it has wikidata_id, we're good. If not, maybe try to enrich?
+                if not existing_entity.wikidata_id:
+                    await self._enrich_entity_with_wikidata(existing_entity)
                 return existing_entity
             
-            # Create new entity
+            # 2. Semantic Match (Global) via Embeddings
+            embedding_service = get_embedding_service()
+            candidate_text = f"{name} - {description}"
+            
+            # Search globally (user_id=None)
+            semantic_matches = await embedding_service.search_embeddings(
+                session=self.session,
+                query_text=candidate_text,
+                user_id=None,
+                source_types=['entity'],
+                limit=3,
+                similarity_threshold=0.9  # High threshold for deduplication
+            )
+            
+            if semantic_matches:
+                match = semantic_matches[0]
+                logger.info(f"Semantic match found for '{name}': {match['text']} (score: {match['similarity_score']})")
+                
+                # Fetch the existing entity
+                ent_query = select(Entity).where(Entity.id == match['source_id'])
+                ent_result = await self.session.execute(ent_query)
+                matched_entity = ent_result.scalar_one_or_none()
+                
+                if matched_entity:
+                    if not matched_entity.wikidata_id:
+                        await self._enrich_entity_with_wikidata(matched_entity)
+                    return matched_entity
+            
+            # 3. Wikidata Anchoring for new entity
+            wikidata_id = None
+            wikidata_data = None
+            
+            wikidata_results = await self.wikidata_service.search_entities(name, limit=3)
+            if wikidata_results:
+                # Basic disambiguation: pick the best match based on label/description
+                # For now, just pick the first one if it's a good name match
+                best_match = wikidata_results[0]
+                wikidata_id = best_match.wikidata_id
+                wikidata_data = best_match
+            
+            # 4. Check if we already have this wikidata_id globally
+            if wikidata_id:
+                wd_query = select(Entity).where(Entity.wikidata_id == wikidata_id)
+                wd_result = await self.session.execute(wd_query)
+                wd_entity = wd_result.scalar_one_or_none()
+                if wd_entity:
+                    logger.info(f"Found existing entity by Wikidata ID: {wikidata_id}")
+                    return wd_entity
+            
+            # 5. Create new global entity
             new_entity = Entity(
-                name=entity_data['name'],
-                type=entity_data['type'],
-                description=entity_data['description'],
-                user_id=user_id
+                name=name,
+                type=entity_type,
+                description=description,
+                wikidata_id=wikidata_id,
+                wikidata_label=wikidata_data.label if wikidata_data else None,
+                wikidata_description=wikidata_data.description if wikidata_data else None,
+                wikidata_url=wikidata_data.url if wikidata_data else None,
+                aliases=wikidata_data.aliases if wikidata_data else [],
+                user_id=None # Global
             )
             
             self.session.add(new_entity)
             await self.session.flush()
             
-            # Generate embeddings for the new entity
-            embedding_service = get_embedding_service()
+            # Generate and store embedding for the new entity
             await embedding_service.generate_and_store_entity_embeddings(
                 session=self.session,
                 entity=new_entity,
-                user_id=user_id,
+                user_id="global", # Embeddings for global entities use "global" tag
                 force_regenerate=False
             )
             await self.session.flush()
@@ -175,6 +210,24 @@ class DspyEntityAdapter:
         except Exception as e:
             logger.error(f"Error finding/creating entity: {e}")
             return None
+
+    async def _enrich_entity_with_wikidata(self, entity: Entity) -> bool:
+        """Attempt to enrich an existing entity with Wikidata info"""
+        try:
+            wikidata_results = await self.wikidata_service.search_entities(entity.name, limit=1)
+            if wikidata_results:
+                match = wikidata_results[0]
+                entity.wikidata_id = match.wikidata_id
+                entity.wikidata_label = match.label
+                entity.wikidata_description = match.description
+                entity.wikidata_url = match.url
+                entity.aliases = match.aliases
+                await self.session.flush()
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error enriching entity {entity.id} with Wikidata: {e}")
+            return False
     
     async def _create_entity_document_relationship(
         self,

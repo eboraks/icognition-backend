@@ -318,7 +318,7 @@ class KnowledgeService:
         Hierarchy: Document -> Entity Type -> Entity Name
         """
         try:
-            # Get all documents for the user
+            # 1. Get all documents for the user
             doc_stmt = select(Document)
             if not settings.DISABLE_AUTH:
                 doc_stmt = doc_stmt.where(Document.user_id == user_id)
@@ -331,20 +331,22 @@ class KnowledgeService:
 
             doc_ids = [d.id for d in documents]
 
-            # Get all entities for the user
-            entity_stmt = select(Entity)
-            if not settings.DISABLE_AUTH:
-                entity_stmt = entity_stmt.where(Entity.user_id == user_id)
-                
-            entity_result = await self.session.execute(entity_stmt)
+            # 2. Get all entities linked to these documents
+            # This handles both local and global entities correctly
+            entity_join_stmt = (
+                select(Entity)
+                .join(EntityDocument, Entity.id == EntityDocument.entity_id)
+                .where(EntityDocument.document_id.in_(doc_ids))
+                .distinct()
+            )
+            
+            entity_result = await self.session.execute(entity_join_stmt)
             entities = entity_result.scalars().all()
             entities_dict = {e.id: e for e in entities}
+            entity_ids = list(entities_dict.keys())
 
-            # Get entity-document relationships with DISTINCT to avoid duplicates at DB level
-            entity_ids = [e.id for e in entities]
-            
-            if entity_ids and doc_ids:
-                # Use distinct on entity_id and document_id to get unique relationships
+            # 3. Get entity-document relationships for these specific entities and documents
+            if entity_ids:
                 ed_stmt = (
                     select(EntityDocument.entity_id, EntityDocument.document_id)
                     .where(
@@ -498,10 +500,9 @@ class KnowledgeService:
         """
         try:
             if entity_id:
-                # Get entity information
+                # Get entity information - we don't filter by user_id on Entity anymore
+                # instead we ensure it's linked to a document the user owns (below)
                 entity_stmt = select(Entity).where(Entity.id == entity_id)
-                if not settings.DISABLE_AUTH:
-                    entity_stmt = entity_stmt.where(Entity.user_id == user_id)
                 entity_result = await self.session.execute(entity_stmt)
                 entity = entity_result.scalar_one_or_none()
 
@@ -722,8 +723,6 @@ class KnowledgeService:
             if action_id == "learn_more" and entity_id:
                 # Get entity information
                 entity_stmt = select(Entity).where(Entity.id == entity_id)
-                if not settings.DISABLE_AUTH:
-                    entity_stmt = entity_stmt.where(Entity.user_id == user_id)
                 entity_result = await self.session.execute(entity_stmt)
                 entity = entity_result.scalar_one_or_none()
 

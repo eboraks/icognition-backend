@@ -836,7 +836,8 @@ class EmbeddingService:
                 f"1 - (e.vector <=> '{vector_str}'::vector) >= :threshold"
             ]
             
-            if not settings.DISABLE_AUTH:
+            # Filter by user_id only if provided and auth is not disabled
+            if user_id is not None and not settings.DISABLE_AUTH:
                 where_clauses.append("e.user_id = :user_id")
             
             where_clause_str = " AND ".join(where_clauses)
