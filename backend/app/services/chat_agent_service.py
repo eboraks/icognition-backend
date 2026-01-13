@@ -9,13 +9,15 @@ from contextlib import AbstractAsyncContextManager
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
 from langchain_core.messages import HumanMessage, AIMessage
-from langchain_core.tools import tool
+from langchain_core.tools import tool, Tool
+from langchain_google_community import GoogleSearchAPIWrapper
 from sqlalchemy.ext.asyncio import AsyncSession
 from tenacity import RetryError
 
 from app.db.database import get_session, get_database_url
 from app.services.chat_session_service import ChatSessionService
 from app.services.document_service import DocumentService
+from app.services.prompt_service import PromptService
 
 logger = get_logger(__name__)
 
@@ -262,7 +264,6 @@ class ChatAgentService:
             # Create LangGraph ReAct agent with checkpointer for memory
             try:
                 # Try to get system prompt from database, fallback to hardcoded
-                from app.services.prompt_service import PromptService
                 prompt_service = PromptService(db_session)
                 db_prompt = await prompt_service.get_latest_prompt("react_agent_system")
                 
@@ -273,22 +274,63 @@ class ChatAgentService:
                     # Fallback to hardcoded prompt
                     system_prompt = (
                         "You are a helpful research assistant that can answer questions using the user's document library. "
-                        "When users ask questions, use the retrieve_documents_tool to find relevant documents from their library. "
-                        "IMPORTANT: After retrieving documents, you must synthesize the information and provide a comprehensive, "
-                        "natural-language answer to the user's question. Do NOT simply repeat the tool output verbatim. "
-                        "Use the retrieved document content to craft a clear, well-structured response that directly answers "
-                        "the user's question. If the documents don't contain relevant information, let the user know clearly. "
-                        "The tool returns cleaned text content - use it to inform your answer. Always cite document titles and URLs "
-                        "when referencing specific documents."
+                        "\n\nYour primary goal is to help the user understand and analyze their documents. You have two tools:"
+                        "\n1. `retrieve_documents_tool`: Use this to find relevant information from the user's personal documents, articles, or bookmarks. This is your primary source of truth."
+                        "\n2. `google_search_tool`: Use this ONLY to augment or validate information found in the documents, or to provide necessary context that helps explain the document's content. GROUND your search queries in the subject of the document and the current conversation. Do NOT use it for general, unrelated AI chat."
+                        "\n\nWhen answering:"
+                        "\n- ALWAYS prioritize information from the user's library."
+                        "\n- Use Google Search to verify facts mentioned in the documents or to find updated information if requested (e.g., 'Has this legislation changed since this article was written?')."
+                        "\n- Synthesize information from both sources, clearly distinguishing what comes from the library versus the web."
+                        "\n- Provide a comprehensive, natural-language answer. Avoid verbatim tool output."
+                        "\n- Always cite specific document titles and URLs when referencing the library."
+                        "\n- If the documents don't contain relevant information and it's outside the scope of augmenting their content, inform the user clearly rather than just searching the web for a general answer."
                     )
                     logger.info(f"[Session {session_id}] Using fallback hardcoded system prompt")
                 
+                # Initialize Google Search tool if configured
+                tools = [retrieve_tool]
+                if settings.GOOGLE_SEARCH_API and settings.GOOGLE_CSE_ID:
+                    try:
+                        search = GoogleSearchAPIWrapper(
+                            google_api_key=settings.GOOGLE_SEARCH_API,
+                            google_cse_id=settings.GOOGLE_CSE_ID,
+                            k=5 # Limit to top 5 results
+                        )
+                        def search_with_metadata(query: str) -> str:
+                            """Wrapper to include titles and links in search results."""
+                            # DEBUG BREAKPOINT: Put a breakpoint on the line below to see raw results
+                            results = search.results(query, num_results=5)
+                            if not results:
+                                return f"No Google search results found for: {query}"
+                            
+                            formatted = []
+                            for i, r in enumerate(results, 1):
+                                title = r.get("title", "No Title")
+                                link = r.get("link", "No Link")
+                                snippet = r.get("snippet", "No Snippet")
+                                formatted.append(f"[{i}] {title}\nURL: {link}\nSnippet: {snippet}\n")
+                            
+                            logger.info(f"Google Search returned {len(results)} results for query: {query}")
+                            return "\n---\n".join(formatted)
+
+                        google_search_tool = Tool(
+                            name="google_search_tool",
+                            description="Searches Google for recent results to validate or augment document context.",
+                            func=search_with_metadata,
+                        )
+                        tools.append(google_search_tool)
+                        logger.info(f"[Session {session_id}] Google Search tool added to agent")
+                    except Exception as e:
+                        logger.error(f"Failed to initialize Google Search tool: {e}")
+                else:
+                    logger.warning(f"[Session {session_id}] Google Search tool NOT added (missing API key or CSE ID)")
+
                 logger.info(f"[Session {session_id}] Getting checkpointer...")
                 checkpointer = await get_checkpointer()
                 logger.info(f"[Session {session_id}] Checkpointer obtained, creating ReAct agent...")
                 agent = create_react_agent(
                     model=llm,
-                    tools=[retrieve_tool],
+                    tools=tools,
                     prompt=system_prompt,
                     checkpointer=checkpointer
                 )

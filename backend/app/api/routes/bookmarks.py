@@ -1541,7 +1541,8 @@ async def get_bookmark(
             processing_status=bookmark.processing_status,
             created_at=bookmark.created_at,
             updated_at=bookmark.updated_at,
-            user_id=bookmark.user_id
+            user_id=bookmark.user_id,
+            document_id=bookmark.document_id
         )
     except HTTPException:
         raise
@@ -1604,7 +1605,8 @@ async def update_bookmark(
             processing_status=updated_bookmark.processing_status,
             created_at=updated_bookmark.created_at,
             updated_at=updated_bookmark.updated_at,
-            user_id=updated_bookmark.user_id
+            user_id=updated_bookmark.user_id,
+            document_id=updated_bookmark.document_id
         )
     except HTTPException:
         raise
@@ -1677,7 +1679,8 @@ async def get_bookmarks_by_url(
                 processing_status=bm.processing_status,
                 created_at=bm.created_at,
                 updated_at=bm.updated_at,
-                user_id=bm.user_id
+                user_id=bm.user_id,
+                document_id=bm.document_id
             )
             for bm in bookmarks
         ]

@@ -86,15 +86,24 @@
             </div>
         </div>
 
-        <!-- Document summary interface container -->
-        <div v-if="document_summary" class="document-interface-container" tabindex="-1">
-            <div class="page-info p-2 bg-primary-50" tabindex="-1">
+        <!-- Document summary interface container (Replaced with Chat Interface) -->
+        <div v-if="document_summary" class="document-interface-container h-full flex flex-column custom-chat-height" tabindex="-1">
+            <div class="page-info p-2 bg-primary-50 flex-none" tabindex="-1">
                 <div class="flex align-items-center justify-content-between" tabindex="-1">
-                    <span class="text-sm text-primary-800">{{ getCurrentPageTitle() }}</span>
-                    <Button tabindex="2" @click="clearCurrentChat" icon="pi pi-trash" class="p-button-text p-button-sm p-button-danger"></Button>
+                    <span class="text-sm text-primary-800 white-space-nowrap overflow-hidden text-overflow-ellipsis mr-2" :title="getCurrentPageTitle()">{{ getCurrentPageTitle() }}</span>
+                    <Button tabindex="2" @click="clearCurrentChat" icon="pi pi-trash" class="p-button-text p-button-sm p-button-danger flex-none"></Button>
                 </div>
             </div>
-            <div class="summary-container p-3" tabindex="-1">
+            
+            <div v-if="currentChatSessionId" class="chat-container flex-grow-1 overflow-hidden" tabindex="-1">
+                <ChatInterface :key="currentChatSessionId" :sessionId="currentChatSessionId" :initialSummary="document_summary" />
+            </div>
+            <div v-else-if="isCreatingChatSession" class="flex align-items-center justify-content-center p-4">
+                 <ProgressSpinner style="width:40px;height:40px" strokeWidth="4" />
+                 <span class="ml-2 text-sm text-600">Starting chat...</span>
+            </div>
+            <!-- Fallback if chat fails to start but summary exists -->
+            <div v-else class="summary-container p-3" tabindex="-1">
                 <div class="document-title mb-2" tabindex="-1">
                     <h3 class="text-lg font-bold">{{ document_summary.title }}</h3>
                 </div>
@@ -102,11 +111,8 @@
                     <h4 class="text-md font-semibold mb-1">Summary</h4>
                     <p class="text-sm" v-html="formatUrlsAsLinks(document_summary.summary)"></p>
                 </div>
-                <div v-if="document_summary.bullet_points && document_summary.bullet_points.length > 0" class="document-bullets" tabindex="-1">
-                    <h4 class="text-md font-semibold mb-1">Key Points</h4>
-                    <ul class="bullet-list">
-                        <li v-for="(point, index) in document_summary.bullet_points" :key="index" class="text-sm mb-1" v-html="formatUrlsAsLinks(point)"></li>
-                    </ul>
+                 <div class="text-center mt-3">
+                    <Button label="Start Chat" @click="initializeChatSession(cleanUrl(active_tab.url), documentIdsByUrl[cleanUrl(active_tab.url)])" class="p-button-sm" />
                 </div>
             </div>
         </div>
@@ -223,13 +229,14 @@
 </template>
 <script setup>
 import { ref, onMounted, watch, nextTick, onUnmounted } from 'vue'
-import { cleanUrl, CommunicationEnum, formatUrlsAsLinks, detectPageType } from '../../public/js/composables/utils.js';
+import { cleanUrl, CommunicationEnum, formatUrlsAsLinks, detectPageType } from '../composables/utils.js';
 import Button from 'primevue/button';
-import DocSummary from '../../public/js/components/DocSummary.vue';
-import GoogleLoginButton from '../../public/js/components/GoogleLoginButton.vue';
+import DocSummary from './DocSummary.vue';
+import ChatInterface from './ChatInterface.vue';
+import GoogleLoginButton from './GoogleLoginButton.vue';
 import ProgressBar from 'primevue/progressbar';
 import Message from 'primevue/message';
-import useAuth from '../../public/js/composables/useAuth.js';
+import useAuth from '../composables/useAuth.js';
 import Textarea from 'primevue/textarea';
 import ProgressSpinner from 'primevue/progressspinner';
 import Dialog from 'primevue/dialog';
@@ -303,6 +310,10 @@ const summariesByUrl = ref({});
 const bookmarksByUrl = ref({});
 // Store document IDs by URL
 const documentIdsByUrl = ref({});
+// Store chat session IDs by URL
+const chatSessionsByUrl = ref({});
+const currentChatSessionId = ref(null);
+const isCreatingChatSession = ref(false);
 
 // Add these new refs for autocomplete functionality
 const showAutocomplete = ref(false);
@@ -329,7 +340,7 @@ const buttonHasFocus = ref(false);
 
 // Add refs for settings dialog
 const showSettings = ref(false);
-const selectedEnvironment = ref('staging');
+const selectedEnvironment = ref('development');
 
 // Add refs for URL warning dialog
 const showUrlWarning = ref(false);
@@ -568,6 +579,7 @@ const handleTabChange = (tab) => {
         if (documentIdsByUrl.value[currentUrl]) {
             status.value = AppStatusEnum.DOCUMENT_READY;
             console.log('Setting status to DOCUMENT_READY');
+            initializeChatSession(currentUrl, documentIdsByUrl.value[currentUrl]);
         }
     } else if (user.value) {
         // If no saved chat but user is logged in, check for bookmarks
@@ -582,6 +594,11 @@ const handleTabChange = (tab) => {
         console.log('No user logged in, setting status to UNAUTHENTICATED');
     }
     
+    // Attempt to initialize chat session if we have a document ID
+    if (documentIdsByUrl.value[currentUrl]) {
+        initializeChatSession(currentUrl, documentIdsByUrl.value[currentUrl]);
+    }
+
     console.log('Final status after tab change:', status.value.state);
 };
 
@@ -600,7 +617,10 @@ watch(user, (after, before) => {
         // Clear all saved summaries when user logs out
         summariesByUrl.value = {};
         bookmarksByUrl.value = {};
+        bookmarksByUrl.value = {};
         documentIdsByUrl.value = {};
+        chatSessionsByUrl.value = {};
+        currentChatSessionId.value = null;
     }
 });
 
@@ -670,7 +690,32 @@ const searchBookmarksByUrl = async (url) => {
                         
                         // Cache the summary
                         summariesByUrl.value[cleanedUrl] = {...document_summary.value};
+                        bookmarksByUrl.value[cleanedUrl] = {...bookmark.value};
                         documentIdsByUrl.value[cleanedUrl] = response.document.id;
+                        
+                        // Initialize chat session
+                        initializeChatSession(cleanedUrl, response.document.id);
+                    } else {
+                        // Use the freshest bookmark data if available, otherwise original local one
+                        const currentBookmark = (response && response.bookmark) ? response.bookmark : found;
+                        const docId = currentBookmark?.document_id || found?.document_id;
+
+                        if (docId) {
+                            console.log('Using cached document ID to initialize chat');
+                            doc.value = { id: docId, title: currentBookmark.title || found.title };
+                            status.value = AppStatusEnum.DOCUMENT_READY;
+                            
+                            const bookmarkToSave = {...currentBookmark};
+                            if (!bookmarkToSave.document_id && docId) {
+                                bookmarkToSave.document_id = docId;
+                            }
+                            bookmarksByUrl.value[cleanedUrl] = bookmarkToSave;
+                            
+                            documentIdsByUrl.value[cleanedUrl] = docId;
+                            initializeChatSession(cleanedUrl, docId);
+                        } else {
+                            status.value = AppStatusEnum.SERVER_READY;
+                        }
                     }
                 } catch (error) {
                     console.error('Error fetching document from server:', error);
@@ -681,8 +726,66 @@ const searchBookmarksByUrl = async (url) => {
         }
 
         // If we reach here, no bookmark was found locally
-        console.log('No bookmarks found in local storage, setting SERVER_READY status');
-        status.value = AppStatusEnum.SERVER_READY;
+        console.log('No bookmarks found in local storage, checking server via background...');
+        
+        try {
+            const response = await chrome.runtime.sendMessage({ 
+                name: 'check-for-bookmarks',
+                tab: { url: url, id: active_tab.value?.id }
+            });
+            
+            if (response && response.bookmark) {
+                console.log('Found bookmark on server:', response.bookmark);
+                bookmark.value = response.bookmark;
+                
+                // Fetch document details for this server-found bookmark
+                console.log('Fetching document details for server bookmark:', response.bookmark.id);
+                const docResponse = await chrome.runtime.sendMessage({
+                    name: 'fetch-bookmark-document',
+                    bookmarkId: response.bookmark.id
+                });
+                
+                if (docResponse && docResponse.success && docResponse.document) {
+                    console.log('Got document from server:', docResponse.document);
+                    document_summary.value = {
+                        title: docResponse.document.title,
+                        summary: docResponse.document.ai_is_about,
+                        bullet_points: docResponse.document.ai_bullet_points
+                    };
+                    doc.value = docResponse.document;
+                    status.value = AppStatusEnum.DOCUMENT_READY;
+                    
+                    // Cache the summary
+                    summariesByUrl.value[cleanedUrl] = {...document_summary.value};
+                    bookmarksByUrl.value[cleanedUrl] = {...bookmark.value}; 
+                    documentIdsByUrl.value[cleanedUrl] = docResponse.document.id;
+                    
+                    // Initialize chat session
+                    initializeChatSession(cleanedUrl, docResponse.document.id);
+                } else {
+                     // Use the freshest bookmark data if available, otherwise original
+                     const currentBookmark = (docResponse && docResponse.bookmark) ? docResponse.bookmark : response.bookmark;
+                     
+                     if (currentBookmark && currentBookmark.document_id) {
+                         console.log('Using bookmark document ID fallback');
+                         doc.value = { id: currentBookmark.document_id, title: currentBookmark.title };
+                         status.value = AppStatusEnum.DOCUMENT_READY;
+                         
+                         bookmarksByUrl.value[cleanedUrl] = {...currentBookmark};
+                         documentIdsByUrl.value[cleanedUrl] = currentBookmark.document_id;
+                         initializeChatSession(cleanedUrl, currentBookmark.document_id);
+                     } else {
+                         status.value = AppStatusEnum.SERVER_READY;
+                     }
+                }
+            } else {
+                console.log('No bookmark found on server');
+                status.value = AppStatusEnum.SERVER_READY;
+            }
+        } catch (err) {
+            console.error('Error checking server for bookmarks:', err);
+            status.value = AppStatusEnum.SERVER_READY;
+        }
 
         } catch (error) {
             console.error('Error searching bookmarks by URL:', error);
@@ -699,6 +802,7 @@ const searchBookmarksByUrl = async (url) => {
             }
     } finally {
         // Only set isSearchingBookmark to false if we're not in DOCUMENT_READY state
+        // And not transitioning to another loading state
         if (status.value.state !== AppStatusEnum.DOCUMENT_READY.state) {
             isSearchingBookmark.value = false;
         }
@@ -756,6 +860,52 @@ const handleRetryConnection = async () => {
         isRetryingConnection.value = false;
     }
 }
+
+// Initialize chat session
+const initializeChatSession = async (url, docId) => {
+    if (!docId) return;
+    
+    // Check cache first
+    if (chatSessionsByUrl.value[url]) {
+        console.log('Using cached chat session:', chatSessionsByUrl.value[url]);
+        currentChatSessionId.value = chatSessionsByUrl.value[url];
+        return;
+    }
+    
+    isCreatingChatSession.value = true;
+    try {
+        console.log('Creating new chat session for doc:', docId);
+        const response = await chrome.runtime.sendMessage({
+            name: 'create-chat-session',
+            data: {
+                title: 'Extension Chat', // Backend might generate a better one or we can update it
+                scope_type: 'document',
+                scope_id: docId
+            }
+        });
+        
+        if (response && response.success) {
+            console.log('Chat session created:', response.data);
+            chatSessionsByUrl.value[url] = response.data.id;
+            currentChatSessionId.value = response.data.id;
+        } else {
+            console.error('Failed to create chat session:', response.error);
+        }
+    } catch (error) {
+        console.error('Error initializing chat:', error);
+    } finally {
+        isCreatingChatSession.value = false;
+    }
+};
+
+// Add CSS to ensure chat panel takes specific height
+const style = document.createElement('style');
+style.textContent = `
+  .custom-chat-height {
+    height: calc(100vh - 8rem) !important; /* Adjust based on header height */
+  }
+`;
+document.head.appendChild(style);
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     console.log('onMessage:', request.name, request.data || '');
@@ -874,6 +1024,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             const cleanedUrl = cleanUrl(active_tab.value.url);
             documentIdsByUrl.value[cleanedUrl] = documentId;
             summariesByUrl.value[cleanedUrl] = {...document_summary.value};
+            
+            // Auto-start chat session
+            initializeChatSession(cleanedUrl, documentId);
             
             // Update bookmark with document_id if we have the bookmark
             if (bookmark.value && bookmark.value.id) {
@@ -1003,11 +1156,13 @@ const confirmProceedWithBookmark = () => {
 
 const createBookmark = async () => {
     progressPercent.value = 5;
-    status.value = AppStatusEnum.PROCESSING
-    statusMessage.value = AppStatusEnum.PROCESSING.message
-    
+    // Only set to processing if we aren't already ready (shouldn't happen here usually but good practice)
+    if (status.value.state !== AppStatusEnum.DOCUMENT_READY.state) {
+        status.value = AppStatusEnum.PROCESSING
+        statusMessage.value = AppStatusEnum.PROCESSING.message
+    }
 
-    chrome.runtime.sendMessage({name: 'bookmark-page', tab: active_tab.value}).then((response) => {
+    chrome.runtime.sendMessage({name: 'bookmark-page', tab: active_tab.value}).then(async (response) => {
         console.log('handleBookmark -> response:', response)
 
         if (!response) {
@@ -1016,36 +1171,65 @@ const createBookmark = async () => {
             return;
         }
 
-        if (response.status === 201) {
+        if (response.status === 201 || response.status === 200) {
             // Clean the URL in the bookmark before storing
             const cleanedBookmark = { ...response.content };
             if (cleanedBookmark.url) {
                 cleanedBookmark.url = cleanUrl(cleanedBookmark.url);
             }
             bookmark.value = cleanedBookmark;
+            
+            // Save bookmark for current URL
+            if (active_tab.value && active_tab.value.url) {
+                bookmarksByUrl.value[cleanUrl(active_tab.value.url)] = {...bookmark.value};
+            }
+
+            // Check if we already received the document via SSE (Race condition fix)
+            if (status.value.state === AppStatusEnum.DOCUMENT_READY.state) {
+                console.log('Document already ready (SSE received before HTTP response), skipping PROCESSING state');
+                return;
+            }
+
+            // If bookmark is already processed but we don't have the document yet, fetch it
+            if (cleanedBookmark.is_processed && cleanedBookmark.processing_status === 'completed') {
+                console.log('Bookmark is already processed, fetching document details...');
+                try {
+                    const docResponse = await chrome.runtime.sendMessage({
+                        name: 'fetch-bookmark-document',
+                        bookmarkId: cleanedBookmark.id
+                    });
+                    
+                    if (docResponse && docResponse.success && docResponse.document) {
+                         console.log('Fetched document details:', docResponse.document);
+                         // Use the NEW_DOC handler logic
+                         doc.value = docResponse.document;
+                         document_summary.value = {
+                            title: docResponse.document.title,
+                            summary: docResponse.document.ai_is_about,
+                            bullet_points: docResponse.document.ai_bullet_points
+                         };
+                         progressPercent.value = 100;
+                         status.value = AppStatusEnum.DOCUMENT_READY;
+                         
+                         // Initialize chat
+                         if (active_tab.value && active_tab.value.url) {
+                            const cleanedUrl = cleanUrl(active_tab.value.url);
+                            documentIdsByUrl.value[cleanedUrl] = docResponse.document.id;
+                            summariesByUrl.value[cleanedUrl] = {...document_summary.value};
+                            initializeChatSession(cleanedUrl, docResponse.document.id);
+                         }
+                         return;
+                    }
+                } catch (err) {
+                    console.error('Failed to fetch document:', err);
+                    // Fall through to waiting state logic
+                }
+            }
+
             status.value = AppStatusEnum.PROCESSING
             console.log('Bookmark created, waiting for processing. Bookmark ID:', cleanedBookmark.id);
             console.log('Progress will be updated via SSE messages');
             
-            // Save bookmark for current URL
-            if (active_tab.value && active_tab.value.url) {
-                bookmarksByUrl.value[cleanUrl(active_tab.value.url)] = {...bookmark.value};
-            }
-        } else if (response.status === 200) {
-            // Clean the URL in the bookmark before storing
-            const cleanedBookmark = { ...response.content };
-            if (cleanedBookmark.url) {
-                cleanedBookmark.url = cleanUrl(cleanedBookmark.url);
-            }
-            bookmark.value = cleanedBookmark;
-            
-            // Save bookmark for current URL
-            if (active_tab.value && active_tab.value.url) {
-                bookmarksByUrl.value[cleanUrl(active_tab.value.url)] = {...bookmark.value};
-            }
-            
-            // Document will be sent via WebSocket when ready
-            status.value = AppStatusEnum.PROCESSING
         } else {
             //If the status is not server down, that is the reason for the error
             if (status.value.state !== AppStatusEnum.SERVER_DOWN.state) {

@@ -25,13 +25,13 @@ export default defineConfig(({ command, mode }) => {
       rollupOptions: {
         input: {
           main: resolve(__dirname, 'index.html'),
-          background: resolve(__dirname, 'public/js/background.js'),
-          utils: resolve(__dirname, 'public/js/composables/utils.js')
+          background: resolve(__dirname, 'src/background.js'),
+          utils: resolve(__dirname, 'src/composables/utils.js')
         },
         output: {
           entryFileNames: 'js/[name].js',
           chunkFileNames: 'js/[name].js',
-          assetFileNames: ({name}) => {
+          assetFileNames: ({ name }) => {
             return name.endsWith('.js') ? 'js/[name][extname]' : 'assets/[name][extname]';
           }
         }

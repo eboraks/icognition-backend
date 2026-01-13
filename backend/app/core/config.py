@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     GEMINI_FLASH_LITE_MODEL: str = os.getenv("GEMINI_FLASH_LITE", "models/gemini-2.5-flash-lite")
     GEMINI_EMBEDDING_MODEL: str = os.getenv("GEMINI_EMBEDDING_MODEL", "models/text-embedding-004")
     
+    # Google Search Configuration
+    GOOGLE_SEARCH_API: Optional[str] = os.getenv("GOOGLE_SEARCH_API")
+    GOOGLE_CSE_ID: Optional[str] = os.getenv("GOOGLE_CSE_ID")
+    
     # Google Cloud Storage Configuration
     GCS_BUCKET_NAME: Optional[str] = os.getenv("GCS_BUCKET_NAME")
     GCS_PROJECT_ID: Optional[str] = os.getenv("GCS_PROJECT_ID")

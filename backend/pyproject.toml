@@ -93,6 +93,7 @@ dependencies = [
     "langchain-text-splitters>=0.3.0",
     "langgraph-checkpoint-postgres>=3.0.0",
     "langsmith",
+    "langchain-google-community>=3.0.4",
 ]
 
 [project.optional-dependencies]
