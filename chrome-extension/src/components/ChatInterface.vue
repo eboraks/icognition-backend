@@ -25,24 +25,14 @@
       </div>
     </ScrollPanel>
     <div class="chat-input-container" v-if="sessionId">
-      <AutoComplete
+      <TypedChatInput
         v-model="inputMessage"
-        :suggestions="suggestions"
-        @complete="onSearch"
         placeholder="Ask a follow-up question..."
-        class="flex-1 w-full"
-        @keydown.enter="sendMessage"
+        :is-extension="true"
+        :session-id="sessionId"
         :disabled="loading"
-        :delay="100"
-        :minLength="1"
-        forceSelection="false"
-      >
-        <template #option="slotProps">
-            <div class="flex align-items-center">
-                <div>{{ slotProps.option }}</div>
-            </div>
-        </template>
-      </AutoComplete>
+        @send="sendMessage"
+      />
       <Button
         icon="pi pi-send"
         rounded
@@ -56,7 +46,7 @@
 <script setup>
 import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import Button from 'primevue/button';
-import AutoComplete from 'primevue/autocomplete';
+import TypedChatInput from './TypedChatInput.vue';
 import ScrollPanel from 'primevue/scrollpanel';
 import ProgressSpinner from 'primevue/progressspinner';
 

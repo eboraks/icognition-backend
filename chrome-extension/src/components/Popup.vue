@@ -735,13 +735,16 @@ const searchBookmarksByUrl = async (url) => {
                 
                 // Try to fetch the document details from server
                 try {
-                    console.log('Fetching document details for bookmark:', found.id);
-                    const response = await chrome.runtime.sendMessage({
-                        name: 'fetch-bookmark-document',
-                        bookmarkId: found.id
-                    });
-                    
-                    if (response && response.success && response.document) {
+                    if (!found.id) {
+                        console.warn('Cannot fetch document details: bookmark ID is missing in local storage', found);
+                    } else {
+                        console.log('Fetching document details for bookmark:', found.id);
+                        const response = await chrome.runtime.sendMessage({
+                            name: 'fetch-bookmark-document',
+                            bookmarkId: found.id
+                        });
+                        
+                        if (response && response.success && response.document) {
                         console.log('Got document from server:', response.document);
                         document_summary.value = {
                             title: response.document.title,
@@ -758,7 +761,7 @@ const searchBookmarksByUrl = async (url) => {
                         
                         // Initialize chat session
                         initializeChatSession(cleanedUrl, response.document.id);
-                    } else if (response && !response.success && (response.error?.status === 404 || response.error?.detail === 'Bookmark not found')) {
+                    } else if (response && !response.success && (response.status === 404 || response.error === 'Bookmark not found')) {
                         // CRITICAL: If bookmark not found on server, clear stale local data
                         console.log('Stale bookmark detected, clearing local memory for:', cleanedUrl);
                         delete summariesByUrl.value[cleanedUrl];
@@ -804,11 +807,10 @@ const searchBookmarksByUrl = async (url) => {
                             }
                             
                             initializeChatSession(cleanedUrl, docId);
-                        } else {
-                            status.value = AppStatusEnum.SERVER_READY;
                         }
                     }
-                } catch (error) {
+                }
+            } catch (error) {
                     console.error('Error fetching document from server:', error);
                     // Still show the bookmark but without document summary
                 }
@@ -830,11 +832,14 @@ const searchBookmarksByUrl = async (url) => {
                 bookmark.value = response.bookmark;
                 
                 // Fetch document details for this server-found bookmark
-                console.log('Fetching document details for server bookmark:', response.bookmark.id);
-                const docResponse = await chrome.runtime.sendMessage({
-                    name: 'fetch-bookmark-document',
-                    bookmarkId: response.bookmark.id
-                });
+                if (!response.bookmark.id) {
+                    console.warn('Found bookmark on server but it has no ID:', response.bookmark);
+                } else {
+                    console.log('Fetching document details for server bookmark:', response.bookmark.id);
+                    const docResponse = await chrome.runtime.sendMessage({
+                        name: 'fetch-bookmark-document',
+                        bookmarkId: response.bookmark.id
+                    });
                 
                 if (docResponse && docResponse.success && docResponse.document) {
                     console.log('Got document from server:', docResponse.document);
@@ -876,9 +881,8 @@ const searchBookmarksByUrl = async (url) => {
                          console.log('Saved server fallback summary to cache:', cleanedUrl);
                          
                          initializeChatSession(cleanedUrl, currentBookmark.document_id);
-                     } else {
-                         status.value = AppStatusEnum.SERVER_READY;
-                     }
+                        }
+                    }
                 }
             } else {
                 console.log('No bookmark found on server');
@@ -1780,12 +1784,15 @@ const clearCurrentChat = async () => {
 }
 
 function handleError(errorMessage) {
+  // Ensure errorMessage is a string for display
+  const displayMsg = (typeof errorMessage === 'string') ? errorMessage : JSON.stringify(errorMessage);
+  
   // Set error status and messages
   status.value = {
     ...AppStatusEnum.ERROR,
-    message: errorMessage  // Set the message in the status object
+    message: displayMsg  // Set the message in the status object
   };
-  statusMessage.value = errorMessage;  // Also set the statusMessage for consistency
+  statusMessage.value = displayMsg;  // Also set the statusMessage for consistency
   
   // Clear document summary on error
   document_summary.value = null;

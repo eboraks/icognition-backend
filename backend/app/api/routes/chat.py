@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
-from typing import List
+from typing import List, Optional
 from app.services.chat_session_service import ChatSessionService, get_chat_session_service
 from app.core.user_context import UserContext, get_authenticated_user_context
 from app.models import ChatSession, ChatMessage
@@ -300,6 +300,29 @@ async def stream_chat_response(
             "X-Accel-Buffering": "no",  # Disable buffering in nginx
         }
     )
+
+class ChatSuggestRequest(BaseModel):
+    text: str
+    session_id: int
+    context: Optional[str] = None
+
+@router.post("/sessions/{session_id}/suggest")
+async def get_chat_suggestion(
+    session_id: int,
+    request_data: ChatSuggestRequest,
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    chat_agent_service: ChatAgentService = Depends(get_chat_agent_service),
+):
+    """
+    Get a Gmail-style ghost text completion suggestion for the current input.
+    """
+    suggestion = await chat_agent_service.get_suggestion(
+        user_id=user_context.user.id,
+        session_id=session_id,
+        current_text=request_data.text,
+        context=request_data.context
+    )
+    return {"prediction": suggestion}
 
 @router.websocket("/ws/{session_id}/{user_id}")
 async def chat_websocket_endpoint(

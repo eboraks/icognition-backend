@@ -51,6 +51,7 @@ const Endpoints = {
     chat_sessions: '/api/v1/chat/sessions',
     chat_messages: '/api/v1/chat/sessions/{sessionId}/messages',
     chat_stream: '/api/v1/chat/sessions/{sessionId}/stream',
+    chat_suggest: '/api/v1/chat/sessions/{sessionId}/suggest',
 }
 
 // Listen to changes in storage and if session_user changes, refresh the bookmarks cache, or delete the cache if the user logs out
@@ -111,7 +112,8 @@ async function getFirebaseIdToken() {
             const newToken = await refreshFirebaseToken();
             return newToken;
         } catch (error) {
-            console.error('getFirebaseIdToken -> Failed to refresh token:', error);
+            const errMsg = error?.message || error?.toString() || 'Unknown error';
+            console.error('getFirebaseIdToken -> Failed to refresh token:', errMsg);
             return null;
         }
     }
@@ -565,15 +567,17 @@ const searchBookmarksByUrl = async (user_id, url) => {
         });
 
         if (response.status === 404) {
-            const error = await response.json();
-            console.log('searchBookmarkByUrl -> 404: ', error);
-            return { bookmark: undefined, error: error };
+            const errorJson = await response.json();
+            const errorMsg = (typeof errorJson.detail === 'string') ? errorJson.detail : JSON.stringify(errorJson.detail || errorJson);
+            console.log('searchBookmarkByUrl -> 404: ', errorMsg);
+            return { bookmark: undefined, error: errorMsg };
         }
 
         if (!response.ok) {
-            const error = await response.json();
-            console.error('searchBookmarkByUrl -> error response: ', error);
-            return { bookmark: undefined, error: error };
+            const errorJson = await response.json();
+            const errorMsg = (typeof errorJson.detail === 'string') ? errorJson.detail : JSON.stringify(errorJson.detail || errorJson);
+            console.error('searchBookmarkByUrl -> error response: ', errorMsg);
+            return { bookmark: undefined, error: errorMsg };
         }
 
         const data = await response.json();
@@ -640,7 +644,8 @@ async function refreshBookmarksCache(user_uid) {
         // Then store the new bookmarks
         storeBookmarks(bookmarks);
     } catch (error) {
-        console.error('refreshBookmarksCache -> error: ', error);
+        const errMsg = error?.message || error?.toString() || 'Unknown error';
+        console.error(`refreshBookmarksCache -> error from ${base_url}:`, errMsg);
     }
 }
 
@@ -655,6 +660,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     if (request.name === 'create-chat-session') {
         handleCreateChatSession(request.data).then(sendResponse);
+        return true;
+    }
+
+    if (request.name === 'get-chat-suggestion') {
+        handleGetChatSuggestion(request.data).then(sendResponse);
         return true;
     }
 
@@ -701,8 +711,9 @@ async function handleCreateChatSession(data) {
         const session = await response.json();
         return { success: true, data: session };
     } catch (error) {
-        console.error('Error creating chat session:', error);
-        return { success: false, error: error.message };
+        const errMsg = error?.message || error?.toString() || 'Unknown error';
+        console.error(`Error creating chat session at ${base_url}:`, errMsg);
+        return { success: false, error: errMsg };
     }
 }
 
@@ -726,8 +737,9 @@ async function handleSendChatMessage(data) {
         const message = await response.json();
         return { success: true, data: message };
     } catch (error) {
-        console.error('Error sending chat message:', error);
-        return { success: false, error: error.message };
+        const errMsg = error?.message || error?.toString() || 'Unknown error';
+        console.error(`Error sending chat message to ${base_url}:`, errMsg);
+        return { success: false, error: errMsg };
     }
 }
 
@@ -806,6 +818,34 @@ async function handleStreamChatResponse(data) {
     }
 }
 
+async function handleGetChatSuggestion(data) {
+    try {
+        console.log('handleGetChatSuggestion:', data);
+        const url = `${base_url}${Endpoints.chat_suggest.replace('{sessionId}', data.sessionId)}`;
+
+        const response = await makeAuthenticatedRequest(url, {
+            method: 'POST',
+            body: JSON.stringify({
+                text: data.text,
+                session_id: data.sessionId,
+                context: data.context
+            })
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to get suggestion: ${response.status} - ${errorText}`);
+        }
+
+        const result = await response.json();
+        return { success: true, data: result };
+    } catch (error) {
+        const errMsg = error?.message || error?.toString() || 'Unknown error';
+        console.error(`Error getting chat suggestion from ${base_url}:`, errMsg);
+        return { success: false, error: errMsg };
+    }
+}
+
 async function handleGetChatMessages(data) {
     try {
         console.log('handleGetChatMessages:', data);
@@ -823,8 +863,9 @@ async function handleGetChatMessages(data) {
         const messages = await response.json();
         return { success: true, data: messages };
     } catch (error) {
-        console.error('Error getting chat messages:', error);
-        return { success: false, error: error.message };
+        const errMsg = error?.message || error?.toString() || 'Unknown error';
+        console.error(`Error getting chat messages from ${base_url}:`, errMsg);
+        return { success: false, error: errMsg };
     }
 }
 
@@ -991,8 +1032,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.name === 'check-for-bookmarks') {
         console.log('popup-opened -> query for active tab id:', request.tab.id, ' -> url: ', request.tab.url)
-        searchBookmarksByUrl(user.value?.uid, request.tab.url).then((bookmark) => {
-            sendResponse({ bookmark: bookmark })
+        searchBookmarksByUrl(user.value?.uid, request.tab.url).then((result) => {
+            sendResponse(result)
         }).catch(err => {
             console.error('Error checking bookmarks:', err);
             sendResponse({ bookmark: undefined, error: err.message });
@@ -1206,20 +1247,35 @@ const deleteBookmark = async (bookmarkId) => {
             console.log('Bookmark deleted successfully');
             return { success: true };
         } else {
-            const error = await response.json();
-            console.error('Error deleting bookmark:', error);
-            return { success: false, error };
+            let errorDetail;
+            try {
+                const errorJson = await response.json();
+                errorDetail = (typeof errorJson.detail === 'string') ? errorJson.detail : JSON.stringify(errorJson.detail || errorJson);
+            } catch (e) {
+                errorDetail = await response.text().catch(() => 'Unknown error/Not JSON');
+            }
+            console.error('Error deleting bookmark:', errorDetail);
+            return { success: false, error: errorDetail };
         }
     } catch (err) {
-        console.error('Error deleting bookmark:', err);
-        return { success: false, error: err };
+        const errMsg = err?.message || err?.toString() || 'Unknown error';
+        console.error('Error deleting bookmark:', errMsg);
+        return { success: false, error: errMsg };
     }
 }
 
 // Add fetchBookmarkDocument function
 const fetchBookmarkDocument = async (bookmarkId) => {
     try {
+        if (!bookmarkId || bookmarkId === 'undefined') {
+            const msg = `Invalid bookmarkId: ${bookmarkId}. Cannot fetch document.`;
+            console.error(msg);
+            return { success: false, error: msg };
+        }
+
         const url = `${base_url}${Endpoints.bookmark_by_id.replace('{ID}', bookmarkId)}`;
+        console.log(`fetchBookmarkDocument -> bookmarkId: ${bookmarkId}, url: ${url}`);
+
         const response = await makeAuthenticatedRequest(url, {
             method: 'GET',
         });
@@ -1239,17 +1295,29 @@ const fetchBookmarkDocument = async (bookmarkId) => {
                     const document = await docResponse.json();
                     console.log('Document fetched successfully:', document);
                     return { success: true, bookmark, document };
+                } else {
+                    const docError = await docResponse.json().catch(() => ({ detail: 'Failed to fetch document' }));
+                    console.error(`Error fetching document (${docResponse.status}):`, docError);
+                    // Return bookmark even if document fetch failed
+                    return { success: true, bookmark, document: null, docError: JSON.stringify(docError) };
                 }
             }
 
             // Return bookmark even if no document
             return { success: true, bookmark, document: null };
         } else {
-            const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-            console.error('Error fetching bookmark:', error);
+            let errorDetail;
+            try {
+                const errorJson = await response.json();
+                errorDetail = (typeof errorJson.detail === 'string') ? errorJson.detail : JSON.stringify(errorJson.detail || errorJson);
+            } catch (e) {
+                errorDetail = await response.text().catch(() => 'Unknown error/Not JSON');
+            }
+
+            console.error(`Error fetching bookmark (${response.status}):`, errorDetail);
 
             // If bookmark not found on server, refresh local cache to stay in sync
-            if (response.status === 404 || (error && error.detail === 'Bookmark not found')) {
+            if (response.status === 404 || errorDetail === 'Bookmark not found') {
                 console.log('Bookmark not found on server, triggering cache refresh');
                 const store = await chrome.storage.session.get(["session_user"]);
                 if (store.session_user && store.session_user.uid) {
@@ -1257,11 +1325,12 @@ const fetchBookmarkDocument = async (bookmarkId) => {
                 }
             }
 
-            return { success: false, error };
+            return { success: false, error: errorDetail, status: response.status };
         }
     } catch (err) {
-        console.error('Error fetching bookmark:', err);
-        return { success: false, error: err };
+        const errMsg = err?.message || err?.toString() || 'Unknown error';
+        console.error('Error in fetchBookmarkDocument:', errMsg);
+        return { success: false, error: errMsg };
     }
 }
 
@@ -1277,13 +1346,20 @@ const deleteDocument = async (documentId) => {
             console.log('Document deleted successfully');
             return { success: true };
         } else {
-            const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-            console.error('Error deleting document:', error);
-            return { success: false, error };
+            let errorDetail;
+            try {
+                const errorJson = await response.json();
+                errorDetail = (typeof errorJson.detail === 'string') ? errorJson.detail : JSON.stringify(errorJson.detail || errorJson);
+            } catch (e) {
+                errorDetail = await response.text().catch(() => 'Unknown error/Not JSON');
+            }
+            console.error('Error deleting document:', errorDetail);
+            return { success: false, error: errorDetail };
         }
     } catch (err) {
-        console.error('Error deleting document:', err);
-        return { success: false, error: err };
+        const errMsg = err?.message || err?.toString() || 'Unknown error';
+        console.error('Error deleting document:', errMsg);
+        return { success: false, error: errMsg };
     }
 }
 
@@ -1374,8 +1450,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         fetchBookmarkDocument(request.bookmarkId).then((result) => {
             sendResponse(result);
         }).catch((error) => {
-            console.error('Error fetching bookmark document:', error);
-            sendResponse({ success: false, error: error.message });
+            const errMsg = error?.message || error?.toString() || 'Unknown error';
+            console.error('Error in fetch-bookmark-document handler:', errMsg);
+            sendResponse({ success: false, error: errMsg });
         });
         return true;
     }

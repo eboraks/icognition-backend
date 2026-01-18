@@ -211,6 +211,80 @@ class ChatAgentService:
         """Initialize the chat agent service."""
         logger.info("ChatAgentService initialized")
 
+    async def get_suggestion(
+        self, 
+        user_id: str, 
+        session_id: int, 
+        current_text: str,
+        context: Optional[str] = None
+    ) -> str:
+        """
+        Get a Gmail-style ghost text completion suggestion.
+        """
+        if not current_text or len(current_text) < 3:
+            return ""
+
+        # Get database session for this request
+        async_gen = get_session()
+        db_session = await async_gen.__anext__()
+        
+        try:
+            chat_session_service = ChatSessionService(db_session)
+            # Use get_session_messages which already validates ownership
+            messages = await chat_session_service.get_session_messages(session_id, user_id)
+            
+            # Format history for the model
+            history_parts = []
+            # Take last 5 messages for context
+            for msg in messages[-5:]:
+                role = "User" if msg.role == "user" else "Assistant"
+                # Strip HTML for cleaner context
+                content = strip_html_and_clean(msg.content)
+                history_parts.append(f"{role}: {content}")
+            
+            history = "\n".join(history_parts)
+
+            llm = ChatGoogleGenerativeAI(
+                model=settings.GEMINI_FLASH_LITE_MODEL,
+                google_api_key=settings.GOOGLE_API_KEY,
+                temperature=0.0,
+                max_tokens=20
+            )
+
+            prompt_parts = [
+                "You are an AI writing assistant. Continue the user's thought following the provided conversation history.",
+                f"\nConversation History:\n{history}" if history else "",
+            ]
+            
+            if context:
+                prompt_parts.append(f"\nAdditional Context: {context}")
+            
+            prompt_parts.append(f"\nUser is currently typing: '{current_text}'")
+            prompt_parts.append(
+                "\nProvide ONLY the characters or words that complete the current thought from where it left off. "
+                "Do NOT repeat any part of the input text. Do NOT explain yourself. "
+                "The completion should feel natural and continue the specific sentence or phrase the user is currently typing. "
+                "If no good completion is found, return nothing."
+            )
+
+            prompt = "\n".join(filter(None, prompt_parts))
+
+            response = await llm.ainvoke(prompt)
+            prediction = extract_text_from_content(response.content).strip()
+            
+            # Simple cleanup: remove quotes if the model wrapped the response
+            if prediction.startswith('"') and prediction.endswith('"'):
+                prediction = prediction[1:-1]
+            if prediction.startswith("'") and prediction.endswith("'"):
+                prediction = prediction[1:-1]
+            
+            return prediction
+        except Exception as e:
+            logger.error(f"Error getting suggestion for session {session_id}: {e}", exc_info=True)
+            return ""
+        finally:
+            await db_session.close()
+
     async def get_stream(self, session_id: int, message: str, user_id: str):
         """
         Stream agent responses for a chat message using LangGraph.
@@ -254,12 +328,8 @@ class ChatAgentService:
             
             # Initialize LLM
             try:
-                llm = ChatGoogleGenerativeAI(
-                    model=settings.GEMINI_FLASH_MODEL, 
-                    google_api_key=settings.GOOGLE_API_KEY,
-                    max_tokens=2048
-                )
-                logger.info(f"Initialized LLM with model: {settings.GEMINI_FLASH_MODEL} and max_tokens=2048")
+                llm = ChatGoogleGenerativeAI(model=settings.GEMINI_FLASH_MODEL, google_api_key=settings.GOOGLE_API_KEY)
+                logger.info(f"Initialized LLM with model: {settings.GEMINI_FLASH_MODEL}")
             except Exception as e:
                 logger.error(f"Failed to initialize LLM: {e}", exc_info=True)
                 yield "Error: Failed to initialize AI model."
