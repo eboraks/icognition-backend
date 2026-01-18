@@ -261,6 +261,7 @@ const handleAsk = () => {
     margin-left: auto;
     margin-right: auto;
     margin-bottom: 0.75rem;
+    font-family: 'Roboto Mono', monospace;
 }
 
 .qa-content {
@@ -280,6 +281,7 @@ const handleAsk = () => {
     border-top: 1px solid #dee2e6;
     height: 60px;
     z-index: 1;
+    font-family: 'Roboto Mono', monospace;
 }
 
 :deep(.p-scrollpanel) {

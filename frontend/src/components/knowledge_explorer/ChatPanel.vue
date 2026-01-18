@@ -540,6 +540,7 @@ watch(
 .message-text {
   white-space: pre-wrap;
   line-height: 1.5;
+  font-family: 'Roboto Mono', monospace;
 }
 
 .message-text p {
@@ -617,6 +618,7 @@ watch(
   padding: 0.55rem 1.2rem;
   border-radius: 999px;
   box-shadow: none;
+  font-family: 'Roboto Mono', monospace;
 }
 
 .user-message {
@@ -696,10 +698,12 @@ watch(
   border: 1px solid var(--p-content-border-color);
   color: var(--p-text-muted-color);
   padding-left: 1rem;
+  font-family: 'Roboto Mono', monospace;
 }
 
 :deep(.chat-input-container .p-autocomplete-input::placeholder) {
   color: var(--p-text-muted-color);
+  font-family: 'Roboto Mono', monospace;
 }
 </style>
 

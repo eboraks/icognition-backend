@@ -194,7 +194,7 @@ onMounted(() => {
 .layer {
   width: 100%;
   padding: 8px 16px;
-  font-family: var(--font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif);
+  font-family: 'Roboto Mono', monospace;
   font-size: 0.95rem;
   line-height: 1.5;
   box-sizing: border-box;

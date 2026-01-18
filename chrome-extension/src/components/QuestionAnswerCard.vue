@@ -267,6 +267,7 @@
     margin-bottom: 0.5rem; /* Reduced from 1.5rem */
     margin-left: 0.25rem;
     margin-right: 0.75rem;
+    font-family: 'Roboto Mono', monospace;
 }
 
 .max-w-25 {

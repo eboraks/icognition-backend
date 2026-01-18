@@ -201,11 +201,11 @@
                                         <div class="overflow-y-auto px-2 py-3" style="height: calc(100% - 49.6px);">
                                             <div v-if="studyCollection.description != null">
                                                 <h4 class="pb-2">Description</h4>
-                                                <p class="line-height-2">{{ studyCollection.description }}</p>
+                                                <p class="line-height-2 font-mono">{{ studyCollection.description }}</p>
                                             </div>
                                             <div v-if="studyCollection.ai_explanation != null">
                                                 <h4 class="pb-2">Summary</h4>
-                                                <p class="line-height-2">{{ studyCollection.ai_explanation }}</p>
+                                                <p class="line-height-2 font-mono">{{ studyCollection.ai_explanation }}</p>
                                             </div>
                                         </div>
                                     </div>
@@ -259,7 +259,7 @@
                                             </div>
                                         </div>
                                         <div class="flex p-2 bg-white border-top-1 border-300" style="height: 2.75em;">
-                                            <InputText @keyup.enter="handleAsk" class="flex-grow-1 p-1" type="text" v-model="question" />
+                                            <InputText @keyup.enter="handleAsk" class="flex-grow-1 p-1 font-mono" type="text" v-model="question" />
                                             <Button class="flex-shrink-0 px-3 py-1 ml-1 bg-primary-500 text-white" icon="pi pi-arrow-right" @click="handleAsk" />
                                         </div>
                                     </div>
@@ -353,14 +353,14 @@
                                                 <p>Summary:</p>    
                                             </div>
                                             <div class="col-12" style="max-width: 60%;">
-                                                <p>{{ slotProps.data.is_about}}</p>
+                                                <p class="font-mono">{{ slotProps.data.is_about}}</p>
                                             </div>
                                         </div>
                                         <div class="grid">
                                             <div class="col-fixed" style="width: 100px;">
                                                 <p>Key Points:</p>
                                             </div>
-                                            <div class="col-11" style="max-width: 60%;">
+                                            <div class="col-11 font-mono" style="max-width: 60%;">
                                                 <ul v-for="item in slotProps.data.tldr">
                                                     <li>{{ item }}</li>
                                                 </ul>

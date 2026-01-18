@@ -358,10 +358,10 @@
                   <div class="w-full h-full bg-white border-1 border-300">
                     <div class="overflow-y-auto px-2 py-3" style="height: calc(100% - 49.6px);">
                       <h4 class="pb-2">Summary</h4>
-                      <p class="line-height-2" v-if="doc != null && doc.is_about != null">{{ doc.is_about }}</p>
+                      <p class="line-height-2 summary-content" v-if="doc != null && doc.is_about != null">{{ doc.is_about }}</p>
                       <div v-if="doc != null && doc.tldr != null">
                         <h4 class="pt-3">Key Points:</h4>
-                        <ul>
+                        <ul class="key-points-content">
                           <li v-for="item in doc.tldr">{{ item }}</li>
                         </ul>
                       </div>
@@ -469,3 +469,9 @@
     </div>
   </div>
 </template>
+
+<style scoped>
+.summary-content, .key-points-content {
+  font-family: 'Roboto Mono', monospace;
+}
+</style>

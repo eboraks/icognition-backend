@@ -466,6 +466,7 @@ const sendMessage = async () => {
   /* Dynamic font size applied via root variable or inline style */
   line-height: 1.4;
   font-size: v-bind(fontSize); /* Bound to prop */
+  font-family: 'Roboto Mono', monospace;
 }
 
 :deep(.message-text h4) {
@@ -557,5 +558,6 @@ const sendMessage = async () => {
   border-radius: 999px;
   padding-left: 1rem;
   font-size: 0.95rem;
+  font-family: 'Roboto Mono', monospace;
 }
 </style>
