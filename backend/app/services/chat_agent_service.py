@@ -254,8 +254,12 @@ class ChatAgentService:
             
             # Initialize LLM
             try:
-                llm = ChatGoogleGenerativeAI(model=settings.GEMINI_FLASH_MODEL, google_api_key=settings.GOOGLE_API_KEY)
-                logger.info(f"Initialized LLM with model: {settings.GEMINI_FLASH_MODEL}")
+                llm = ChatGoogleGenerativeAI(
+                    model=settings.GEMINI_FLASH_MODEL, 
+                    google_api_key=settings.GOOGLE_API_KEY,
+                    max_tokens=2048
+                )
+                logger.info(f"Initialized LLM with model: {settings.GEMINI_FLASH_MODEL} and max_tokens=2048")
             except Exception as e:
                 logger.error(f"Failed to initialize LLM: {e}", exc_info=True)
                 yield "Error: Failed to initialize AI model."
@@ -286,6 +290,41 @@ class ChatAgentService:
                         "\n- If the documents don't contain relevant information and it's outside the scope of augmenting their content, inform the user clearly rather than just searching the web for a general answer."
                     )
                     logger.info(f"[Session {session_id}] Using fallback hardcoded system prompt")
+
+                # PRIME THE AGENT with document context if scoped
+                if chat_session.scope_type == "document" and chat_session.scope_id:
+                    try:
+                        doc_service = DocumentService(db_session)
+                        # We use the internal service methods to get the document
+                        # No-Auth mode is handled inside DocumentService if configured
+                        doc = await doc_service.get_document_by_id(user_id, chat_session.scope_id)
+                        
+                        if doc:
+                            context_parts = [
+                                "CURRENT CONTEXT (The user is specifically asking about this document):",
+                                f"Title: {doc.title or 'Untitled'}",
+                            ]
+                            
+                            if doc.url:
+                                context_parts.append(f"URL: {doc.url}")
+                            
+                            # Add AI analysis summary if available
+                            if doc.ai_is_about:
+                                context_parts.append(f"Summary: {doc.ai_is_about}")
+                            
+                            # Add key points if available
+                            if doc.ai_bullet_points:
+                                points = "\n- ".join(doc.ai_bullet_points)
+                                context_parts.append(f"Key Points:\n- {points}")
+                            
+                            # Prepend to system prompt
+                            context_header = "\n".join(context_parts)
+                            system_prompt = f"{context_header}\n\n---\n\n{system_prompt}"
+                            logger.info(f"[Session {session_id}] Primed agent with metadata for document ID {doc.id}")
+                        else:
+                            logger.warning(f"[Session {session_id}] Scoped document {chat_session.scope_id} not found for priming")
+                    except Exception as prime_err:
+                        logger.error(f"[Session {session_id}] Error priming agent with document context: {prime_err}", exc_info=True)
                 
                 # Initialize Google Search tool if configured
                 tools = [retrieve_tool]
@@ -364,7 +403,12 @@ class ChatAgentService:
                         continue
 
                     latest_message = messages[-1]
-                    logger.info(f"[Session {session_id}] Latest message type: {type(latest_message).__name__}")
+                    logger.info(f"[Session {session_id}] Chunk #{chunk_count} latest message type: {type(latest_message).__name__}")
+                    
+                    # Log tool calls if present
+                    if hasattr(latest_message, "tool_calls") and latest_message.tool_calls:
+                        logger.info(f"[Session {session_id}] Chunk #{chunk_count} has tool calls: {latest_message.tool_calls}")
+
                     if not isinstance(latest_message, AIMessage):
                         logger.info(f"[Session {session_id}] Not an AIMessage, skipping")
                         continue

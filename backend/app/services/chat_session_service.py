@@ -82,6 +82,22 @@ class ChatSessionService:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_session_by_scope(self, user_id: str, scope_type: str, scope_id: int) -> Optional[ChatSession]:
+        """
+        Find an existing chat session for a specific scope.
+        """
+        stmt = select(ChatSession).where(
+            ChatSession.scope_type == scope_type,
+            ChatSession.scope_id == scope_id
+        )
+        if not settings.DISABLE_AUTH:
+            stmt = stmt.where(ChatSession.user_id == user_id)
+        
+        # Order by updated_at to get the most recent one if multiple exist (though ideally there's only one)
+        stmt = stmt.order_by(ChatSession.updated_at.desc())
+        result = await self.session.execute(stmt)
+        return result.scalars().first()
+
     async def save_message(self, session_id: int, role: str, content: str) -> ChatMessage:
         """
         Save a message to a chat session.
@@ -105,6 +121,7 @@ class ChatSessionService:
         formatted_content = format_chat_message(content or "")
 
         try:
+            logger.info(f"Database: Attempting to save {role} message for session {session_id}")
             message = ChatMessage(
                 session_id=session_id,
                 role=role,  # "user" or "assistant"
@@ -115,14 +132,17 @@ class ChatSessionService:
             if role == "user" and not has_prior_user_message:
                 new_title = (content or "").strip()[:60]
                 chat_session.title = new_title or chat_session.title
+                logger.debug(f"Database: Updating session title to: {new_title}")
 
             chat_session.updated_at = datetime.now(timezone.utc)
 
             await self.session.commit()
             await self.session.refresh(message)
-            logger.info(f"Saved {role} message to session {session_id}, message_id: {message.id}")
+            logger.info(f"Database: Successfully committed {role} message (ID: {message.id}) to session {session_id}")
             return message
         except Exception as e:
+            logger.error(f"Database: Error saving {role} message to session {session_id}: {e}", exc_info=True)
+            await self.session.rollback()
             raise
 
     async def delete_session(self, session_id: int, user_id: str):

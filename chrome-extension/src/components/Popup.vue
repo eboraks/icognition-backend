@@ -1,6 +1,6 @@
 <template>
     <div class="side-panel-container" tabindex="-1">        
-        <div class="header w-full h-20" tabindex="-1">
+        <div class="header w-full h-14" tabindex="-1">
             <div class="flex justify-content-between align-items-center" tabindex="-1">
                 <a tabindex="6" :href="library_url" target="_blank">
                     <img src="/icons/iCognitionLogo.png" alt="iCognition Logo" width="150px" class="m-2"/>
@@ -96,7 +96,11 @@
             </div>
             
             <div v-if="currentChatSessionId" class="chat-container flex-grow-1 overflow-hidden" tabindex="-1">
-                <ChatInterface :key="currentChatSessionId" :sessionId="currentChatSessionId" :initialSummary="document_summary" />
+                <ChatInterface 
+                    :key="currentChatSessionId + selectedFontSize" 
+                    :sessionId="currentChatSessionId" 
+                    :initialSummary="document_summary"
+                    :fontSize="fontSizeMap[selectedFontSize]" />
             </div>
             <div v-else-if="isCreatingChatSession" class="flex align-items-center justify-content-center p-4">
                  <ProgressSpinner style="width:40px;height:40px" strokeWidth="4" />
@@ -109,7 +113,7 @@
                 </div>
                 <div v-if="document_summary.summary" class="document-summary mb-3" tabindex="-1">
                     <h4 class="text-md font-semibold mb-1">Summary</h4>
-                    <p class="text-sm" v-html="formatUrlsAsLinks(document_summary.summary)"></p>
+                    <p :style="{ fontSize: fontSizeMap[selectedFontSize] }" v-html="formatUrlsAsLinks(document_summary.summary)"></p>
                 </div>
                  <div class="text-center mt-3">
                     <Button label="Start Chat" @click="initializeChatSession(cleanUrl(active_tab.url), documentIdsByUrl[cleanUrl(active_tab.url)])" class="p-button-sm" />
@@ -181,15 +185,38 @@
                 </label>
             </div>
             
-            <div class="flex align-items-center gap-2 mt-2 p-2 bg-primary-50 border-round">
+            <div class="flex align-items-center gap-2 mt-1 p-2 bg-primary-50 border-round">
                 <i class="pi pi-info-circle text-primary-500"></i>
                 <span class="text-sm text-primary-800">Current: {{ selectedEnvironment === 'staging' ? 'Staging' : 'Development' }}</span>
+            </div>
+
+            <Divider class="my-2" />
+
+            <h4 class="m-0 mb-2">Display Settings</h4>
+            <p class="text-sm text-600 mt-0 mb-3">Adjust the font size for the chat interface.</p>
+            
+            <div class="p-fluid">
+                <Select 
+                    v-model="selectedFontSize" 
+                    :options="fontSizeOptions" 
+                    optionLabel="label" 
+                    optionValue="value" 
+                    placeholder="Select Font Size" 
+                    class="w-full"
+                >
+                    <template #option="slotProps">
+                        <div class="flex align-items-center justify-content-between w-full">
+                            <span>{{ slotProps.option.label }}</span>
+                            <span class="text-xs text-500">{{ slotProps.option.desc }}</span>
+                        </div>
+                    </template>
+                </Select>
             </div>
         </div>
         
         <template #footer>
             <Button label="Cancel" text @click="showSettings = false" />
-            <Button label="Save & Apply" icon="pi pi-check" @click="saveEnvironmentPreference" />
+            <Button label="Save & Apply" icon="pi pi-check" @click="saveSettings" />
         </template>
     </Dialog>
 
@@ -315,6 +342,10 @@ const chatSessionsByUrl = ref({});
 const currentChatSessionId = ref(null);
 const isCreatingChatSession = ref(false);
 
+const pollingTimer = ref(null);
+const lastStatusCheck = ref(0);
+const POLLING_INTERVAL = 3000; // 3 seconds
+
 // Add these new refs for autocomplete functionality
 const showAutocomplete = ref(false);
 const activeIndex = ref(-1);
@@ -341,6 +372,24 @@ const buttonHasFocus = ref(false);
 // Add refs for settings dialog
 const showSettings = ref(false);
 const selectedEnvironment = ref('development');
+const selectedFontSize = ref('medium'); // Default to medium (12px)
+
+// Font size mapping
+const fontSizeMap = {
+    'small': '10px',
+    'medium': '12px',
+    'large': '14px',
+    'xl': '16px',
+    'xxl': '18px'
+};
+
+const fontSizeOptions = [
+    { label: 'Small', value: 'small', desc: '10px' },
+    { label: 'Medium', value: 'medium', desc: '12px' },
+    { label: 'Large', value: 'large', desc: '14px' },
+    { label: 'Extra Large', value: 'xl', desc: '16px' },
+    { label: 'Double Extra Large', value: 'xxl', desc: '18px' }
+];
 
 // Add refs for URL warning dialog
 const showUrlWarning = ref(false);
@@ -354,29 +403,39 @@ const environmentOptions = [
     { label: 'Development', value: 'development', url: 'http://localhost:8000' }
 ];
 
-// Load environment preference from storage
-const loadEnvironmentPreference = async () => {
+// Load settings from storage
+const loadSettings = async () => {
     try {
-        const result = await chrome.storage.local.get(['backendEnvironment']);
+        const result = await chrome.storage.local.get(['backendEnvironment', 'fontSize']);
         if (result.backendEnvironment) {
             selectedEnvironment.value = result.backendEnvironment;
             console.log('Loaded environment preference:', selectedEnvironment.value);
         }
+        if (result.fontSize) {
+            selectedFontSize.value = result.fontSize;
+            console.log('Loaded font size preference:', selectedFontSize.value);
+        }
     } catch (error) {
-        console.error('Error loading environment preference:', error);
+        console.error('Error loading settings:', error);
     }
 };
 
-// Save environment preference and reload
-const saveEnvironmentPreference = async () => {
+// Save settings and reload
+const saveSettings = async () => {
     try {
-        await chrome.storage.local.set({ backendEnvironment: selectedEnvironment.value });
-        console.log('Saved environment preference:', selectedEnvironment.value);
+        await chrome.storage.local.set({ 
+            backendEnvironment: selectedEnvironment.value,
+            fontSize: selectedFontSize.value
+        });
+        console.log('Saved settings:', { 
+            env: selectedEnvironment.value, 
+            fontSize: selectedFontSize.value 
+        });
         
         // Show success message
         status.value = {
             ...AppStatusEnum.SERVER_READY,
-            message: `Switched to ${selectedEnvironment.value === 'staging' ? 'Staging' : 'Development'} environment`
+            message: `Preferences saved`
         };
         
         // Close dialog
@@ -403,11 +462,9 @@ const saveEnvironmentPreference = async () => {
     }
 };
 
-onMounted(() => {
-    console.log('SidePanel component mounted');
-    
-    // Load environment preference
-    loadEnvironmentPreference();
+onMounted(async () => {
+    // Load settings from storage
+    await loadSettings();
     
     // Establish connection with background script to indicate side panel is open
     const port = chrome.runtime.connect({ name: 'sidepanel' });
@@ -516,6 +573,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+    stopPolling();
     document.removeEventListener('keydown', handleKeyDown);
     // Remove keyboard shortcut logger when component unmounts
     document.removeEventListener('keydown', logKeyboardShortcut);
@@ -567,12 +625,12 @@ const handleTabChange = (tab) => {
     document_summary.value = null;
     bookmark.value = null;
     doc.value = null;
+    currentChatSessionId.value = null;
     progressPercent.value = 5;
-    console.log('Reset summary, bookmark, and doc');
+    console.log('Reset summary, bookmark, doc, and session ID');
     
-    // Check if we have a saved summary for this URL
     if (summariesByUrl.value[currentUrl]) {
-        console.log('Found saved summary for URL:', currentUrl);
+        console.log('Found saved summary in cache for URL:', currentUrl, summariesByUrl.value[currentUrl]);
         document_summary.value = summariesByUrl.value[currentUrl];
         bookmark.value = bookmarksByUrl.value[currentUrl] || null;
         
@@ -580,6 +638,15 @@ const handleTabChange = (tab) => {
             status.value = AppStatusEnum.DOCUMENT_READY;
             console.log('Setting status to DOCUMENT_READY');
             initializeChatSession(currentUrl, documentIdsByUrl.value[currentUrl]);
+            
+            // If the cached summary is minimal (no content), trigger a server refresh in background
+            const summary = document_summary.value;
+            const isMinimal = !summary || (!summary.summary && (!summary.bullet_points || summary.bullet_points.length === 0));
+            
+            if (isMinimal) {
+                console.log('Cached summary is minimal or missing content, triggering refresh for URL:', currentUrl);
+                searchBookmarksByUrl(currentUrl);
+            }
         }
     } else if (user.value) {
         // If no saved chat but user is logged in, check for bookmarks
@@ -594,10 +661,6 @@ const handleTabChange = (tab) => {
         console.log('No user logged in, setting status to UNAUTHENTICATED');
     }
     
-    // Attempt to initialize chat session if we have a document ID
-    if (documentIdsByUrl.value[currentUrl]) {
-        initializeChatSession(currentUrl, documentIdsByUrl.value[currentUrl]);
-    }
 
     console.log('Final status after tab change:', status.value.state);
 };
@@ -695,6 +758,18 @@ const searchBookmarksByUrl = async (url) => {
                         
                         // Initialize chat session
                         initializeChatSession(cleanedUrl, response.document.id);
+                    } else if (response && !response.success && (response.error?.status === 404 || response.error?.detail === 'Bookmark not found')) {
+                        // CRITICAL: If bookmark not found on server, clear stale local data
+                        console.log('Stale bookmark detected, clearing local memory for:', cleanedUrl);
+                        delete summariesByUrl.value[cleanedUrl];
+                        delete bookmarksByUrl.value[cleanedUrl];
+                        delete documentIdsByUrl.value[cleanedUrl];
+                        
+                        bookmark.value = null;
+                        document_summary.value = null;
+                        status.value = AppStatusEnum.SERVER_READY;
+                        isSearchingBookmark.value = false;
+                        return; // Exit early
                     } else {
                         // Use the freshest bookmark data if available, otherwise original local one
                         const currentBookmark = (response && response.bookmark) ? response.bookmark : found;
@@ -702,6 +777,16 @@ const searchBookmarksByUrl = async (url) => {
 
                         if (docId) {
                             console.log('Using cached document ID to initialize chat');
+                            // Ensure document_summary is initialized even if server fetch failed
+                            // This guarantees the document interface renders
+                            if (!document_summary.value) {
+                                document_summary.value = {
+                                    title: currentBookmark.title || found.title || 'Analysis Result',
+                                    summary: '',
+                                    bullet_points: []
+                                };
+                            }
+                            
                             doc.value = { id: docId, title: currentBookmark.title || found.title };
                             status.value = AppStatusEnum.DOCUMENT_READY;
                             
@@ -712,6 +797,12 @@ const searchBookmarksByUrl = async (url) => {
                             bookmarksByUrl.value[cleanedUrl] = bookmarkToSave;
                             
                             documentIdsByUrl.value[cleanedUrl] = docId;
+                            // Cache the fallback summary too to prevent blank flashes on switch back
+                            if (document_summary.value) {
+                                summariesByUrl.value[cleanedUrl] = {...document_summary.value};
+                                console.log('Saved fallback summary to cache:', cleanedUrl);
+                            }
+                            
                             initializeChatSession(cleanedUrl, docId);
                         } else {
                             status.value = AppStatusEnum.SERVER_READY;
@@ -768,11 +859,22 @@ const searchBookmarksByUrl = async (url) => {
                      
                      if (currentBookmark && currentBookmark.document_id) {
                          console.log('Using bookmark document ID fallback');
+                         // Ensure document_summary is initialized
+                         document_summary.value = {
+                             title: currentBookmark.title || 'Analysis Result',
+                             summary: '',
+                             bullet_points: []
+                         };
+                         
                          doc.value = { id: currentBookmark.document_id, title: currentBookmark.title };
                          status.value = AppStatusEnum.DOCUMENT_READY;
                          
                          bookmarksByUrl.value[cleanedUrl] = {...currentBookmark};
                          documentIdsByUrl.value[cleanedUrl] = currentBookmark.document_id;
+                         // Cache the fallback summary too
+                         summariesByUrl.value[cleanedUrl] = {...document_summary.value};
+                         console.log('Saved server fallback summary to cache:', cleanedUrl);
+                         
                          initializeChatSession(cleanedUrl, currentBookmark.document_id);
                      } else {
                          status.value = AppStatusEnum.SERVER_READY;
@@ -890,6 +992,14 @@ const initializeChatSession = async (url, docId) => {
             currentChatSessionId.value = response.data.id;
         } else {
             console.error('Failed to create chat session:', response.error);
+            // If session creation fails because doc/bookmark is gone, reset to analyze
+            if (response.error?.includes('404') || response.error?.includes('not found')) {
+                console.log('Document not found during chat init, resetting to SERVER_READY');
+                status.value = AppStatusEnum.SERVER_READY;
+                document_summary.value = null;
+                delete documentIdsByUrl.value[url];
+                delete summariesByUrl.value[url];
+            }
         }
     } catch (error) {
         console.error('Error initializing chat:', error);
@@ -1042,6 +1152,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         } else {
             console.warn('No active tab URL found to save document');
         }
+
+        // Stop polling when document is ready
+        stopPolling();
     }
 
     // Chat-related message handlers removed - will be re-implemented in future update
@@ -1288,8 +1401,97 @@ const getCurrentPageTitle = () => {
     return 'Current Page';
 }
 
-// Extract metadata from page (mimics LinkPresentation behavior)
-// Extracts og:title, og:description, and other Open Graph metadata
+// Polling logic for missed notifications
+const startPolling = () => {
+    if (pollingTimer.value) return;
+    
+    console.log('Starting status polling fallback...');
+    pollingTimer.value = setInterval(async () => {
+        if (status.value.state !== AppStatusEnum.PROCESSING.state) {
+            stopPolling();
+            return;
+        }
+        
+        const now = Date.now();
+        // Don't poll too frequently, even if the timer fires
+        if (now - lastStatusCheck.value < POLLING_INTERVAL) return;
+        
+        lastStatusCheck.value = now;
+        
+        if (bookmark.value && bookmark.value.id) {
+            console.log('Polling status for bookmark:', bookmark.value.id);
+            try {
+                const response = await chrome.runtime.sendMessage({
+                    name: 'fetch-bookmark-document',
+                    bookmarkId: bookmark.value.id
+                });
+                
+                if (response && response.success && response.document) {
+                    console.log('Polling found ready document!', response.document);
+                    handleNewDoc({ data: response.document, name: CommunicationEnum.NEW_DOC });
+                }
+            } catch (err) {
+                console.error('Polling error:', err);
+            }
+        }
+    }, POLLING_INTERVAL);
+}
+
+const stopPolling = () => {
+    if (pollingTimer.value) {
+        console.log('Stopping status polling fallback');
+        clearInterval(pollingTimer.value);
+        pollingTimer.value = null;
+    }
+}
+
+const handleNewDoc = (request) => {
+    console.log('NEW_DOC handler called:', request.data);
+    doc.value = request.data
+    document_summary.value = {
+        title: request.data.title,
+        summary: request.data.ai_is_about,
+        bullet_points: request.data.ai_bullet_points
+    }
+    
+    // Update progress to 100% when document is ready
+    progressPercent.value = 100;
+    
+    status.value = AppStatusEnum.DOCUMENT_READY
+    console.log('New document processed, status:', status.value.state)
+    
+    // Parse document ID
+    const documentId = request.data.id ? parseInt(request.data.id) : request.data.id;
+    
+    // Save document ID and summary for current URL
+    if (active_tab.value && active_tab.value.url) {
+        const cleanedUrl = cleanUrl(active_tab.value.url);
+        documentIdsByUrl.value[cleanedUrl] = documentId;
+        summariesByUrl.value[cleanedUrl] = {...document_summary.value};
+        
+        // Auto-start chat session
+        initializeChatSession(cleanedUrl, documentId);
+        
+        // Update bookmark
+        if (bookmark.value && bookmark.value.id) {
+            bookmark.value.document_id = documentId;
+            bookmark.value.is_processed = true;
+            bookmark.value.processing_status = 'completed';
+            bookmarksByUrl.value[cleanedUrl] = {...bookmark.value};
+        }
+    }
+    
+    stopPolling();
+}
+
+// Watch status to trigger polling
+watch(() => status.value.state, (newState) => {
+    if (newState === AppStatusEnum.PROCESSING.state) {
+        startPolling();
+    } else if (newState !== AppStatusEnum.PROCESSING.state) {
+        stopPolling();
+    }
+});
 const extractPageMetadata = async (tabId) => {
     const metadata = {
         title: null,

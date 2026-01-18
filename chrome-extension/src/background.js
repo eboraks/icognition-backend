@@ -28,7 +28,18 @@ const initializeBaseUrl = async () => {
 };
 
 // Initialize on load
-initializeBaseUrl();
+initializeBaseUrl().then(() => {
+    // Also try to restore SSE connection on startup if user exists
+    chrome.storage.session.get(["session_user"]).then((store) => {
+        if (store.session_user && store.session_user.stsTokenManager && store.session_user.uid) {
+            console.log('Background startup: Restoring SSE connection for UID:', store.session_user.uid);
+            user.value = store.session_user;
+            registerSSEConnection();
+        } else {
+            console.log('Background startup: No valid session found for SSE restoration');
+        }
+    });
+});
 
 const Endpoints = {
     ping: '/ping',
@@ -622,9 +633,9 @@ async function refreshBookmarksCache(user_uid) {
         // Log first few bookmarks to check their structure
         console.log('Sample bookmarks:', bookmarks.slice(0, 3));
 
-        // First clear the storage
-        await chrome.storage.local.clear();
-        console.log('Storage cleared successfully');
+        // First clear the bookmarks from storage
+        await chrome.storage.local.remove('bookmarks');
+        console.log('Bookmarks storage cleared successfully');
 
         // Then store the new bookmarks
         storeBookmarks(bookmarks);
@@ -901,46 +912,59 @@ const badgeOff = (tabId) => {
 }
 
 const badgeToggle = async (tab) => {
+    if (!tab || !tab.url) {
+        console.log('badgeToggle -> skipped: tab or url is undefined');
+        return;
+    }
     console.log('badgeToggle -> url: ', tab.url)
     const result = await searchBookmarksByUrl(user.value?.uid, tab.url)
     if (result.bookmark != undefined) {
         console.log('badgeToggle -> bookmark found: ', result.bookmark)
-        badgeOn(tab.tabId)
+        badgeOn(tab.id || tab.tabId)
     } else {
         console.log('badgeToggle -> bookmark not found')
-        badgeOff(tab.tabId)
+        badgeOff(tab.id || tab.tabId)
     }
 }
 
 
 // Detect changes in active tab
-chrome.tabs.onActivated.addListener(async (tab) => {
-
-    console.log('tabs.onActivated', tab.tabId)
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+    const tabId = activeInfo.tabId;
+    console.log('tabs.onActivated', tabId)
 
     // Store the active tab ID in session storage
-    await chrome.storage.session.set({ active_tab_id: tab.tabId });
-    console.log('Stored active tab ID in session storage:', tab.tabId);
+    await chrome.storage.session.set({ active_tab_id: tabId });
+    console.log('Stored active tab ID in session storage:', tabId);
 
-    chrome.tabs.get(tab.tabId, async (tab) => {
-        console.log('tabs.onActivated -> get tab -> url: ', tab.url)
-        badgeToggle(tab)
+    chrome.tabs.get(tabId, async (tab) => {
+        if (chrome.runtime.lastError) {
+            console.log('tabs.onActivated -> get tab error (tab may be closed): ', chrome.runtime.lastError.message);
+            return;
+        }
+        if (tab && tab.url) {
+            console.log('tabs.onActivated -> get tab -> url: ', tab.url)
+            badgeToggle(tab)
+        }
     })
-
-
 });
 
 
 chrome.tabs.onUpdated.addListener(function (tabId, info) {
     if (info.status === 'complete') {
-
         // Store the active tab ID in session storage
         chrome.storage.session.set({ active_tab_id: tabId });
         console.log('Stored active tab ID in session storage (onUpdated):', tabId);
 
         chrome.tabs.get(tabId, async (tab) => {
-            console.log('tabs.onUpdated -> get tab -> url: ', tab.url)
-            badgeToggle(tab)
+            if (chrome.runtime.lastError) {
+                console.log('tabs.onUpdated -> get tab error: ', chrome.runtime.lastError.message);
+                return;
+            }
+            if (tab && tab.url) {
+                console.log('tabs.onUpdated -> get tab -> url: ', tab.url)
+                badgeToggle(tab)
+            }
         })
     }
 });
@@ -966,19 +990,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.name === 'check-for-bookmarks') {
-
         console.log('popup-opened -> query for active tab id:', request.tab.id, ' -> url: ', request.tab.url)
-        searchBookmarksByUrl(request.tab.url).then((bookmark) => {
-            if (bookmark != undefined) {
-                console.log('popup-opened -> found: ', bookmark)
-                sendResponse({ bookmark: bookmark })
-            } else {
-                console.log('popup-opened -> bookmark not found')
-            }
-        })
-
+        searchBookmarksByUrl(user.value?.uid, request.tab.url).then((bookmark) => {
+            sendResponse({ bookmark: bookmark })
+        }).catch(err => {
+            console.error('Error checking bookmarks:', err);
+            sendResponse({ bookmark: undefined, error: err.message });
+        });
+        return true; // Keep channel open
     }
-
 });
 
 chrome.runtime.onMessage.addListener(
@@ -1064,46 +1084,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         (async () => {
             try {
                 const { active_tab_id } = await chrome.storage.session.get(['active_tab_id']);
+                let targetTabId = active_tab_id;
 
-                if (!active_tab_id) {
-                    console.error('No active tab ID found in storage');
-
-                    // If no active tab ID in storage, try to get the current active tab
+                if (!targetTabId) {
+                    console.warn('No active tab ID found in storage, trying query...');
                     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
                     if (tabs && tabs.length > 0) {
-                        const currentTabId = tabs[0].id;
-                        console.log('Retrieved current active tab ID:', currentTabId);
-
-                        // Store it for future use
-                        await chrome.storage.session.set({ active_tab_id: currentTabId });
-
-                        // Continue with this tab ID
-                        await handleHighlighting(currentTabId, message.verbatim, sendResponse);
-                        return;
+                        targetTabId = tabs[0].id;
+                        await chrome.storage.session.set({ active_tab_id: targetTabId });
                     }
+                }
 
-                    sendResponse({
-                        success: false,
-                        error: 'No active tab found'
-                    });
+                if (!targetTabId) {
+                    sendResponse({ success: false, error: 'No active tab found' });
                     return;
                 }
 
-                await handleHighlighting(active_tab_id, message.verbatim, sendResponse);
+                await handleHighlighting(targetTabId, message.verbatim, sendResponse);
             } catch (error) {
                 console.error('Error in highlight-citation handler:', error);
-                sendResponse({
-                    success: false,
-                    error: error.message || 'Unknown error'
-                });
+                sendResponse({ success: false, error: error.message || 'Unknown error' });
             }
         })();
-
-        return true; // Keep the message channel open for the async response
+        return true; // Keep channel open
     }
-
-    // Handle other messages...
-    // ... existing message handlers ...
+    return false;
 });
 
 // Helper function to handle the highlighting process
@@ -1242,6 +1247,16 @@ const fetchBookmarkDocument = async (bookmarkId) => {
         } else {
             const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
             console.error('Error fetching bookmark:', error);
+
+            // If bookmark not found on server, refresh local cache to stay in sync
+            if (response.status === 404 || (error && error.detail === 'Bookmark not found')) {
+                console.log('Bookmark not found on server, triggering cache refresh');
+                const store = await chrome.storage.session.get(["session_user"]);
+                if (store.session_user && store.session_user.uid) {
+                    refreshBookmarksCache(store.session_user.uid);
+                }
+            }
+
             return { success: false, error };
         }
     } catch (err) {
@@ -1419,7 +1434,12 @@ function sendFocusMessage() {
 // Helper function to open the panel then focus
 function openPanelThenFocus() {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (tabs && tabs[0]) {
+        if (chrome.runtime.lastError) {
+            console.error('Error querying tabs:', chrome.runtime.lastError.message);
+            return;
+        }
+
+        if (tabs && tabs[0] && tabs[0].id) {
             console.log('Opening side panel first');
 
             // Open the side panel with a parameter indicating it was opened via shortcut

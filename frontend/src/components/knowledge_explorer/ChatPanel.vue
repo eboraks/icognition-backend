@@ -48,12 +48,24 @@
       </div>
     </ScrollPanel>
     <div class="chat-input-container">
-      <InputText
+      <AutoComplete
         v-model="inputMessage"
+        :suggestions="suggestions"
+        @complete="search"
         placeholder="Ask a follow-up question..."
         class="flex-1"
         @keydown.enter="sendMessage"
-      />
+        :disabled="loading"
+        :delay="100"
+        :minLength="1"
+        :forceSelection="false"
+      >
+        <template #option="slotProps">
+            <div class="flex align-items-center">
+                <div>{{ slotProps.option }}</div>
+            </div>
+        </template>
+      </AutoComplete>
       <Button
         icon="pi pi-send"
         rounded
@@ -67,7 +79,7 @@
 <script setup lang="ts">
 import { ref, watch, nextTick } from 'vue';
 import Button from 'primevue/button';
-import InputText from 'primevue/inputtext';
+import AutoComplete from 'primevue/autocomplete';
 import ScrollPanel from 'primevue/scrollpanel';
 import ProgressSpinner from 'primevue/progressspinner';
 import { knowledgeService, type ContextualMessageResponse, type ActionResponse } from '@/services/knowledgeService.js';
@@ -105,6 +117,8 @@ const inputMessage = ref('');
 const messagesContainer = ref<any>(null);
 const loading = ref(false);
 const isLoadingInitialMessage = ref(false); // Prevent duplicate calls
+const suggestions = ref<string[]>([]);
+const allVocabulary = ref<string[]>([]);
 
 const scrollToBottom = () => {
   nextTick(() => {
@@ -115,6 +129,63 @@ const scrollToBottom = () => {
       }
     }
   });
+};
+
+const extractVocabulary = (contextualData: ContextualMessageResponse) => {
+    const textParts: string[] = [];
+    if (contextualData.message) {
+        // Simple HTML tag removal
+        const cleanMsg = contextualData.message.replace(/<[^>]*>?/gm, ' ');
+        textParts.push(cleanMsg);
+    }
+    if (contextualData.entity?.name) textParts.push(contextualData.entity.name);
+    if (contextualData.document?.title) textParts.push(contextualData.document.title);
+
+    const text = textParts.join(' ').toLowerCase();
+    
+    // Simple regex for words >= 3 chars
+    const words = text.match(/\b[a-z]{3,}\b/g) || [];
+    
+    // Basic stop words to filter out noise
+    const stopWords = new Set(['the', 'and', 'for', 'that', 'this', 'with', 'you', 'are', 'not', 'have', 'from', 'but', 'can', 'will', 'what', 'all', 'one', 'has', 'more', 'about', 'they', 'our', 'out', 'key', 'points', 'summary', 'inc', 'ltd', 'com']);
+    
+    const uniqueWords = new Set<string>();
+    words.forEach(word => {
+        if (!stopWords.has(word)) {
+            uniqueWords.add(word);
+        }
+    });
+    
+    allVocabulary.value = Array.from(uniqueWords).sort();
+};
+
+const search = (event: { query: string }) => {
+    if (!event.query || !event.query.trim()) {
+        suggestions.value = [];
+        return;
+    }
+
+    const query = event.query;
+    const lastSpaceIndex = query.lastIndexOf(' ');
+    let prefix = '';
+    let term = query;
+    
+    if (lastSpaceIndex !== -1) {
+        prefix = query.substring(0, lastSpaceIndex + 1);
+        term = query.substring(lastSpaceIndex + 1);
+    }
+    
+    if (!term) {
+        suggestions.value = [];
+        return;
+    }
+    
+    const lowerTerm = term.toLowerCase();
+    const matches = allVocabulary.value.filter(word => 
+        word.toLowerCase().startsWith(lowerTerm)
+    );
+    
+    suggestions.value = matches.map(word => prefix + word);
 };
 
 const loadInitialMessage = async () => {
@@ -176,17 +247,37 @@ const loadInitialMessage = async () => {
         
         if (props.selectedEntityId || props.selectedDocumentId) {
           let filterMessage = '';
+          let scopeType = 'all_library';
+          let scopeId: number | null = null;
+
           if (props.selectedEntityId) {
             filterMessage = `You filtered by ${contextualData.entity?.name || 'an entity'}`;
+            scopeType = 'entity';
+            scopeId = props.selectedEntityId;
           } else if (props.selectedDocumentId) {
             filterMessage = `You filtered by ${contextualData.document?.title || 'a document'}`;
+            scopeType = 'document';
+            scopeId = props.selectedDocumentId;
           }
           
+          // Sync with backend session scope
+          if (chatStore.activeSession && 
+              (chatStore.activeSession.scope_type !== scopeType || chatStore.activeSession.scope_id !== scopeId)) {
+            console.log(`Syncing session ${props.chatSessionId} scope to ${scopeType}:${scopeId}`);
+            await chatStore.updateSessionScope(props.chatSessionId, scopeType, scopeId);
+          }
+
           if (filterMessage) {
             messages.value.push({
               type: 'filter',
               content: toParagraphHtml(filterMessage),
             });
+          }
+        } else {
+          // Reset to all_library if no selection
+          if (chatStore.activeSession && chatStore.activeSession.scope_type !== 'all_library') {
+            console.log(`Syncing session ${props.chatSessionId} scope back to all_library`);
+            await chatStore.updateSessionScope(props.chatSessionId, 'all_library', null);
           }
         }
         
@@ -203,6 +294,9 @@ const loadInitialMessage = async () => {
             actions: contextualData.actions,
           });
         }
+
+        // Extract vocabulary for autocomplete
+        extractVocabulary(contextualData);
       } catch (error) {
         console.error('Failed to load contextual message:', error);
         // Only add fallback if we don't already have a message
@@ -302,6 +396,7 @@ const sendMessage = async () => {
   
   const userMessageContent = inputMessage.value.trim();
   inputMessage.value = '';
+  suggestions.value = [];
   
   try {
     loading.value = true;
@@ -598,15 +693,21 @@ watch(
   background: var(--p-surface-card);
 }
 
-:deep(.chat-input-container .p-inputtext) {
+:deep(.chat-input-container .p-autocomplete) {
+  width: 100%;
+}
+
+:deep(.chat-input-container .p-autocomplete-input) {
+  width: 100%;
   border-radius: 0.8rem;
   padding-block: 0.8rem;
   background: var(--p-surface-0);
   border: 1px solid var(--p-content-border-color);
   color: var(--p-text-muted-color);
+  padding-left: 1rem;
 }
 
-:deep(.chat-input-container .p-inputtext::placeholder) {
+:deep(.chat-input-container .p-autocomplete-input::placeholder) {
   color: var(--p-text-muted-color);
 }
 </style>

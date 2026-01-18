@@ -1,9 +1,9 @@
 <template>
     <div class="chat-message">
         <!-- User Question -->
-        <div id="question" class="flex align-items-end justify-content-end mb-2">
-            <div class="bg-primary border-round px-3 py-2 shadow-1 max-w-25 relative">
-                <p class="m-0 text-white pb-3">{{chat?.user_prompt}}</p>
+        <div id="question" class="flex align-items-end justify-content-end mb-1">
+            <div class="bg-primary border-round px-2 py-1 shadow-1 max-w-25 relative">
+                <p class="m-0 text-white pb-3" :style="{ fontSize: fontSize }">{{chat?.user_prompt}}</p>
                 <small class="timestamp text-50">
                     {{moment(chat?.created_at).format('h:mm a')}}
                 </small>
@@ -13,13 +13,13 @@
         <!-- AI Response -->
         <div class="flex align-items-start">
             <Avatar image="/icons/icog_action_icon_16x16.png" 
-                   class="mr-2" 
+                   class="mr-1" 
                    :pt="{
                        root: { class: 'custom-avatar' }
                    }" 
                    size="small" 
                    shape="circle" />
-            <div class="surface-card border-round px-3 py-2 shadow-1 max-w-25 relative fadein animation-duration-500">
+            <div class="surface-card border-round px-2 py-1 shadow-1 max-w-25 relative fadein animation-duration-500">
                 <div v-if="!chat?.response" class="skeleton-container">
                     <div class="skeleton-content">
                         <Skeleton width="100%" height="1.5rem" class="mb-3" />
@@ -31,11 +31,13 @@
                     <!-- Display response immediately without typing effect -->
                     <p v-if="is_answer_include_html" 
                        class="m-0 cursor-pointer" 
+                       :style="{ fontSize: fontSize }"
                        v-html="formattedResponse" 
                        @click="handleCitationClick"></p>
                     
                     <p v-else 
                        class="m-0 cursor-pointer"
+                       :style="{ fontSize: fontSize }"
                        @click="handleCitationClick">
                         {{formattedResponse}}
                         <i v-if="showError" class="pi pi-exclamation-circle text-red-500 ml-2" 
@@ -58,7 +60,8 @@
 
     const props = defineProps({ 
         chat: { type: Object, required: true }, 
-        uuid: { type: String, required: true }
+        uuid: { type: String, required: true },
+        fontSize: { type: String, default: '12px' }
     });
     
     // Computed function to format the response based on the new format
@@ -260,10 +263,10 @@
 
 <style scoped>
 .chat-message {
-    margin-top: 1.5rem;
-    margin-bottom: 1.5rem;
-    margin-left: 0.5rem;
-    margin-right: 1.5rem;
+    margin-top: 0.5rem; /* Reduced from 1.5rem */
+    margin-bottom: 0.5rem; /* Reduced from 1.5rem */
+    margin-left: 0.25rem;
+    margin-right: 0.75rem;
 }
 
 .max-w-25 {

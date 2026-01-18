@@ -6,6 +6,7 @@ Replaces the legacy ContentAnalysisService
 
 from typing import Optional, Dict, Any
 import dspy
+import anyio
 from datetime import datetime
 
 from app.core.config import settings
@@ -126,14 +127,16 @@ class DspyContentService:
         logger.info(f"Starting DSPy content analysis for: {title or 'Untitled'}")
         
         try:
-            # Use dspy.context for async task execution
+            # Use anyio.to_thread.run_sync to offload synchronous DSPy calls
+            # This prevents blocking the event loop during LLM processing
             lm = dspy.LM(self.model_name, api_key=self.api_key)
             
-            with dspy.context(lm=lm):
-                # Initialize program in context
-                program = ContentExtractorProgram()
-                # Extract structured content using DSPy
-                extracted = program(text=content)
+            def run_extraction():
+                with dspy.context(lm=lm):
+                    program = ContentExtractorProgram()
+                    return program(text=content)
+            
+            extracted = await anyio.to_thread.run_sync(run_extraction)
             
             # Prepare result in compatible format with old service
             # Note: URLs are returned as plain text - frontend will handle link formatting

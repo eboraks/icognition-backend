@@ -789,6 +789,7 @@ class EmbeddingService:
         query_text: str,
         user_id: str,
         source_types: Optional[List[str]] = None,
+        source_id: Optional[int] = None,
         limit: int = 10,
         similarity_threshold: float = 0.7
     ) -> List[Dict[str, Any]]:
@@ -800,6 +801,7 @@ class EmbeddingService:
             query_text: Search query
             user_id: User ID for data isolation
             source_types: List of source types to search ('document', 'entity', or both). Default: ['document']
+            source_id: Optional ID of the specific source to filter by
             limit: Maximum number of results
             similarity_threshold: Minimum similarity score
             
@@ -840,6 +842,10 @@ class EmbeddingService:
             if user_id is not None and not settings.DISABLE_AUTH:
                 where_clauses.append("e.user_id = :user_id")
             
+            # Filter by source_id if provided
+            if source_id is not None:
+                where_clauses.append("e.source_id = :source_id")
+            
             where_clause_str = " AND ".join(where_clauses)
             
             stmt = text(f"""
@@ -858,6 +864,7 @@ class EmbeddingService:
             
             params = {
                 'user_id': user_id,
+                'source_id': source_id,
                 'threshold': similarity_threshold,
                 'limit': limit
             }

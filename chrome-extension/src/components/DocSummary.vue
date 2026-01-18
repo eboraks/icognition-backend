@@ -174,7 +174,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 })
 
 const handleAsk = () => {
-    if (!question.value.trim()) return;
+    if (!question.value || !question.value.trim()) return;
     
     console.log('DocSummary -> handleAsk:', question.value)
 

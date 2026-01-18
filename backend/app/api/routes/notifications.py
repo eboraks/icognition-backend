@@ -64,8 +64,10 @@ class SSENotificationManager:
             connections = self.active_connections.get(user_id, set()).copy()
         
         if not connections:
-            logger.debug("No active SSE connections for user %s", user_id)
+            logger.info("No active SSE connections for user %s (attempted to send %s)", user_id, message.get('type'))
             return
+        
+        logger.info("Sending %s notification to user %s (%d connections)", message.get('type'), user_id, len(connections))
         
         message_json = json.dumps(message)
         disconnected = []

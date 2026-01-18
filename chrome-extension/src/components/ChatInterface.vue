@@ -24,11 +24,11 @@
         </div>
       </div>
     </ScrollPanel>
-    <div class="chat-input-container">
+    <div class="chat-input-container" v-if="sessionId">
       <AutoComplete
         v-model="inputMessage"
         :suggestions="suggestions"
-        @complete="search"
+        @complete="onSearch"
         placeholder="Ask a follow-up question..."
         class="flex-1 w-full"
         @keydown.enter="sendMessage"
@@ -47,7 +47,7 @@
         icon="pi pi-send"
         rounded
         @click="sendMessage"
-        :disabled="!inputMessage.trim() || loading"
+        :disabled="!inputMessage || !inputMessage.trim() || loading"
       />
     </div>
   </div>
@@ -68,6 +68,10 @@ const props = defineProps({
   initialSummary: {
     type: Object,
     default: null
+  },
+  fontSize: {
+    type: String,
+    default: '12px'
   }
 });
 
@@ -104,14 +108,14 @@ const extractVocabulary = () => {
     allVocabulary.value = Array.from(uniqueWords).sort();
 };
 
-const search = (event) => {
+const onSearch = (event) => {
     // If empty input, show nothing or all (let's show nothing to be cleaner)
     if (!event.query || !event.query.trim()) {
         suggestions.value = [];
         return;
     }
 
-    const query = event.query;
+    const query = event.query.trim().toLowerCase();
     // Find the last word being typed
     const lastSpaceIndex = query.lastIndexOf(' ');
     let prefix = '';
@@ -171,13 +175,42 @@ const scrollToBottom = () => {
 };
 
 onMounted(() => {
+    console.log('ChatInterface: mounted with sessionId:', props.sessionId, 'initialSummary:', props.initialSummary);
     loadMessages();
     
     // Listen for SSE messages from background
     chrome.runtime.onMessage.addListener(handleBackgroundMessage);
 });
 
+// Watch for sessionId changes to reload chat without unmounting/remounting
+watch(() => props.sessionId, (newId, oldId) => {
+    if (newId && newId !== oldId) {
+        console.log('ChatInterface: sessionId changed, reloading messages:', newId);
+        messages.value = [];
+        loadMessages();
+    }
+});
+
+// Watch for summary updates to inject content if it was previously empty
+watch(() => props.initialSummary, (newSummary) => {
+    if (newSummary && (newSummary.summary || (newSummary.bullet_points && newSummary.bullet_points.length > 0))) {
+        const hasSummary = messages.value.some(m => m.id === 'initial-summary');
+        const summaryMsg = messages.value.find(m => m.id === 'initial-summary');
+        
+        // If we don't have a summary, or it's currently showing nothing,
+        // or it's only showing the title but we now have full content
+        const isPlaceholder = summaryMsg && !summaryMsg.content.includes('Summary') && !summaryMsg.content.includes('Key Points');
+        
+        if (!hasSummary || isPlaceholder) {
+            console.log('ChatInterface: initialSummary refined or populated (from placeholder), updating message list');
+            messages.value = messages.value.filter(m => m.id !== 'initial-summary');
+            initChat();
+        }
+    }
+}, { deep: true });
+
 const loadMessages = async () => {
+    console.log('ChatInterface: loadMessages for sessionId:', props.sessionId);
     loading.value = true;
     try {
         const response = await chrome.runtime.sendMessage({
@@ -186,6 +219,7 @@ const loadMessages = async () => {
         });
         
         if (response && response.success) {
+            console.log('ChatInterface: loaded', response.data.length, 'messages');
             const fetchedMessages = response.data.map(msg => ({
                 id: msg.id,
                 content: msg.content,
@@ -207,15 +241,21 @@ const loadMessages = async () => {
 
 // Initialize with summary
 const initChat = () => {
+    console.log('ChatInterface: initChat called, summary status:', !!props.initialSummary);
     if (props.initialSummary) {
         let content = '';
+        // Always add title if available as a header to prevent blank state
+        if (props.initialSummary.title) {
+            content += `<h3 class="text-lg font-bold mb-3 border-bottom-1 border-200 pb-2">${escapeHtml(props.initialSummary.title)}</h3>`;
+        }
+        
         if (props.initialSummary.summary) {
-            content += `<h4 class="text-md font-semibold mb-1">Summary</h4><p class="text-sm">${formatUrlsAsLinks(props.initialSummary.summary)}</p>`;
+            content += `<h4 class="font-semibold mb-1">Summary</h4><p class="mb-2">${formatUrlsAsLinks(props.initialSummary.summary)}</p>`;
         }
         if (props.initialSummary.bullet_points && props.initialSummary.bullet_points.length > 0) {
-            content += `<h4 class="text-md font-semibold mb-1 mt-2">Key Points</h4><ul class="pl-3 mt-1 list-disc">`;
+            content += `<h4 class="font-semibold mb-1 mt-1">Key Points</h4><ul class="pl-3 mt-1 list-disc">`;
             props.initialSummary.bullet_points.forEach(point => {
-                content += `<li class="text-sm mb-1">${formatUrlsAsLinks(point)}</li>`;
+                content += `<li class="mb-1">${formatUrlsAsLinks(point)}</li>`;
             });
             content += `</ul>`;
         }
@@ -229,8 +269,11 @@ const initChat = () => {
                 content: content,
                 id: 'initial-summary'
             };
+            console.log('ChatInterface: injecting summary message');
             // Prepend summary
             messages.value.unshift(summaryMsg);
+        } else {
+             console.log('ChatInterface: summary content empty, skipping injection');
         }
     }
 };
@@ -311,7 +354,7 @@ const handleStreamError = (data) => {
 };
 
 const sendMessage = async () => {
-    if (!inputMessage.value.trim() || loading.value) return;
+    if (!inputMessage.value || !inputMessage.value.trim() || loading.value) return;
 
     const content = inputMessage.value.trim();
     
@@ -398,10 +441,10 @@ const sendMessage = async () => {
 }
 
 :deep(.p-scrollpanel-content) {
-  padding: 1rem;
+  padding: 0.5rem;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 0.5rem; /* Reduced from 1rem */
 }
 
 .message-wrapper {
@@ -418,21 +461,21 @@ const sendMessage = async () => {
 }
 
 .message {
-  max-width: 85%;
+  max-width: 90%; /* Increased from 85% */
   width: fit-content;
-  padding: 0.75rem 1rem;
-  border-radius: 12px;
+  padding: 0.5rem 0.75rem; /* Reduced from 0.75rem 1rem */
+  border-radius: 8px; /* Slightly tighter corner */
   background: var(--surface-card);
   border: 1px solid var(--surface-border);
-  box-shadow: 0 4px 6px rgba(0,0,0,0.05); /* Lighter shadow */
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05); /* Lighter shadow */
   word-break: break-word;
   overflow-wrap: anywhere;
 }
 
 .message-text {
-  /* white-space: pre-wrap; removed to handle html content better */
-  line-height: 1.5;
-  font-size: 0.95rem;
+  /* Dynamic font size applied via root variable or inline style */
+  line-height: 1.4;
+  font-size: v-bind(fontSize); /* Bound to prop */
 }
 
 :deep(.message-text h4) {
@@ -462,7 +505,7 @@ const sendMessage = async () => {
 
 .system-message {
   display: flex;
-  gap: 0.75rem; /* Smaller gap */
+  gap: 0.5rem; /* Reduced from 0.75rem */
   align-items: flex-start;
   background: var(--surface-50); 
   border-color: var(--surface-200);
@@ -497,6 +540,7 @@ const sendMessage = async () => {
   background: var(--primary-color, #3497BE);
   color: #fff; /* Explicit white for user message text */
   border: none;
+  margin-right: 1rem; /* Added padding/margin on the right */
 }
 
 :deep(.user-message .message-text), 

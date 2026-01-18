@@ -34,6 +34,8 @@ import Avatar from 'primevue/avatar';
 import Message from 'primevue/message';
 import AutoComplete from 'primevue/autocomplete';
 import ProgressSpinner from 'primevue/progressspinner';
+import Divider from 'primevue/divider';
+import Select from 'primevue/select';
 
 
 console.log('main.js loaded');
@@ -58,6 +60,8 @@ app.component('Avatar', Avatar);
 app.component('Message', Message);
 app.component('AutoComplete', AutoComplete);
 app.component('ProgressSpinner', ProgressSpinner);
+app.component('Divider', Divider);
+app.component('Select', Select);
 // Set up tab change listeners
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
     console.log('Tab activated event fired with tabId:', activeInfo.tabId);

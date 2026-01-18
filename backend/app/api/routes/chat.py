@@ -7,7 +7,7 @@ from app.models import ChatSession, ChatMessage
 from pydantic import BaseModel
 from app.api.routes.websocket import manager
 from app.services.chat_agent_service import get_chat_agent_service, ChatAgentService
-from app.db.database import get_session
+from app.db.database import get_session, async_session
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 import json
@@ -41,8 +41,19 @@ async def create_chat_session(
     chat_session_service: ChatSessionService = Depends(get_chat_session_service),
 ):
     """
-    Create a new chat session.
+    Create a new chat session or return an existing one for the same scope.
     """
+    # Check if a session already exists for this scope if it's a document/collection
+    if session_data.scope_id:
+        existing_session = await chat_session_service.get_session_by_scope(
+            user_id=user_context.user.id,
+            scope_type=session_data.scope_type,
+            scope_id=session_data.scope_id
+        )
+        if existing_session:
+            logger.info(f"Reusing existing chat session {existing_session.id} for scope {session_data.scope_type}:{session_data.scope_id}")
+            return existing_session
+
     session = await chat_session_service.create_chat_session(
         user_id=user_context.user.id,
         title=session_data.title,
@@ -215,70 +226,70 @@ async def stream_chat_response(
     user_message = user_message_obj.content
     
     async def generate_stream():
-        """Generator function that yields SSE events"""
+        """Generator function that yields SSE events with its own database session"""
         logger.info(f"[Session {session_id}] SSE generate_stream() started for message_id: {message_id}")
-        assistant_response = ""
-        response_message_id = str(uuid.uuid4())
-        chunk_count = 0
         
-        try:
-            # Stream the AI response
-            logger.info(f"[Session {session_id}] Starting iteration over chat_agent_service.get_stream()...")
-            async for chunk in chat_agent_service.get_stream(session_id, user_message, user_context.user.id):
-                chunk_count += 1
-                logger.info(f"[Session {session_id}] SSE received chunk #{chunk_count}: {len(chunk) if chunk else 0} chars")
-                if chunk:
-                    assistant_response += chunk
-                    # Format the accumulated response
-                    formatted_content = format_chat_message(assistant_response)
-                    
-                    # Send SSE event with stream chunk
-                    event_data = {
-                        "type": "stream_chunk",
-                        "content": formatted_content,
-                        "message_id": response_message_id
-                    }
-                    logger.info(f"[Session {session_id}] Yielding SSE event: stream_chunk (response length: {len(assistant_response)})")
-                    yield f"event: stream_chunk\ndata: {json.dumps(event_data)}\n\n"
+        # Use a fresh session for the entire duration of the stream to prevent premature closure
+        async with async_session() as session:
+            local_session_service = ChatSessionService(session)
+            assistant_response = ""
+            response_message_id = str(uuid.uuid4())
+            chunk_count = 0
             
-            logger.info(f"[Session {session_id}] Stream iteration completed. Total chunks: {chunk_count}, Total response: {len(assistant_response)} chars")
-            
-            # Send end_stream event
-            formatted_content = format_chat_message(assistant_response)
-            event_data = {
-                "type": "end_stream",
-                "content": formatted_content,
-                "message_id": response_message_id
-            }
-            logger.info(f"[Session {session_id}] Sending end_stream event")
-            yield f"event: end_stream\ndata: {json.dumps(event_data)}\n\n"
-            
-            # Save assistant response after streaming completes
-            if assistant_response:
-                try:
-                    await chat_session_service.save_message(session_id, "assistant", assistant_response)
-                    logger.info(f"Saved assistant response to session {session_id}, length: {len(assistant_response)}")
-                except Exception as save_error:
-                    logger.error(f"Failed to save assistant response: {save_error}", exc_info=True)
-                    
-        except Exception as e:
-            logger.error(f"Error during streaming for session {session_id}: {e}", exc_info=True)
-            
-            # Try to save partial response if available
-            if assistant_response:
-                try:
-                    await chat_session_service.save_message(session_id, "assistant", assistant_response)
-                    logger.info(f"Saved partial assistant response ({len(assistant_response)} chars)")
-                except Exception as save_error:
-                    logger.error(f"Failed to save partial assistant response: {save_error}", exc_info=True)
-            
-            # Send error event
-            error_data = {
-                "type": "error",
-                "content": f"\n\nError: {str(e)}. Please try again.",
-                "message_id": response_message_id
-            }
-            yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
+            try:
+                # Stream the AI response
+                logger.info(f"[Session {session_id}] Starting iteration over chat_agent_service.get_stream()...")
+                async for chunk in chat_agent_service.get_stream(session_id, user_message, user_context.user.id):
+                    chunk_count += 1
+                    if chunk:
+                        assistant_response += chunk
+                        formatted_content = format_chat_message(assistant_response)
+                        
+                        event_data = {
+                            "type": "stream_chunk",
+                            "content": formatted_content,
+                            "message_id": response_message_id
+                        }
+                        yield f"event: stream_chunk\ndata: {json.dumps(event_data)}\n\n"
+                
+                logger.info(f"[Session {session_id}] Stream iteration completed. Total chunks: {chunk_count}, Total response: {len(assistant_response)} chars")
+                
+                # Send end_stream event
+                formatted_content = format_chat_message(assistant_response)
+                event_data = {
+                    "type": "end_stream",
+                    "content": formatted_content,
+                    "message_id": response_message_id
+                }
+                yield f"event: end_stream\ndata: {json.dumps(event_data)}\n\n"
+                
+                # Save assistant response after streaming completes using the fresh session
+                if assistant_response:
+                    try:
+                        logger.info(f"[Session {session_id}] Saving assistant response to database...")
+                        await local_session_service.save_message(session_id, "assistant", assistant_response)
+                        logger.info(f"[Session {session_id}] Successfully saved assistant response")
+                    except Exception as save_error:
+                        logger.error(f"[Session {session_id}] Failed to save assistant response: {save_error}", exc_info=True)
+                        
+            except Exception as e:
+                logger.error(f"Error during streaming for session {session_id}: {e}", exc_info=True)
+                
+                # Try to save partial response if available
+                if assistant_response:
+                    try:
+                        await local_session_service.save_message(session_id, "assistant", assistant_response)
+                        logger.info(f"[Session {session_id}] Saved partial assistant response ({len(assistant_response)} chars)")
+                    except Exception as save_error:
+                        logger.error(f"[Session {session_id}] Failed to save partial assistant response: {save_error}")
+                
+                # Send error event
+                error_data = {
+                    "type": "error",
+                    "content": f"\n\nError: {str(e)}. Please try again.",
+                    "message_id": response_message_id
+                }
+                yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
     
     return StreamingResponse(
         generate_stream(),

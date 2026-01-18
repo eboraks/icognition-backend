@@ -10,7 +10,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 from sqlmodel import select
 from asyncio import create_task
-from app.db.database import get_session
+from app.db.database import get_session, async_session
 from app.core.config import settings
 from app.core.user_context import UserContext, get_authenticated_user_context, get_active_user_context
 from app.services.bookmark_service import BookmarkService
@@ -103,124 +103,125 @@ async def _process_document_content(
     try:
         logger.info(f"Starting content processing for document {document_id}")
         
-        # Get database session
-        session_gen = get_session()
-        session = await session_gen.__anext__()
+        # Get database session via async with context manager for proper cleanup
+        async with async_session() as session:
+            # Send initial progress update
+            if user_id:
+                logger.info(f"Sending initial 10% progress notification for document {document_id} to user {user_id}")
+                await notification_manager.send_notification({
+                    "type": "progress_percentage",
+                    "data": 10
+                }, user_id)
+            else:
+                logger.warning(f"No user_id provided for progress notification for document {document_id}")
+            
+            # Convert document_id to int if it's a string (Document.id is an integer)
+            doc_id = int(document_id) if isinstance(document_id, str) else document_id
+            
+            # Get the document
+            result = await session.execute(
+                select(Document).where(Document.id == doc_id)
+            )
+            document = result.scalar_one_or_none()
+            
+            if not document:
+                logger.error(f"Document {doc_id} not found")
+                if user_id:
+                    await notification_manager.send_notification({
+                        "type": "error",
+                        "data": "Document not found"
+                    }, user_id)
+                return
+            
+            # Check if content is NOT_AVAILABLE, empty, or unavailable
+            content_unavailable = False
+            
+            # Check content_type
+            if document.content_type in ["not_available", "fetch_failed"]:
+                content_unavailable = True
         
-        # Send initial progress update
-        if user_id:
-            await notification_manager.send_notification({
-                "type": "progress_percentage",
-                "data": 10
-            }, user_id)
-        
-        # Convert document_id to int if it's a string (Document.id is an integer)
-        doc_id = int(document_id) if isinstance(document_id, str) else document_id
-        
-        # Get the document
-        result = await session.execute(
-            select(Document).where(Document.id == doc_id)
-        )
-        document = result.scalar_one_or_none()
-        
-        if not document:
-            logger.error(f"Document {doc_id} not found")
+            # Check if content is empty
+            if not document.content or not document.content.strip():
+                content_unavailable = True
+            
+            # Check content_availability metadata
+            if document.document_metadata and document.document_metadata.get('content_availability'):
+                content_status = document.document_metadata['content_availability']
+                if not content_status.get('content_available', True):
+                    content_unavailable = True
+                elif content_status.get('content_status') == 'unavailable':
+                    content_unavailable = True
+            
+            if content_unavailable:
+                logger.info(f"Skipping content analysis for document {doc_id} - content is NOT_AVAILABLE, empty, or unavailable")
+                
+                # Mark as processed without AI analysis
+                document.ai_is_about = "Content not available for analysis"
+                document.ai_bullet_points = []
+                document.updated_at = datetime.now()
+                await session.commit()
+                await session.refresh(document)
+                
+                if user_id:
+                    await notification_manager.send_notification({
+                        "type": "document_ready",
+                        "data": {
+                            "bookmark_id": title,
+                            "document_id": document.id,
+                            "status": "not_available"
+                        }
+                    }, user_id)
+                
+                return
+            
+            # Send progress update
+            if user_id:
+                logger.info(f"Sending 50% progress notification for document {doc_id} to user {user_id}")
+                await notification_manager.send_notification({
+                    "type": "progress_percentage",
+                    "data": 50
+                }, user_id)
+            
+            # Get DSPy content service (NEW: using DSPy instead of old ContentAnalysisService)
+            dspy_content_service = get_dspy_content_service()
+            
+            # Analyze the document content using DSPy
+            logger.info(f"Analyzing document content with DSPy for {doc_id}")
+            analysis_result = await dspy_content_service.analyze_document_content(
+                content=document.content or "",
+                title=title,
+                url=url
+            )
+            
+            # Send progress update
             if user_id:
                 await notification_manager.send_notification({
-                    "type": "error",
-                    "data": "Document not found"
+                    "type": "progress_percentage",
+                    "data": 80
                 }, user_id)
-            return
-        
-        # Check if content is NOT_AVAILABLE, empty, or unavailable
-        content_unavailable = False
-        
-        # Check content_type
-        if document.content_type in ["not_available", "fetch_failed"]:
-            content_unavailable = True
-        
-        # Check if content is empty
-        if not document.content or not document.content.strip():
-            content_unavailable = True
-        
-        # Check content_availability metadata
-        if document.document_metadata and document.document_metadata.get('content_availability'):
-            content_status = document.document_metadata['content_availability']
-            if not content_status.get('content_available', True):
-                content_unavailable = True
-            elif content_status.get('content_status') == 'unavailable':
-                content_unavailable = True
-        
-        if content_unavailable:
-            logger.info(f"Skipping content analysis for document {doc_id} - content is NOT_AVAILABLE, empty, or unavailable")
             
-            # Mark as processed without AI analysis
-            document.ai_is_about = "Content not available for analysis"
-            document.ai_bullet_points = []
+            # Update document with DSPy analysis results
+            document.ai_is_about = analysis_result['summary']
+            document.ai_bullet_points = analysis_result['bullet_points']
+            document.extracted_content = analysis_result['extracted_content']
+            document.source_type = analysis_result['extracted_content']['source_type']
             document.updated_at = datetime.now()
+            
+            # Commit changes
             await session.commit()
             await session.refresh(document)
             
+            logger.info(f"Successfully processed document {doc_id} with summary and bullet points")
+            
+            # Send completion update with document data
             if user_id:
+                await _send_document_ready_message(document, user_id, title, url)
+                
+                # Send final progress
                 await notification_manager.send_notification({
-                    "type": "document_ready",
-                    "data": {
-                        "bookmark_id": title,
-                        "document_id": document.id,
-                        "status": "not_available"
-                    }
+                    "type": "progress_percentage",
+                    "data": 100
                 }, user_id)
-            
-            await session.close()
-            return
-        
-        # Send progress update
-        if user_id:
-            await notification_manager.send_notification({
-                "type": "progress_percentage",
-                "data": 30
-            }, user_id)
-        
-        # Get DSPy content service (NEW: using DSPy instead of old ContentAnalysisService)
-        dspy_content_service = get_dspy_content_service()
-        
-        # Analyze the document content using DSPy
-        logger.info(f"Analyzing document content with DSPy for {doc_id}")
-        analysis_result = await dspy_content_service.analyze_document_content(
-            content=document.content or "",
-            title=title,
-            url=url
-        )
-        
-        # Send progress update
-        if user_id:
-            await notification_manager.send_notification({
-                "type": "progress_percentage",
-                "data": 80
-            }, user_id)
-        
-        # Update document with DSPy analysis results
-        document.ai_is_about = analysis_result['summary']
-        document.ai_bullet_points = analysis_result['bullet_points']
-        document.extracted_content = analysis_result['extracted_content']
-        document.source_type = analysis_result['extracted_content']['source_type']
-        document.updated_at = datetime.now()
-        
-        # Commit changes
-        await session.commit()
-        await session.refresh(document)
-        
-        logger.info(f"Successfully processed document {doc_id} with summary and bullet points")
-        
-        # Send completion update with document data
-        if user_id:
-            await _send_document_ready_message(document, user_id, title, url)
-            
-            # Send final progress
-            await notification_manager.send_notification({
-                "type": "progress_percentage",
-                "data": 100
-            }, user_id)
         
     except Exception as e:
         logger.error(f"Error processing document {document_id}: {str(e)}")
@@ -233,15 +234,6 @@ async def _process_document_content(
                 "type": "error",
                 "data": f"Error processing document: {str(e)}"
             }, user_id)
-        
-    finally:
-        # Clean up session
-        try:
-            await session.close()
-        except Exception as e:
-            logger.error(f"Error closing session for document {document_id}: {str(e)}")
-        
-        # Don't re-raise to avoid breaking the background task
 
 
 async def _process_document_entities(
@@ -258,11 +250,8 @@ async def _process_document_entities(
     try:
         logger.info(f"Starting DSPy entity extraction for document {document_id}")
         
-        # Get database session
-        session_gen = get_session()
-        session = await session_gen.__anext__()
-        
-        try:
+        # Get database session via async with context manager for proper cleanup
+        async with async_session() as session:
             # Convert document_id to int if it's a string (Document.id is an integer)
             doc_id = int(document_id) if isinstance(document_id, str) else document_id
             
@@ -305,7 +294,8 @@ async def _process_document_entities(
             # Extract entities using DSPy
             entities = await dspy_entity_service.extract_entities_from_content(
                 content=document.content,
-                document_id=doc_id
+                document_id=doc_id,
+                session=session
             )
             
             # Process and store entities using adapter
@@ -320,9 +310,6 @@ async def _process_document_entities(
             await session.commit()
             
             logger.info(f"DSPy entity extraction completed for document {doc_id}: {result.get('entities_processed', 0)} entities processed")
-            
-        finally:
-            await session.close()
             
     except Exception as e:
         logger.error(f"Error in DSPy entity extraction for document {document_id}: {str(e)}")
@@ -352,11 +339,8 @@ async def _process_html_content_to_document(
     try:
         logger.info(f"Starting HTML content processing for bookmark {bookmark_id}")
         
-        # Get database session
-        session_gen = get_session()
-        session = await session_gen.__anext__()
-        
-        try:
+        # Get database session via async with context manager for proper cleanup
+        async with async_session() as session:
             # Get the bookmark
             result = await session.execute(
                 select(Bookmark).where(Bookmark.id == bookmark_id)
@@ -462,9 +446,6 @@ async def _process_html_content_to_document(
             create_task(_process_document_embeddings(
                 document.id
             ))
-                
-        finally:
-            await session.close()
             
     except Exception as e:
         logger.error(f"Error processing HTML content for bookmark {bookmark_id}: {str(e)}")
@@ -486,11 +467,8 @@ async def _process_document_embeddings(
     try:
         logger.info(f"Starting embedding generation for document {document_id}")
         
-        # Get database session
-        session_gen = get_session()
-        session = await session_gen.__anext__()
-        
-        try:
+        # Get database session via async with context manager for proper cleanup
+        async with async_session() as session:
             # Convert document_id to int if it's a string (Document.id is an integer)
             doc_id = int(document_id) if isinstance(document_id, str) else document_id
             
@@ -525,9 +503,6 @@ async def _process_document_embeddings(
             else:
                 logger.warning(f"Failed to generate embeddings for document {document_id}")
                 
-        finally:
-            await session.close()
-            
     except Exception as e:
         logger.error(f"Error generating embeddings for document {document_id}: {str(e)}")
         import traceback
@@ -550,11 +525,8 @@ async def _process_document_entities_batch(
     try:
         logger.info(f"Starting batch entity extraction for {len(document_ids)} documents")
         
-        # Get database session
-        session_gen = get_session()
-        session = await session_gen.__anext__()
-        
-        try:
+        # Get database session via async with context manager for proper cleanup
+        async with async_session() as session:
             # Get entity extraction task manager
             task_manager = get_entity_extraction_task_manager()
             
@@ -595,9 +567,6 @@ async def _process_document_entities_batch(
             
             logger.info(f"Batch entity extraction completed: {successful_docs}/{len(document_ids)} documents processed, {total_entities_processed} total entities")
             
-        finally:
-            await session.close()
-            
     except Exception as e:
         logger.error(f"Error in batch entity extraction: {str(e)}")
         import traceback
@@ -618,11 +587,8 @@ async def _process_document_embeddings_batch(
     try:
         logger.info(f"Starting batch embedding generation for {len(document_ids)} documents")
         
-        # Get database session
-        session_gen = get_session()
-        session = await session_gen.__anext__()
-        
-        try:
+        # Get database session via async with context manager for proper cleanup
+        async with async_session() as session:
             # Get embedding service
             embedding_service = get_embedding_service()
             
@@ -667,9 +633,6 @@ async def _process_document_embeddings_batch(
                     continue
             
             logger.info(f"Batch embedding generation completed: {successful_docs}/{len(document_ids)} documents processed")
-            
-        finally:
-            await session.close()
             
     except Exception as e:
         logger.error(f"Error in batch embedding generation: {str(e)}")

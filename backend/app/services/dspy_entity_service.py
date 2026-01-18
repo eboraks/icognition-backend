@@ -5,6 +5,7 @@ Uses DSPy with Google Gemini Flash Lite for fast entity extraction
 
 from typing import Optional, List, Dict, Any
 import dspy
+import anyio
 from datetime import datetime
 
 from app.core.config import settings
@@ -12,6 +13,8 @@ from app.utils.logging import get_logger
 from app.services.dspy_models_entities_only import EntityExtractionResult, Entity
 from app.models import Document
 from app.utils.text_utils import extract_text_from_html
+from app.services.prompt_service import PromptService
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = get_logger(__name__)
 
@@ -19,8 +22,7 @@ logger = get_logger(__name__)
 # --- DSPy Signature for Entity Extraction ---
 class ExtractEntities(dspy.Signature):
     """
-You are an expert entity extraction engine. Your sole task is to extract 
-the 10-15 MOST IMPORTANT entities from the provided text.
+You are an expert entity extraction engine. Your task is to extract the MOST IMPORTANT entities from the provided text.
 
 Return a valid JSON object with a list of entities.
 
@@ -42,8 +44,8 @@ Return a valid JSON object with a list of entities.
     - institution: Academic or governmental institutions
 
 3.  **Quality over Quantity:**
-    - Extract 10-15 entities maximum
-    - Each entity must be relevant to the main content
+    - Extract up to 15 entities maximum.
+    - Each entity must be clearly relevant to the main content.
     - Provide a brief 1-sentence description for each
 
 4.  **Description Format:**
@@ -99,7 +101,8 @@ class DspyEntityService:
     async def extract_entities_from_content(
         self,
         content: str,
-        document_id: Optional[int] = None
+        document_id: Optional[int] = None,
+        session: Optional[AsyncSession] = None
     ) -> List[Dict[str, Any]]:
         """
         Extract entities from document content using DSPy.
@@ -107,6 +110,7 @@ class DspyEntityService:
         Args:
             content: Document content text
             document_id: Optional document ID for logging
+            session: Optional database session to load prompt from DB
             
         Returns:
             List of entity dictionaries with name, type, description
@@ -116,17 +120,50 @@ class DspyEntityService:
             logger.warning(f"Empty content for document {document_id}, skipping entity extraction")
             return []
         
+        # New Rule: Only process if there are 50 words or more
+        word_count = len(text.split())
+        if word_count < 50:
+            logger.info(f"Content for document {document_id} is too short ({word_count} words), skipping entity extraction (min 50 words required)")
+            return []
+        
+        # Load prompt from database if session is provided
+        custom_instructions = None
+        if session:
+            try:
+                prompt_service = PromptService(session)
+                db_prompt = await prompt_service.get_latest_prompt("entity_extraction")
+                if db_prompt and db_prompt.content:
+                    logger.info(f"Using custom entity extraction prompt from database (version {db_prompt.version})")
+                    custom_instructions = db_prompt.content
+            except Exception as e:
+                logger.warning(f"Error loading prompt from database, falling back to hardcoded: {e}")
+
         logger.info(f"Starting DSPy entity extraction for document {document_id or 'unknown'}")
         
         try:
-            # Use dspy.context for async task execution
+            # Use anyio.to_thread.run_sync to offload synchronous DSPy calls
+            # This prevents blocking the event loop during LLM processing
             lm = dspy.LM(self.model_name, api_key=self.api_key)
             
-            with dspy.context(lm=lm):
-                # Initialize program in context
-                program = EntityExtractorProgram()
-                # Extract entities using DSPy
-                extracted = program(text=text)
+            def run_extraction():
+                with dspy.context(lm=lm):
+                    # Use custom instructions if available, otherwise use hardcoded ones in the signature
+                    signature = ExtractEntities
+                    if custom_instructions:
+                        signature = ExtractEntities.with_instructions(custom_instructions)
+                    
+                    # Create one-off program with the chosen signature
+                    class DynamicEntityExtractor(dspy.Module):
+                        def __init__(self, sig):
+                            super().__init__()
+                            self.predict = dspy.Predict(sig)
+                        def forward(self, text):
+                            return self.predict(content_text=text).extracted_entities
+
+                    program = DynamicEntityExtractor(signature)
+                    return program(text=text)
+            
+            extracted = await anyio.to_thread.run_sync(run_extraction)
             
             # Convert to dictionary format
             entities = []

@@ -173,21 +173,21 @@ export const useChatStore = defineStore('chat', () => {
     try {
       // Send message via REST API
       const savedMessage = await chatService.sendMessage(activeSession.value.id, messageContent);
-      
+
       // Debug: Log the response structure
       console.log('Saved message response:', savedMessage);
       console.log('Saved message data:', savedMessage.data);
       console.log('Message ID:', savedMessage.data?.id);
-      
+
       // Extract message ID - handle different possible response structures
       const messageId = savedMessage.data?.id || (savedMessage.data as any)?.data?.id;
-      
+
       if (!messageId) {
         console.error('Message ID is missing from response. Full response:', savedMessage);
         console.error('Response data:', savedMessage.data);
         throw new Error('Failed to get message ID from server response');
       }
-      
+
       // Start SSE stream for AI response
       await streamChatResponse(activeSession.value.id, messageId);
     } catch (error) {
@@ -209,9 +209,9 @@ export const useChatStore = defineStore('chat', () => {
   async function streamChatResponse(sessionId: number, messageId: number) {
     const startTime = Date.now();
     const log = (msg: string) => console.log(`[${new Date().toISOString()}] [Chat SSE] ${msg}`);
-    
+
     log(`Starting SSE stream for session ${sessionId}, message ${messageId}`);
-    
+
     // Close existing EventSource if any
     if (eventSource) {
       eventSource.close();
@@ -227,7 +227,7 @@ export const useChatStore = defineStore('chat', () => {
 
       const apiBase = import.meta.env.VITE_APP_API_BASE_URL as string;
       log(`API Base URL: ${apiBase}`);
-      
+
       // Get Firebase ID token
       const auth = getAuth();
       const user = auth.currentUser;
@@ -236,7 +236,7 @@ export const useChatStore = defineStore('chat', () => {
         reject(new Error('No authenticated user'));
         return;
       }
-      
+
       let token: string;
       try {
         log('Getting Firebase ID token...');
@@ -251,7 +251,7 @@ export const useChatStore = defineStore('chat', () => {
       // Create SSE connection with authentication
       const streamUrl = `${apiBase}/api/v1/chat/sessions/${sessionId}/stream?message_id=${messageId}`;
       log(`Fetching SSE stream from: ${streamUrl}`);
-      
+
       // Use fetch with ReadableStream for SSE (EventSource doesn't support custom headers)
       fetch(streamUrl, {
         method: 'GET',
@@ -334,7 +334,7 @@ export const useChatStore = defineStore('chat', () => {
     const log = (msg: string) => console.log(`[${new Date().toISOString()}] [SSE Handler] ${msg}`);
     const { type, content, message_id } = messageData;
     const now = new Date();
-    
+
     log(`Handling message type: ${type}, content_length: ${content?.length || 0}, message_id: ${message_id}`);
 
     if (type === "stream_chunk") {
@@ -445,7 +445,7 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     disconnectSSE();
-    
+
     const newSession = sessions.value.find(s => s.id === sessionId);
     if (newSession) {
       activeSession.value = newSession;
@@ -470,6 +470,21 @@ export const useChatStore = defineStore('chat', () => {
   });
 
 
+  async function updateSessionScope(sessionId: number, scopeType: string, scopeId: number | null) {
+    try {
+      const response = await chatService.updateSessionScope(sessionId, scopeType, scopeId);
+      const session = sessions.value.find(s => s.id === sessionId);
+      if (session) {
+        session.scope_type = response.data.scope_type;
+        session.scope_id = response.data.scope_id;
+      }
+      return response.data;
+    } catch (err: any) {
+      error.value = err.message || 'Failed to update session scope';
+      return null;
+    }
+  }
+
   return {
     sessions,
     activeSession,
@@ -483,5 +498,6 @@ export const useChatStore = defineStore('chat', () => {
     sendMessage,
     deleteSession,
     switchActiveSession,
+    updateSessionScope,
   };
 });

@@ -123,7 +123,7 @@ class DspyEntityAdapter:
                 )
             )
             result = await self.session.execute(query)
-            existing_entity = result.scalar_one_or_none()
+            existing_entity = result.scalars().first()
             
             if existing_entity:
                 # If it has wikidata_id, we're good. If not, maybe try to enrich?
@@ -175,7 +175,7 @@ class DspyEntityAdapter:
             if wikidata_id:
                 wd_query = select(Entity).where(Entity.wikidata_id == wikidata_id)
                 wd_result = await self.session.execute(wd_query)
-                wd_entity = wd_result.scalar_one_or_none()
+                wd_entity = wd_result.scalars().first()
                 if wd_entity:
                     logger.info(f"Found existing entity by Wikidata ID: {wikidata_id}")
                     return wd_entity
