@@ -8,7 +8,7 @@
       :room-actions="JSON.stringify(roomActions)"
       :menu-actions="JSON.stringify(menuActions)"
       :room-id="activeRoomId"
-      :messages="JSON.stringify(chatStore.messages)"
+      :messages="messagesString"
       :rooms-loaded="true"
       :messages-loaded="true"
       :show-new-messages-divider="false"
@@ -40,6 +40,15 @@ const authStore = useAuthStore();
 
 const currentUserId = ref(authStore.currentUser?.uid || 'guest');
 
+// Keep current user id in sync (auth initializes async, including DISABLE_AUTH mode)
+watch(
+  () => authStore.currentUser?.uid,
+  (uid) => {
+    if (uid) currentUserId.value = uid;
+  },
+  { immediate: true }
+);
+
 type RoomUser = { _id: string; username: string };
 type Room = {
   roomId: string;
@@ -57,6 +66,11 @@ type ChatMessagePayload = { content: string };
 const roomsString = computed(() => {
   console.log('Rooms string computed, rooms count:', rooms.value.length);
   return JSON.stringify(rooms.value);
+});
+
+const messagesString = computed(() => {
+  // Messages are stored per-session in the chat store
+  return JSON.stringify(chatStore.activeSession?.messages || []);
 });
 
 // Keep rooms list in sync with store sessions

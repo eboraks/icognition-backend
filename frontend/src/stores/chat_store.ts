@@ -227,38 +227,44 @@ export const useChatStore = defineStore('chat', () => {
 
       const apiBase = import.meta.env.VITE_APP_API_BASE_URL as string;
       log(`API Base URL: ${apiBase}`);
-      
-      // Get Firebase ID token
-      const auth = getAuth();
-      const user = auth.currentUser;
-      if (!user) {
-        log('ERROR: No authenticated Firebase user');
-        reject(new Error('No authenticated user'));
-        return;
-      }
-      
-      let token: string;
-      try {
-        log('Getting Firebase ID token...');
-        token = await user.getIdToken();
-        log('Firebase ID token obtained successfully');
-      } catch (error) {
-        log(`ERROR: Failed to get Firebase token: ${error}`);
-        reject(new Error('Failed to get authentication token'));
-        return;
-      }
 
       // Create SSE connection with authentication
       const streamUrl = `${apiBase}/api/v1/chat/sessions/${sessionId}/stream?message_id=${messageId}`;
       log(`Fetching SSE stream from: ${streamUrl}`);
       
       // Use fetch with ReadableStream for SSE (EventSource doesn't support custom headers)
+      const headers: Record<string, string> = {
+        'Accept': 'text/event-stream',
+      };
+
+      // In local dev, backend may run with DISABLE_AUTH=true (no Firebase user available).
+      // In that mode, skip attaching Authorization header so SSE can still work.
+      if (!authStore.isAuthDisabled) {
+        const auth = getAuth();
+        const user = auth.currentUser;
+        if (!user) {
+          log('ERROR: No authenticated Firebase user (auth is enabled)');
+          reject(new Error('No authenticated user'));
+          return;
+        }
+
+        try {
+          log('Getting Firebase ID token...');
+          const token = await user.getIdToken();
+          headers.Authorization = `Bearer ${token}`;
+          log('Firebase ID token obtained successfully');
+        } catch (error) {
+          log(`ERROR: Failed to get Firebase token: ${error}`);
+          reject(new Error('Failed to get authentication token'));
+          return;
+        }
+      } else {
+        log('Auth is disabled (DISABLE_AUTH=true); opening SSE without Authorization header');
+      }
+
       fetch(streamUrl, {
         method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'text/event-stream',
-        },
+        headers,
       }).then(response => {
         log(`SSE response received, status: ${response.status}, ok: ${response.ok}`);
         if (!response.ok) {
