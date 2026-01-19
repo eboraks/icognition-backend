@@ -93,20 +93,21 @@ class KnowledgeService:
         Ensure the opening message prompt exists in the database.
         Returns the prompt content.
         """
+        from app.services.prompt_utils import PromptType
         prompt_service = PromptService(self.session)
-        prompt = await prompt_service.get_latest_prompt("opening_message_latest_documents")
+        prompt = await prompt_service.get_latest_prompt(PromptType.OPENING_MESSAGE.value)
         
         if not prompt:
             # Create the prompt if it doesn't exist
-            logger.info("Creating opening_message_latest_documents prompt in database")
+            logger.info(f"Creating {PromptType.OPENING_MESSAGE.value} prompt in database")
             prompt = await prompt_service.create_prompt(
-                prompt_type="opening_message_latest_documents",
-                content=DEFAULT_OPENING_MESSAGE_PROMPT,
+                prompt_type=PromptType.OPENING_MESSAGE.value,
+                user_prompt=DEFAULT_OPENING_MESSAGE_PROMPT,
                 description="Prompt for generating contextual opening messages based on latest bookmarked documents"
             )
             await self.session.commit()
         
-        return prompt.content if prompt else DEFAULT_OPENING_MESSAGE_PROMPT
+        return prompt.user_prompt if prompt else DEFAULT_OPENING_MESSAGE_PROMPT
     
     async def _generate_opening_message_from_documents(
         self, user_id: str, documents: List[Document], limit: int = 2
@@ -668,23 +669,37 @@ class KnowledgeService:
                             "message": f"Sorry, I couldn't generate a summary for '{document.title or 'Untitled'}' because the document has no readable content.",
                         }
                     
-                    # Create summary prompt
-                    prompt_parts = [
-                        "Please provide a concise summary of the following document.",
-                        "The summary should be 2-3 sentences that capture the main points and key information.",
-                        "Focus on the most important ideas and avoid unnecessary details."
-                    ]
+                    # Try to get template from database
+                    from app.services.prompt_utils import PromptType
+                    prompt_service = PromptService(self.session)
+                    db_prompt = await prompt_service.get_latest_prompt(PromptType.CONTENT_SUMMARY.value)
                     
-                    if document.title:
-                        prompt_parts.append(f"Title: {document.title}")
-                    
-                    prompt_parts.extend([
-                        "",
-                        "Content:",
-                        content
-                    ])
-                    
-                    prompt = "\n".join(prompt_parts)
+                    if db_prompt:
+                        system_prompt = db_prompt.system_prompt or ""
+                        user_template = db_prompt.user_prompt
+                        try:
+                            user_prompt = user_template.format(content=content, title=document.title or "Untitled")
+                            prompt = f"{system_prompt}\n\n{user_prompt}"
+                        except (KeyError, ValueError):
+                            prompt = f"{system_prompt}\n\n{user_template}\n\nContent: {content}"
+                    else:
+                        # Create summary prompt
+                        prompt_parts = [
+                            "Please provide a concise summary of the following document.",
+                            "The summary should be 2-3 sentences that capture the main points and key information.",
+                            "Focus on the most important ideas and avoid unnecessary details."
+                        ]
+                        
+                        if document.title:
+                            prompt_parts.append(f"Title: {document.title}")
+                        
+                        prompt_parts.extend([
+                            "",
+                            "Content:",
+                            content
+                        ])
+                        
+                        prompt = "\n".join(prompt_parts)
                     
                     # Generate summary using Gemini
                     config = GeminiConfig(

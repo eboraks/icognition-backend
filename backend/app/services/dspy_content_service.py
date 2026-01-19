@@ -65,9 +65,13 @@ of the JSON.
 class ContentExtractorProgram(dspy.Module):
     """DSPy program for content extraction"""
     
-    def __init__(self):
+    def __init__(self, instructions: Optional[str] = None):
         super().__init__()
-        self.predict = dspy.Predict(ExtractContent)
+        if instructions:
+            # Dynamically update signature instructions from DB
+            self.predict = dspy.Predict(ExtractContent.with_instructions(instructions))
+        else:
+            self.predict = dspy.Predict(ExtractContent)
 
     def forward(self, text):
         result = self.predict(content_text=text)
@@ -97,6 +101,27 @@ class DspyContentService:
         
         logger.info("DspyContentService initialized successfully with Flash Lite model")
     
+    async def _get_db_instructions(self) -> Optional[str]:
+        """Fetch DSPy instructions from database"""
+        from app.db.database import get_session
+        from app.services.prompt_service import PromptService
+        
+        try:
+            async for session in get_session():
+                prompt_service = PromptService(session)
+                db_prompt = await prompt_service.get_latest_prompt("DSPy: Content Extraction")
+                if db_prompt:
+                    # Combine system and user prompt for DSPy instructions
+                    instructions = ""
+                    if db_prompt.system_prompt:
+                        instructions += db_prompt.system_prompt + "\n\n"
+                    instructions += db_prompt.user_prompt
+                    return instructions
+                break
+        except Exception as e:
+            logger.warning(f"Failed to fetch DSPy instructions from DB: {e}")
+        return None
+
     async def analyze_document_content(
         self,
         content: str,
@@ -126,6 +151,9 @@ class DspyContentService:
         
         logger.info(f"Starting DSPy content analysis for: {title or 'Untitled'}")
         
+        # Fetch instructions from DB if available
+        instructions = await self._get_db_instructions()
+        
         try:
             # Use anyio.to_thread.run_sync to offload synchronous DSPy calls
             # This prevents blocking the event loop during LLM processing
@@ -133,7 +161,7 @@ class DspyContentService:
             
             def run_extraction():
                 with dspy.context(lm=lm):
-                    program = ContentExtractorProgram()
+                    program = ContentExtractorProgram(instructions=instructions)
                     return program(text=content)
             
             extracted = await anyio.to_thread.run_sync(run_extraction)

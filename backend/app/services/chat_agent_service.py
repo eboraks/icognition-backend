@@ -251,23 +251,43 @@ class ChatAgentService:
                 max_tokens=20
             )
 
-            prompt_parts = [
-                "You are an AI writing assistant. Continue the user's thought following the provided conversation history.",
-                f"\nConversation History:\n{history}" if history else "",
-            ]
+            # Try to get prompt from database
+            from app.services.prompt_utils import PromptType
+            prompt_service = PromptService(db_session)
+            db_prompt = await prompt_service.get_latest_prompt(PromptType.CHAT_AGENT_TYPE_AHEAD.value)
             
-            if context:
-                prompt_parts.append(f"\nAdditional Context: {context}")
-            
-            prompt_parts.append(f"\nUser is currently typing: '{current_text}'")
-            prompt_parts.append(
-                "\nProvide ONLY the characters or words that complete the current thought from where it left off. "
-                "Do NOT repeat any part of the input text. Do NOT explain yourself. "
-                "The completion should feel natural and continue the specific sentence or phrase the user is currently typing. "
-                "If no good completion is found, return nothing."
-            )
-
-            prompt = "\n".join(filter(None, prompt_parts))
+            if db_prompt:
+                system_prompt = db_prompt.system_prompt or "You are an AI writing assistant."
+                user_template = db_prompt.user_prompt
+                # The DB prompt might use different placeholders or just be the text
+                try:
+                    user_prompt = user_template.format(
+                        history=history,
+                        context=context or "None",
+                        current_text=current_text
+                    )
+                except (KeyError, ValueError):
+                    # Fallback if format fails
+                    user_prompt = f"{user_template}\n\nHistory: {history}\nContext: {context}\nTyping: {current_text}"
+                
+                prompt = f"{system_prompt}\n\n{user_prompt}"
+            else:
+                prompt_parts = [
+                    "You are an AI writing assistant. Continue the user's thought following the provided conversation history.",
+                    f"\nConversation History:\n{history}" if history else "",
+                ]
+                
+                if context:
+                    prompt_parts.append(f"\nAdditional Context: {context}")
+                
+                prompt_parts.append(f"\nUser is currently typing: '{current_text}'")
+                prompt_parts.append(
+                    "\nProvide ONLY the characters or words that complete the current thought from where it left off. "
+                    "Do NOT repeat any part of the input text. Do NOT explain yourself. "
+                    "The completion should feel natural and continue the specific sentence or phrase the user is currently typing. "
+                    "If no good completion is found, return nothing."
+                )
+                prompt = "\n".join(filter(None, prompt_parts))
 
             response = await llm.ainvoke(prompt)
             prediction = extract_text_from_content(response.content).strip()
@@ -338,11 +358,14 @@ class ChatAgentService:
             # Create LangGraph ReAct agent with checkpointer for memory
             try:
                 # Try to get system prompt from database, fallback to hardcoded
+                from app.services.prompt_utils import PromptType
                 prompt_service = PromptService(db_session)
-                db_prompt = await prompt_service.get_latest_prompt("react_agent_system")
+                db_prompt = await prompt_service.get_latest_prompt(PromptType.CHAT_AGENT_SYSTEM.value)
                 
                 if db_prompt:
-                    system_prompt = db_prompt.content
+                    system_prompt = db_prompt.system_prompt
+                    if db_prompt.user_prompt:
+                        system_prompt += f"\n\n{db_prompt.user_prompt}"
                     logger.info(f"[Session {session_id}] Using system prompt from database (version {db_prompt.version})")
                 else:
                     # Fallback to hardcoded prompt

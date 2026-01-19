@@ -59,9 +59,9 @@
             </template>
           </Column>
           <Column field="version" header="Version" sortable></Column>
-          <Column field="content" header="Content">
+          <Column field="user_prompt" header="User Prompt">
             <template #body="{ data }">
-              <div class="content-preview">{{ truncateContent(data.content, 100) }}</div>
+              <div class="content-preview">{{ truncateContent(data.user_prompt, 100) }}</div>
             </template>
           </Column>
           <Column field="created_at" header="Created" sortable>
@@ -133,13 +133,26 @@
         </div>
         
         <div class="form-group">
-          <label for="prompt-content">Content:</label>
+          <label for="prompt-system">System Prompt:</label>
           <Textarea 
-            id="prompt-content"
-            v-model="formData.content" 
-            :rows="15"
+            id="prompt-system"
+            v-model="formData.system_prompt" 
+            :autoResize="true"
+            rows="3"
             class="prompt-content-textarea"
-            placeholder="Enter prompt content..."
+            placeholder="Optional system instruction..."
+          />
+        </div>
+        
+        <div class="form-group">
+          <label for="prompt-user">User Prompt:</label>
+          <Textarea 
+            id="prompt-user"
+            v-model="formData.user_prompt" 
+            :autoResize="true"
+            rows="12"
+            class="prompt-content-textarea"
+            placeholder="Enter user prompt template..."
           />
         </div>
       </div>
@@ -173,9 +186,9 @@
         scrollHeight="400px"
       >
         <Column field="version" header="Version" sortable></Column>
-        <Column field="content" header="Content">
+        <Column field="user_prompt" header="User Prompt">
           <template #body="{ data }">
-            <div class="content-preview">{{ truncateContent(data.content, 150) }}</div>
+            <div class="content-preview">{{ truncateContent(data.user_prompt, 150) }}</div>
           </template>
         </Column>
         <Column field="description" header="Description">
@@ -209,7 +222,7 @@ import InputText from 'primevue/inputtext';
 import Textarea from 'primevue/textarea';
 import Tag from 'primevue/tag';
 import Toast from 'primevue/toast';
-import { adminService, type PromptResponse, type PromptCreate, type PromptUpdate } from '@/services/AdminService';
+import { adminService, type PromptResponse, type PromptCreate, type PromptUpdate } from '@/services/AdminService.ts';
 
 const toast = useToast();
 
@@ -227,21 +240,33 @@ const saving = ref(false);
 
 const formData = ref<PromptCreate>({
   prompt_type: '',
-  content: '',
+  system_prompt: '',
+  user_prompt: '',
   description: ''
 });
 
 // Prompt types (matching backend PromptType enum + react_agent_system)
 const promptTypes = [
-  'content_summary',
-  'entity_extraction',
-  'topic_categorization',
-  'sentiment_analysis',
-  'language_detection',
-  'content_validation',
-  'bullet_points',
-  'react_agent_system',
-  'react_agent_template'
+  'Doc Analysis: Summary',
+  'Doc Analysis: Entities',
+  'Doc Analysis: Topics',
+  'Doc Analysis: Sentiment',
+  'Doc Analysis: Language',
+  'Doc Analysis: Validation',
+  'Doc Analysis: Bullet Points',
+  'Doc Analysis: Opening Message',
+  'Doc Analysis: Classifier',
+  'Chat Agent: System',
+  'Chat Agent: Type-ahead Prompt',
+  'Doc Extract: News',
+  'Doc Extract: Blog',
+  'Doc Extract: Social',
+  'Doc Extract: Product',
+  'Doc Extract: Marketing',
+  'Doc Extract: Book',
+  'Doc Extract: Generic',
+  'DSPy: Content Extraction',
+  'DSPy: Entity Extraction'
 ];
 
 // Methods
@@ -272,7 +297,8 @@ const openEditDialog = (prompt: PromptResponse) => {
   editingPrompt.value = prompt;
   formData.value = {
     prompt_type: prompt.prompt_type,
-    content: prompt.content,
+    system_prompt: prompt.system_prompt || '',
+    user_prompt: prompt.user_prompt,
     description: prompt.description || ''
   };
   editDialogVisible.value = true;
@@ -282,7 +308,8 @@ const openCreateDialog = () => {
   editingPrompt.value = null;
   formData.value = {
     prompt_type: '',
-    content: '',
+    system_prompt: '',
+    user_prompt: '',
     description: ''
   };
   editDialogVisible.value = true;
@@ -293,17 +320,18 @@ const closeEditDialog = () => {
   editingPrompt.value = null;
   formData.value = {
     prompt_type: '',
-    content: '',
+    system_prompt: '',
+    user_prompt: '',
     description: ''
   };
 };
 
 const savePrompt = async () => {
-  if (!formData.value.prompt_type || !formData.value.content.trim()) {
+  if (!formData.value.prompt_type || !formData.value.user_prompt.trim()) {
     toast.add({
       severity: 'warn',
       summary: 'Validation Error',
-      detail: 'Prompt type and content are required',
+      detail: 'Prompt type and user prompt are required',
       life: 3000
     });
     return;
@@ -314,7 +342,8 @@ const savePrompt = async () => {
     if (editingPrompt.value) {
       // Update existing prompt (creates new version)
       await adminService.updatePrompt(editingPrompt.value.id, {
-        content: formData.value.content,
+        system_prompt: formData.value.system_prompt,
+        user_prompt: formData.value.user_prompt,
         description: formData.value.description
       });
       toast.add({

@@ -9,7 +9,8 @@ export interface PromptResponse {
   id: number;
   prompt_type: string;
   version: number;
-  content: string;
+  system_prompt?: string;
+  user_prompt: string;
   description?: string;
   is_active: boolean;
   created_by?: string;
@@ -19,12 +20,14 @@ export interface PromptResponse {
 
 export interface PromptCreate {
   prompt_type: string;
-  content: string;
+  system_prompt?: string;
+  user_prompt: string;
   description?: string;
 }
 
 export interface PromptUpdate {
-  content: string;
+  system_prompt?: string;
+  user_prompt: string;
   description?: string;
 }
 

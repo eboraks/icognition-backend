@@ -27,12 +27,14 @@ router = APIRouter(
 # Request/Response Models
 class PromptCreate(BaseModel):
     prompt_type: str
-    content: str
+    system_prompt: Optional[str] = None
+    user_prompt: str
     description: Optional[str] = None
 
 
 class PromptUpdate(BaseModel):
-    content: str
+    system_prompt: Optional[str] = None
+    user_prompt: str
     description: Optional[str] = None
 
 
@@ -40,7 +42,8 @@ class PromptResponse(BaseModel):
     id: int
     prompt_type: str
     version: int
-    content: str
+    system_prompt: Optional[str]
+    user_prompt: str
     description: Optional[str]
     is_active: bool
     created_by: Optional[str]
@@ -145,7 +148,8 @@ async def create_prompt(
     try:
         prompt = await prompt_service.create_prompt(
             prompt_type=prompt_data.prompt_type,
-            content=prompt_data.content,
+            system_prompt=prompt_data.system_prompt,
+            user_prompt=prompt_data.user_prompt,
             description=prompt_data.description,
             user_id=user_context.user_id
         )
@@ -173,7 +177,8 @@ async def update_prompt(
     try:
         prompt = await prompt_service.update_prompt(
             prompt_id=prompt_id,
-            content=prompt_data.content,
+            system_prompt=prompt_data.system_prompt,
+            user_prompt=prompt_data.user_prompt,
             description=prompt_data.description
         )
         return prompt

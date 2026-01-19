@@ -132,9 +132,9 @@ class DspyEntityService:
             try:
                 prompt_service = PromptService(session)
                 db_prompt = await prompt_service.get_latest_prompt("entity_extraction")
-                if db_prompt and db_prompt.content:
+                if db_prompt and db_prompt.user_prompt:
                     logger.info(f"Using custom entity extraction prompt from database (version {db_prompt.version})")
-                    custom_instructions = db_prompt.content
+                    custom_instructions = db_prompt.user_prompt
             except Exception as e:
                 logger.warning(f"Error loading prompt from database, falling back to hardcoded: {e}")
 

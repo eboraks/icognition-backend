@@ -13,13 +13,23 @@ logger = get_logger(__name__)
 
 class PromptType(Enum):
     """Types of prompts for different analysis tasks"""
-    CONTENT_SUMMARY = "content_summary"
-    ENTITY_EXTRACTION = "entity_extraction"
-    TOPIC_CATEGORIZATION = "topic_categorization"
-    SENTIMENT_ANALYSIS = "sentiment_analysis"
-    LANGUAGE_DETECTION = "language_detection"
-    CONTENT_VALIDATION = "content_validation"
-    BULLET_POINTS = "bullet_points"
+    CONTENT_SUMMARY = "Doc Analysis: Summary"
+    ENTITY_EXTRACTION = "Doc Analysis: Entities"
+    TOPIC_CATEGORIZATION = "Doc Analysis: Topics"
+    SENTIMENT_ANALYSIS = "Doc Analysis: Sentiment"
+    LANGUAGE_DETECTION = "Doc Analysis: Language"
+    CONTENT_VALIDATION = "Doc Analysis: Validation"
+    BULLET_POINTS = "Doc Analysis: Bullet Points"
+    OPENING_MESSAGE = "Doc Analysis: Opening Message"
+    CHAT_AGENT_SYSTEM = "Chat Agent: System"
+    CHAT_AGENT_TYPE_AHEAD = "Chat Agent: Type-ahead Prompt"
+    EXTRACT_NEWS = "Doc Extract: News"
+    EXTRACT_BLOG = "Doc Extract: Blog"
+    EXTRACT_SOCIAL = "Doc Extract: Social"
+    EXTRACT_PRODUCT = "Doc Extract: Product"
+    EXTRACT_MARKETING = "Doc Extract: Marketing"
+    EXTRACT_BOOK = "Doc Extract: Book"
+    EXTRACT_GENERIC = "Doc Extract: Generic"
 
 
 class PromptTemplates:
@@ -29,17 +39,17 @@ class PromptTemplates:
     async def _get_template_from_db(
         prompt_type: str,
         session: Optional[AsyncSession] = None
-    ) -> Optional[str]:
-        """Get template from database if session is available"""
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Get template from database if session is available. Returns (system_prompt, user_prompt)"""
         if session:
             try:
                 prompt_service = PromptService(session)
                 prompt = await prompt_service.get_latest_prompt(prompt_type)
                 if prompt:
-                    return prompt.content
+                    return prompt.system_prompt, prompt.user_prompt
             except Exception as e:
                 logger.warning(f"Failed to get prompt from DB for {prompt_type}: {e}")
-        return None
+        return None, None
     
     @staticmethod
     async def get_content_summary_prompt(
@@ -49,7 +59,7 @@ class PromptTemplates:
     ) -> str:
         """Generate prompt for content summarization"""
         # Try to get template from database
-        template = await PromptTemplates._get_template_from_db("content_summary", session)
+        _, template = await PromptTemplates._get_template_from_db(PromptType.CONTENT_SUMMARY.value, session)
         
         # Fallback to hardcoded template
         if not template:
@@ -68,7 +78,7 @@ Summary:"""
         session: Optional[AsyncSession] = None
     ) -> str:
         """Generate prompt for named entity extraction"""
-        template = await PromptTemplates._get_template_from_db("entity_extraction", session)
+        _, template = await PromptTemplates._get_template_from_db(PromptType.ENTITY_EXTRACTION.value, session)
         
         if not template:
             template = """Extract all named entities from the following content. Categorize them into:
@@ -106,7 +116,7 @@ Entities:"""
         session: Optional[AsyncSession] = None
     ) -> str:
         """Generate prompt for topic categorization"""
-        template = await PromptTemplates._get_template_from_db("topic_categorization", session)
+        _, template = await PromptTemplates._get_template_from_db(PromptType.TOPIC_CATEGORIZATION.value, session)
         
         if not template:
             if categories:
@@ -141,7 +151,7 @@ Topics and Categories:"""
         session: Optional[AsyncSession] = None
     ) -> str:
         """Generate prompt for sentiment analysis"""
-        template = await PromptTemplates._get_template_from_db("sentiment_analysis", session)
+        _, template = await PromptTemplates._get_template_from_db(PromptType.SENTIMENT_ANALYSIS.value, session)
         
         if not template:
             template = """Analyze the sentiment of the following content. Provide:
@@ -171,7 +181,7 @@ Sentiment Analysis:"""
         session: Optional[AsyncSession] = None
     ) -> str:
         """Generate prompt for language detection"""
-        template = await PromptTemplates._get_template_from_db("language_detection", session)
+        _, template = await PromptTemplates._get_template_from_db(PromptType.LANGUAGE_DETECTION.value, session)
         
         if not template:
             template = """Identify the primary language of the following content. If multiple languages are present, identify the dominant language and list any secondary languages.
@@ -189,7 +199,7 @@ Language:"""
         session: Optional[AsyncSession] = None
     ) -> str:
         """Generate prompt for content validation"""
-        template = await PromptTemplates._get_template_from_db("content_validation", session)
+        _, template = await PromptTemplates._get_template_from_db(PromptType.CONTENT_VALIDATION.value, session)
         
         if not template:
             template = """Analyze the following content and provide validation information:
@@ -222,7 +232,7 @@ Validation:"""
         session: Optional[AsyncSession] = None
     ) -> str:
         """Generate prompt for creating bullet points"""
-        template = await PromptTemplates._get_template_from_db("bullet_points", session)
+        _, template = await PromptTemplates._get_template_from_db(PromptType.BULLET_POINTS.value, session)
         
         if not template:
             template = """Create {max_points} bullet points that capture the essential information from the following content. Each bullet point should be concise but informative.

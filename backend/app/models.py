@@ -38,6 +38,16 @@ class PageType(str, Enum):
     NOT_CLEAR = "not_clear"
 
 
+class LLMContentExtraction(BaseModel):
+    """Complete content extraction result from LLM"""
+    summary: str = Field(description="Summary of the content of the document given to the LLM", default=None, nullable=True)
+    bullet_points: list[str] = Field(description="Bullet points with the key points of the content of the document given to the LLM", default=[], nullable=True)
+    agent_name: str = Field(description="Name of the agent that extracted the content", default=None, nullable=True)
+    updated_at: Optional[datetime] = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    )
+
 
 class ContentExtraction(BaseModel):
     """Complete content extraction result from LLM"""
@@ -1080,7 +1090,8 @@ class Prompt(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     prompt_type: str = Field(max_length=100, index=True)
     version: int = Field(default=1)
-    content: str = Field(sa_column=Column(Text))
+    system_prompt: Optional[str] = Field(default=None, sa_column=Column(Text))
+    user_prompt: str = Field(sa_column=Column(Text))
     description: Optional[str] = Field(default=None, sa_column=Column(Text))
     is_active: bool = Field(default=True, index=True)
     created_by: Optional[str] = Field(default=None, foreign_key="users.id")

@@ -117,7 +117,8 @@ class PromptService:
     async def create_prompt(
         self,
         prompt_type: str,
-        content: str,
+        user_prompt: str,
+        system_prompt: Optional[str] = None,
         description: Optional[str] = None,
         user_id: Optional[str] = None
     ) -> Prompt:
@@ -161,7 +162,8 @@ class PromptService:
             new_prompt = Prompt(
                 prompt_type=prompt_type,
                 version=next_version,
-                content=content,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
                 description=description,
                 is_active=True,
                 created_by=user_id
@@ -181,7 +183,8 @@ class PromptService:
     async def update_prompt(
         self,
         prompt_id: int,
-        content: str,
+        user_prompt: str,
+        system_prompt: Optional[str] = None,
         description: Optional[str] = None
     ) -> Prompt:
         """
@@ -207,7 +210,8 @@ class PromptService:
             # Create a new version
             return await self.create_prompt(
                 prompt_type=existing.prompt_type,
-                content=content,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
                 description=description or existing.description,
                 user_id=existing.created_by
             )
