@@ -1692,12 +1692,18 @@ Return your response as JSON in this exact format, if the fields are not present
                 EntityDocument.document_id
             )
             .join(EntityDocument, Entity.id == EntityDocument.entity_id)
+            .join(Document, EntityDocument.document_id == Document.id)  # Join with Document to check ownership
         )
+        
         if not settings.DISABLE_AUTH:
+            # No need to get User object again, we have the ID from existing context check or param
+            # But to be safe and consistent with existing code:
             user = await UserService.get_user_by_firebase_uid(self.session, user_id)
             if not user:
                 return []
-            query = query.where(Entity.user_id == user.id)
+                
+            # Filter by documents owned by the user
+            query = query.where(Document.user_id == user.id)
             
         query = query.order_by(Entity.type, Entity.name, Entity.id)
         
