@@ -4,10 +4,11 @@ Document service for managing web page documents
 
 from typing import Optional, List, Dict, Any, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, or_
 from sqlalchemy.orm import selectinload
 import logging
 import html
+import re
 from datetime import datetime
 
 from app.models import Document, User, ContentExtraction, PageType, Entity, EntityDocument
@@ -1484,8 +1485,14 @@ Return your response as JSON in this exact format, if the fields are not present
         )
         
         if not embedding_results:
-            logger.info(f"No matching embeddings found for query '{query}'")
-            return []
+            logger.info(f"No matching embeddings found for query '{query}'. Falling back to keyword search.")
+            return await self.get_relevant_documents_by_keyword_for_chat(
+                user_id=user_id,
+                query=query,
+                scope_type=scope_type,
+                scope_id=scope_id,
+                limit=limit
+            )
         
         # 2. Group results by document_id and get the best match per document
         document_scores = {}  # document_id -> best similarity score
@@ -1503,10 +1510,9 @@ Return your response as JSON in this exact format, if the fields are not present
             return []
         
         # 4. Fetch the actual Document objects
-        stmt = select(Document).where(
-            Document.id.in_(doc_ids),
-            Document.user_id == user_id
-        )
+        stmt = select(Document).where(Document.id.in_(doc_ids))
+        if not settings.DISABLE_AUTH:
+            stmt = stmt.where(Document.user_id == user_id)
         
         # If scope_type is 'collection', further filter by scope_id
         # TODO: Implement collection filtering when CollectionDocumentLink is available
@@ -1522,6 +1528,59 @@ Return your response as JSON in this exact format, if the fields are not present
         
         logger.info(f"Found {len(documents)} relevant documents for query '{query}'")
         return documents
+
+    async def get_relevant_documents_by_keyword_for_chat(
+        self,
+        user_id: str,
+        query: str,
+        scope_type: str,
+        scope_id: Optional[int] = None,
+        limit: int = 5
+    ) -> List[Document]:
+        """
+        Fallback search when embeddings are unavailable or return no matches.
+        Uses a simple keyword match over title, url, and content.
+        """
+        q = (query or "").strip()
+        if not q:
+            return []
+
+        # Extract reasonable keywords from a natural-language question
+        # Example: "What did the WSJ article say about Gaza?" -> ["what","did","the","wsj","article","say","about","gaza"]
+        # We then keep only tokens length >= 3 to avoid extremely broad matches.
+        tokens = re.findall(r"[A-Za-z0-9]{3,}", q.lower())
+        # Preserve order but de-dupe
+        seen: set[str] = set()
+        terms: List[str] = []
+        for t in tokens:
+            if t not in seen:
+                seen.add(t)
+                terms.append(t)
+
+        # If token extraction yields nothing useful, fall back to the entire query string
+        if not terms:
+            terms = [q.lower()]
+
+        like_clauses = []
+        for term in terms[:8]:
+            pattern = f"%{term}%"
+            like_clauses.extend([
+                Document.title.ilike(pattern),
+                Document.url.ilike(pattern),
+                Document.content.ilike(pattern),
+            ])
+
+        stmt = select(Document).where(or_(*like_clauses)).order_by(Document.updated_at.desc(), Document.id.desc()).limit(limit)
+        if not settings.DISABLE_AUTH:
+            stmt = stmt.where(Document.user_id == user_id)
+
+        # If scope_type is 'collection', further filter by scope_id
+        # TODO: Implement collection filtering when CollectionDocumentLink is available
+        if scope_type == 'collection' and scope_id is not None:
+            logger.warning("Collection-scoped keyword search is not yet fully implemented.")
+
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
 
     async def get_relevant_documents_with_chunks_for_chat(
         self, 
@@ -1573,8 +1632,38 @@ Return your response as JSON in this exact format, if the fields are not present
         )
         
         if not embedding_results:
-            logger.info(f"No matching embeddings found for query '{query}'")
-            return []
+            logger.info(f"No matching embeddings found for query '{query}'. Falling back to keyword search.")
+            documents = await self.get_relevant_documents_by_keyword_for_chat(
+                user_id=user_id,
+                query=query,
+                scope_type=scope_type,
+                scope_id=scope_id,
+                limit=limit
+            )
+
+            result_list: List[Dict[str, Any]] = []
+            for doc in documents:
+                # Try to provide some useful text for the agent even without embeddings.
+                # `extract_text_from_html` handles both HTML and plain text content.
+                text = extract_text_from_html(doc.content or "") if doc.content else ""
+                if not text:
+                    text = doc.title or ""
+
+                # Keep chunks small-ish to avoid token blow-ups downstream.
+                if len(text) > 2000:
+                    text = text[:2000] + "... [content truncated]"
+
+                result_list.append({
+                    "document": doc,
+                    "chunks": [{
+                        "text": text,
+                        "similarity_score": 0.0,
+                        "field": "keyword_fallback"
+                    }],
+                    "best_score": 0.0
+                })
+
+            return result_list
         
         # 2. Group results by document_id and collect chunks
         document_chunks = {}  # document_id -> list of chunks with scores

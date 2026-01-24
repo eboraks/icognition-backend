@@ -12,12 +12,14 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.tools import tool, Tool
 from langchain_google_community import GoogleSearchAPIWrapper
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
 from tenacity import RetryError
 
 from app.db.database import get_session, get_database_url
 from app.services.chat_session_service import ChatSessionService
 from app.services.document_service import DocumentService
 from app.services.prompt_service import PromptService
+from app.models import Document
 
 logger = get_logger(__name__)
 
@@ -153,7 +155,38 @@ def create_retrieve_documents_tool(user_id: str, scope_type: str, scope_id: Opti
             )
             
             if not documents_with_chunks:
-                return f"No relevant documents found in your library for the query: '{query}'"
+                # Provide a useful diagnostic so it's obvious whether the library is empty
+                # vs. the query simply didn't match anything.
+                stmt_count = select(func.count(Document.id))
+                stmt_recent = select(Document).order_by(Document.updated_at.desc(), Document.id.desc()).limit(5)
+
+                # Respect auth isolation unless DISABLE_AUTH is enabled
+                if not settings.DISABLE_AUTH:
+                    stmt_count = stmt_count.where(Document.user_id == user_id)
+                    stmt_recent = stmt_recent.where(Document.user_id == user_id)
+
+                count_result = await db_session.execute(stmt_count)
+                doc_count = int(count_result.scalar() or 0)
+
+                recent_result = await db_session.execute(stmt_recent)
+                recent_docs = list(recent_result.scalars().all())
+
+                recent_lines = []
+                for i, d in enumerate(recent_docs, 1):
+                    title = (d.title or "Untitled").strip()
+                    url = (d.url or "").strip()
+                    if url:
+                        recent_lines.append(f"{i}. {title} ({url})")
+                    else:
+                        recent_lines.append(f"{i}. {title}")
+
+                recent_block = "\n".join(recent_lines) if recent_lines else "[No documents found]"
+                return (
+                    f"I searched your library but couldn't find a relevant match for: '{query}'.\n"
+                    f"Library size: {doc_count} document(s).\n"
+                    f"Most recent documents:\n{recent_block}\n\n"
+                    "Tip: try using a keyword from a document title, or ask about a specific saved article."
+                )
             
             # Format documents for the agent with matching chunks prominently displayed
             result_parts = [f"Found {len(documents_with_chunks)} relevant document(s):"]
