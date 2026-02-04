@@ -240,17 +240,38 @@ async def stream_chat_response(
                 # Stream the AI response
                 logger.info(f"[Session {session_id}] Starting iteration over chat_agent_service.get_stream()...")
                 async for chunk in chat_agent_service.get_stream(session_id, user_message, user_context.user.id):
-                    chunk_count += 1
-                    if chunk:
-                        assistant_response += chunk
-                        formatted_content = format_chat_message(assistant_response)
-                        
+                    chunk_type = chunk.get("type")
+                    
+                    if chunk_type == "content":
+                        content = chunk.get("content")
+                        if content:
+                            assistant_response += content
+                            formatted_content = format_chat_message(assistant_response)
+                            
+                            event_data = {
+                                "type": "stream_chunk",
+                                "content": formatted_content,
+                                "message_id": response_message_id
+                            }
+                            yield f"event: stream_chunk\ndata: {json.dumps(event_data)}\n\n"
+                    
+                    elif chunk_type == "status":
                         event_data = {
-                            "type": "stream_chunk",
-                            "content": formatted_content,
+                            "type": "agent_status",
+                            "status_type": chunk.get("status_type"),
+                            "content": chunk.get("content"),
                             "message_id": response_message_id
                         }
-                        yield f"event: stream_chunk\ndata: {json.dumps(event_data)}\n\n"
+                        yield f"event: agent_status\ndata: {json.dumps(event_data)}\n\n"
+                        
+                    elif chunk_type == "error":
+                        # Send error event
+                        error_data = {
+                            "type": "error",
+                            "content": chunk.get("content"),
+                            "message_id": response_message_id
+                        }
+                        yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
                 
                 logger.info(f"[Session {session_id}] Stream iteration completed. Total chunks: {chunk_count}, Total response: {len(assistant_response)} chars")
                 
@@ -386,21 +407,42 @@ async def chat_websocket_endpoint(
 
                 try:
                     async for chunk in chat_agent_service.get_stream(session_id, user_message, user_id):
-                        if chunk:
-                            assistant_response += chunk
+                        chunk_type = chunk.get("type")
+                        
+                        if chunk_type == "content":
+                            content = chunk.get("content")
+                            if content:
+                                assistant_response += content
+                                try:
+                                    # Send each chunk wrapped in a structured message
+                                    formatted_content = format_chat_message(assistant_response)
+                                    await websocket.send_text(WebSocketMessage(
+                                        type="stream_chunk",
+                                        content=formatted_content,
+                                        message_id=response_message_id
+                                    ).json())
+                                    sent_stream_chunk = True
+                                except Exception as send_error:
+                                    logger.error(f"Failed to send chunk to websocket: {send_error}", exc_info=True)
+                                    stream_error = send_error
+                                    break
+                        
+                        elif chunk_type == "status":
+                            # Send status update
                             try:
-                                # Send each chunk wrapped in a structured message
-                                formatted_content = format_chat_message(assistant_response)
-                                await websocket.send_text(WebSocketMessage(
-                                    type="stream_chunk",
-                                    content=formatted_content,
-                                    message_id=response_message_id
-                                ).json())
-                                sent_stream_chunk = True
-                            except Exception as send_error:
-                                logger.error(f"Failed to send chunk to websocket: {send_error}", exc_info=True)
-                                stream_error = send_error
-                                break
+                                await websocket.send_text(json.dumps({
+                                    "type": "agent_status",
+                                    "status_type": chunk.get("status_type"),
+                                    "content": chunk.get("content"),
+                                    "message_id": response_message_id
+                                }))
+                            except Exception as e:
+                                logger.error(f"Failed to send status to websocket: {e}")
+                        
+                        elif chunk_type == "error":
+                            # Stream error
+                            stream_error = chunk.get("content")
+                            break
                     
                     # If we never streamed (e.g., model responded at once) but we have content, emit it now
                     if assistant_response and not sent_stream_chunk:

@@ -8,11 +8,12 @@ from sqlalchemy import select, func, and_
 from sqlalchemy.orm import selectinload
 import logging
 import html
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.models import Document, User, ContentExtraction, PageType, Entity, EntityDocument
 from app.services.base_service import UserIsolatedService
 from app.services.web_fetcher import WebPageFetcher, fetch_web_page
+from app.services.html_content_service import HtmlContentService
 from app.services.user_service import UserService
 from app.services.gemini_service import get_gemini_service, GeminiModel, GeminiConfig
 from app.core.config import settings
@@ -98,83 +99,85 @@ class DocumentService(UserIsolatedService[Document]):
             success, html_content, fetch_metadata = await fetch_web_page(url)
             
             if success and html_content:
-                # Extract enhanced metadata and main content from HTML
-                async with WebPageFetcher() as fetcher:
-                    enhanced_metadata = fetcher.extract_enhanced_metadata(html_content)
-                    content_extraction = fetcher.extract_main_content(html_content)
+                # Use HtmlContentService to parse content
+                html_service = HtmlContentService()
+                
+                # Extract all content and metadata
+                extraction_result = await html_service.extract_content(html_content, url)
                 
                 # Update document with fetched content
                 document.raw_html = html_content
-                # Document fetched successfully
                 
                 # Update title if not provided or if extracted title is better
-                if not title and enhanced_metadata.get('title'):
-                    document.title = enhanced_metadata['title']
+                if not title and extraction_result.title:
+                    document.title = extraction_result.title
                 
                 # Store main content
-                if content_extraction.get('content'):
-                    document.content = content_extraction['content']
+                if extraction_result.content:
+                    document.content = extraction_result.content
                 
+                # Store author
+                if extraction_result.author:
+                    document.author = extraction_result.author
+                
+                # Store description from metadata
+                if extraction_result.metadata.get('description'):
+                    document.description = extraction_result.metadata['description']
+                
+                # Store published date
+                if extraction_result.publication_date:
+                     try:
+                        # Try to parse Iso format first if it looks like one, or just store as string if model allows
+                        # The model definition says publication_date is DateTime, so we need to parse it.
+                        # The extractor returns a string. We should try to parse commonly used formats.
+                        # For now, let's try basic ISO parsing if it matches
+                        if 'T' in extraction_result.publication_date:
+                            document.publication_date = datetime.fromisoformat(
+                                extraction_result.publication_date.replace('Z', '+00:00')
+                            )
+                            # Convert to UTC and remove timezone info for PostgreSQL TIMESTAMP WITHOUT TIME ZONE
+                            document.publication_date = document.publication_date.astimezone(timezone.utc).replace(tzinfo=None)
+                     except (ValueError, TypeError):
+                        logger.warning(f"Could not parse publication date: {extraction_result.publication_date}")
+
+                # Store image URL
+                if extraction_result.image_url:
+                    document.image_url = extraction_result.image_url
+
                 # Store extracted metadata
                 document.document_metadata = {
                     'fetch_metadata': fetch_metadata,
-                    'extracted_metadata': enhanced_metadata,
-                    'content_extraction': content_extraction
+                    'extracted_metadata': extraction_result.metadata,
+                    'content_extraction': extraction_result.model_dump()
                 }
+                
+                # Copy tags
+                if extraction_result.tags:
+                    document.keywords = extraction_result.tags
                 
                 # Store page detection info if available
                 if fetch_metadata.get('page_detection'):
-                    page_detection = fetch_metadata['page_detection']
-                    document.document_metadata['page_detection'] = page_detection
-                    
-                    # Store content availability status
-                    if page_detection.get('content_availability'):
+                     # (Keep existing page detection logic from fetch_metadata)
+                     page_detection = fetch_metadata['page_detection']
+                     # ... (merging with existing logic for page_detection handling)
+                     if page_detection.get('content_availability'):
                         content_availability = page_detection['content_availability']
                         document.document_metadata['content_availability'] = {
                             'status': content_availability.get('status', 'unknown'),
                             'content_available': content_availability.get('status') in ['full', 'partial'],
-                            'content_status': content_availability.get('status'),  # 'full', 'partial', or 'unavailable'
+                            'content_status': content_availability.get('status'),
                             'issues': content_availability.get('issues', []),
                             'paywall_detected': content_availability.get('paywall_detected', False),
                             'authentication_required': content_availability.get('authentication_required', False),
                             'content_blocked': content_availability.get('content_blocked', False),
                         }
-                        logger.info(f"Document {document.id} content availability: {content_availability.get('status')} (issues: {content_availability.get('issues')})")
-                    
-                    # Log warnings if any
-                    if page_detection.get('warnings'):
-                        for warning in page_detection['warnings']:
-                            logger.warning(f"Page detection warning for document {document.id}: {warning}")
-                    
-                    # If page requires JS and we detected placeholder content, mark it
-                    if page_detection.get('issues'):
-                        logger.info(f"Document {document.id} has detected issues: {', '.join(page_detection['issues'])}")
                 
-                # Store extracted fields
-                if enhanced_metadata.get('author'):
-                    document.author = enhanced_metadata['author']
-                if enhanced_metadata.get('description'):
-                    document.description = enhanced_metadata['description']
-                if enhanced_metadata.get('keywords'):
-                    document.keywords = enhanced_metadata['keywords']
-                if enhanced_metadata.get('publication_date'):
-                    # Parse publication date if it's a string
-                    try:
-                        if isinstance(enhanced_metadata['publication_date'], str):
-                            # Try to parse ISO format first
-                            document.publication_date = datetime.fromisoformat(
-                                enhanced_metadata['publication_date'].replace('Z', '+00:00')
-                            )
-                    except (ValueError, TypeError):
-                        logger.warning(f"Could not parse publication date: {enhanced_metadata['publication_date']}")
-                
-                logger.info(f"Successfully fetched content for document {document.id}")
+                logger.info(f"Successfully fetched and parsed content for document {document.id}")
                 
                 # Validate extracted content
                 await self._validate_document_content(document)
                 
             else:
-                # Fetch failed
                 # Document fetch failed
                 document.document_metadata = {
                     'fetch_error': fetch_metadata.get('error', 'Unknown error'),
@@ -183,10 +186,7 @@ class DocumentService(UserIsolatedService[Document]):
                         'status': 'unavailable',
                         'content_available': False,
                         'content_status': 'unavailable',
-                        'issues': ['fetch_failed'],
-                        'paywall_detected': False,
-                        'authentication_required': False,
-                        'content_blocked': False,
+                        'issues': ['fetch_failed']
                     }
                 }
                 logger.error(f"Failed to fetch content for document {document.id}: {fetch_metadata}")
@@ -196,17 +196,13 @@ class DocumentService(UserIsolatedService[Document]):
             
         except Exception as e:
             # Handle unexpected errors
-            # Document fetch error
             document.document_metadata = {
                 'fetch_error': f'Unexpected error: {str(e)}',
                 'content_availability': {
                     'status': 'unavailable',
                     'content_available': False,
                     'content_status': 'unavailable',
-                    'issues': ['fetch_error'],
-                    'paywall_detected': False,
-                    'authentication_required': False,
-                    'content_blocked': False,
+                    'issues': ['fetch_error']
                 }
             }
             await self.session.commit()
@@ -230,22 +226,42 @@ class DocumentService(UserIsolatedService[Document]):
         
         # Process content based on type
         if content_type == "html":
-            # Extract text and metadata from HTML using BeautifulSoup-first approach
-            extracted_text, extraction_metadata = await self._extract_text_from_html(content)
+            # Use HtmlContentService for consistent parsing
+            html_service = HtmlContentService()
+            extraction_result = await html_service.extract_content(content, url or "")
             
-            # Use provided title or extracted title from metadata
-            final_title = title or extraction_metadata.get('title') or "Untitled Document"
+            # Use provided title or extracted title
+            final_title = title or extraction_result.title or "Untitled Document"
             
             document_data = {
                 "user_id": user.id,
                 "url": url,
                 "title": final_title,
-                "raw_html": content,  # Content is already sanitized from bookmark
-                "content": extracted_text,
+                "raw_html": content,
+                "content": extraction_result.content,
                 "content_source": "html",
-                "extracted_content": extraction_metadata,  # Store full extraction as JSONB
-                # Document processed
+                "extracted_content": extraction_result.model_dump(),
+                "author": extraction_result.author,
+                "image_url": extraction_result.image_url,
             }
+            
+            # Additional metadata
+            if extraction_result.metadata.get('description'):
+                document_data['description'] = extraction_result.metadata['description']
+                
+            if extraction_result.publication_date:
+                try:
+                    if 'T' in extraction_result.publication_date:
+                        document_data['publication_date'] = datetime.fromisoformat(
+                            extraction_result.publication_date.replace('Z', '+00:00')
+                        )
+                        # Convert to UTC and remove timezone info
+                        document_data['publication_date'] = document_data['publication_date'].astimezone(timezone.utc).replace(tzinfo=None)
+                except (ValueError, TypeError):
+                    pass
+            
+            if extraction_result.tags:
+                document_data['keywords'] = extraction_result.tags
             
         elif content_type == "text":
             # Wrap text content in basic HTML structure
@@ -258,10 +274,9 @@ class DocumentService(UserIsolatedService[Document]):
                 "user_id": user.id,
                 "url": url,
                 "title": final_title,
-                "raw_html": wrapped_html,  # Content is already sanitized from bookmark
-                "content": content,  # Content is already sanitized from bookmark
+                "raw_html": wrapped_html,
+                "content": content,
                 "content_source": "text",
-                # Document processed
             }
         
         else:
@@ -277,703 +292,7 @@ class DocumentService(UserIsolatedService[Document]):
         
         return document
 
-    async def _extract_text_from_html(self, html_content: str) -> Tuple[str, Optional[Dict]]:
-        """Extract clean text from HTML content using BeautifulSoup-first approach with LLM fallback"""
-        try:
-            # 1. Try BeautifulSoup extraction first
-            extraction_result = self._extract_content_with_beautifulsoup(html_content)
-            
-            # 2. If confidence >= 0.7, use it
-            if extraction_result.extraction_confidence >= 0.7:
-                logger.info(f"BeautifulSoup extraction successful with confidence {extraction_result.extraction_confidence}")
-                return extraction_result.content, extraction_result.model_dump()
-            
-            # 3. Otherwise, use LLM
-            logger.info(f"BeautifulSoup confidence too low ({extraction_result.extraction_confidence}), using LLM")
-            llm_result = await self._extract_content_with_llm(html_content)
-            
-            if llm_result and llm_result.extraction_confidence >= 0.5:
-                logger.info(f"LLM extraction successful with confidence {llm_result.extraction_confidence}")
-                return llm_result.content, llm_result.model_dump()
-            
-            # 4. Final fallback: return BeautifulSoup result anyway
-            logger.warning("LLM extraction also failed, using BeautifulSoup result")
-            return extraction_result.content, extraction_result.model_dump()
-                
-        except Exception as e:
-            logger.error(f"Error in content extraction, falling back to basic BeautifulSoup: {str(e)}")
-            # Ultimate fallback: basic text extraction
-            content = self._extract_text_with_beautifulsoup(html_content)
-            return content, {"extraction_method": "beautifulsoup_fallback", "extraction_confidence": 0.0, "error": str(e), "page_type": "other"}
 
-    def _extract_text_with_beautifulsoup(self, html_content: str) -> str:
-        """Basic text extraction fallback method"""
-        try:
-            soup = BeautifulSoup(html_content, 'html.parser')
-            
-            # Remove script and style elements
-            for script in soup(["script", "style"]):
-                script.extract()
-            
-            # Get text
-            text = soup.get_text()
-            
-            # Clean up whitespace
-            lines = (line.strip() for line in text.splitlines())
-            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-            text = '\n'.join(chunk for chunk in chunks if chunk)
-            
-            return text
-            
-        except Exception as e:
-            logger.error(f"Error extracting text from HTML with BeautifulSoup: {str(e)}")
-            # Fallback: return the HTML content as-is
-            return html_content
-
-    def _extract_content_with_beautifulsoup(self, html_content: str) -> ContentExtraction:
-        """Extract structured content from HTML using BeautifulSoup with intelligent parsing"""
-        try:
-            soup = BeautifulSoup(html_content, 'html.parser')
-            
-            # Find main content container
-            main_container = self._find_main_content_container(soup)
-            
-            # Extract all fields
-            title = self._extract_title_from_html(soup)
-            author = self._extract_author_from_html(soup)
-            publication_date = self._extract_date_from_html(soup)
-            page_type = self._extract_page_type_from_html(soup, "")
-            image_url = self._extract_image_url_from_html(soup)
-            tags = self._extract_tags_from_html(soup)
-            metadata = self._extract_metadata_from_html(soup)
-            content = self._extract_content_text(soup, main_container, page_type)
-            
-            # Calculate confidence
-            confidence = self._calculate_extraction_confidence(
-                content, title, author, publication_date, image_url, tags, page_type
-            )
-            
-            return ContentExtraction(
-                page_type=page_type,
-                title=title,
-                content=content,
-                author=author,
-                publication_date=publication_date,
-                tags=tags,
-                metadata=metadata,
-                extraction_confidence=confidence,
-                extraction_notes="BeautifulSoup extraction",
-                image_url=image_url
-            )
-            
-        except Exception as e:
-            logger.error(f"Error in BeautifulSoup content extraction: {str(e)}")
-            # Return minimal extraction on error
-            return ContentExtraction(
-                page_type="other",
-                title="",
-                content="",
-                author="",
-                publication_date="",
-                tags=[],
-                metadata={},
-                extraction_confidence=0.0,
-                extraction_notes=f"BeautifulSoup extraction failed: {str(e)}",
-                image_url=""
-            )
-
-    def _find_main_content_container(self, soup: BeautifulSoup):
-        """Find the main content container using semantic HTML5 and common patterns"""
-        # PRIORITY 2: Enhanced selectors with WordPress/Elementor support
-        # Priority order: specific content containers > semantic HTML > generic patterns
-        selectors = [
-            'article',
-            'main',
-            # WordPress/Elementor/Page Builder specific (high priority)
-            '.jupiterx-post-content',
-            '.elementor-widget-text-editor',
-            '.entry-content',
-            '.post-content',
-            '.article-content',
-            '.article-body',
-            '.story-content',
-            # Gutenberg blocks
-            '.wp-block-post-content',
-            # Divi builder
-            '.et_pb_post_content',
-            # Generic semantic containers (exclude nav/sidebar)
-            'div[id="main"]:not([id*="sidebar"])',
-            'div[id="content"]:not([id*="sidebar"])',
-            'div[id*="main-content"]',
-            'div[id*="article"]',
-            'div[id*="post-"]:not([id*="related"]):not([id*="nav"])',
-            'div[id*="entry"]',
-            # Class-based selectors (more specific to avoid sidebars)
-            'div[class*="main-content"]:not([class*="sidebar"])',
-            'div[class*="post-content"]:not([class*="sidebar"])',
-            'div[class*="article-content"]:not([class*="sidebar"])',
-            'div[class*="entry-content"]:not([class*="sidebar"])',
-            # Less specific fallbacks
-            'div[id*="main"]',
-            'div[class*="main"]',
-            'div[id*="content"]',
-            'div[class*="content"]',
-            'div[id*="body"]',
-            'div[class*="body"]'
-        ]
-        
-        for selector in selectors:
-            try:
-                container = soup.select_one(selector)
-                if container:
-                    # Verify container has meaningful content (not just navigation)
-                    text_content = container.get_text(strip=True)
-                    if len(text_content) > 100:  # Minimum content threshold
-                        logger.debug(f"Found main content container using selector: {selector}")
-                        return container
-            except Exception as e:
-                logger.debug(f"Error with selector {selector}: {str(e)}")
-                continue
-        
-        # Fallback to body if nothing found
-        logger.debug("No specific content container found, falling back to body")
-        return soup.find('body') or soup
-
-    def _extract_title_from_html(self, soup: BeautifulSoup) -> str:
-        """Extract title using multiple strategies, preserving link text and title attributes"""
-        # Priority order
-        selectors = [
-            'meta[property="og:title"]',
-            'meta[name="twitter:title"]',
-            'meta[name="title"]',
-            'h1',
-            'title'
-        ]
-        
-        for selector in selectors:
-            element = soup.select_one(selector)
-            if element:
-                if element.name == 'meta':
-                    title = element.get('content', '').strip()
-                else:
-                    # For title/h1 elements, preserve link text and title attributes
-                    # get_text() already preserves link text, but we want to ensure
-                    # we also capture title attributes from links if link text is empty
-                    links = element.find_all('a', recursive=True)
-                    if links:
-                        # Build title preserving all text including link text
-                        # get_text() will include link text, but we also want to preserve
-                        # title attributes from links that might have no visible text
-                        title = element.get_text(separator=' ', strip=True)
-                        
-                        # If any link has a title attribute but no text, append it
-                        for link in links:
-                            link_text = link.get_text(strip=True)
-                            link_title_attr = link.get('title', '').strip()
-                            if not link_text and link_title_attr:
-                                # Link has no text but has title attribute, append it
-                                if link_title_attr not in title:
-                                    title = f"{title} {link_title_attr}".strip()
-                    else:
-                        # No links, use standard text extraction
-                        title = element.get_text(separator=' ', strip=True)
-                
-                if title and len(title) > 0:
-                    return title
-        
-        return ""
-
-    def _extract_author_from_html(self, soup: BeautifulSoup) -> str:
-        """Extract author using multiple strategies"""
-        # Priority order
-        selectors = [
-            'meta[name="author"]',
-            'meta[property="article:author"]',
-            'a[rel="author"]',
-            'span[itemprop="author"]',
-            '[class*="author"]',
-            '[id*="author"]',
-            '[class*="byline"]',
-            '[class*="writer"]'
-        ]
-        
-        for selector in selectors:
-            element = soup.select_one(selector)
-            if element:
-                if element.name == 'meta':
-                    author = element.get('content', '').strip()
-                else:
-                    author = element.get_text().strip()
-                
-                if author and len(author) > 0:
-                    return author
-        
-        return ""
-
-    def _extract_date_from_html(self, soup: BeautifulSoup) -> str:
-        """Extract publication date using multiple strategies"""
-        # Priority order
-        selectors = [
-            'meta[property="article:published_time"]',
-            'time[datetime]',
-            'time[pubdate]',
-            'meta[itemprop="datePublished"]',
-            '[class*="date"]',
-            '[id*="date"]',
-            '[class*="published"]',
-            '[class*="timestamp"]'
-        ]
-        
-        for selector in selectors:
-            element = soup.select_one(selector)
-            if element:
-                if element.name == 'meta':
-                    date = element.get('content', '').strip()
-                elif element.name == 'time':
-                    date = element.get('datetime', '').strip() or element.get_text().strip()
-                else:
-                    date = element.get_text().strip()
-                
-                if date and len(date) > 0:
-                    return date
-        
-        return ""
-
-    def _extract_page_type_from_html(self, soup: BeautifulSoup, url: str) -> str:
-        """Detect page type from HTML and URL patterns"""
-        # Check Open Graph type first
-        og_type = soup.select_one('meta[property="og:type"]')
-        if og_type:
-            og_value = og_type.get('content', '').lower()
-            if og_value == 'article':
-                # Distinguish between news and blog based on site
-                site_name = self._extract_site_name(soup)
-                if any(news_site in site_name.lower() for news_site in ['news', 'cnn', 'bbc', 'reuters', 'yahoo', 'finance']):
-                    return "news_article"
-                else:
-                    return "blog_post"
-            elif og_value == 'website':
-                return "landing_page"
-            elif og_value == 'product':
-                return "product_page"
-        
-        # Check URL patterns
-        if '/wiki/' in url.lower():
-            return "wiki"
-        elif '/docs/' in url.lower() or '/documentation/' in url.lower():
-            return "documentation"
-        elif 'reddit.com' in url.lower():
-            return "social_media"
-        elif 'medium.com' in url.lower():
-            return "blog_post"
-        
-        # Check site name heuristics
-        site_name = self._extract_site_name(soup)
-        if any(social_site in site_name.lower() for social_site in ['reddit', 'twitter', 'facebook', 'instagram']):
-            return "social_media"
-        elif any(doc_site in site_name.lower() for doc_site in ['docs', 'documentation', 'api', 'guide']):
-            return "documentation"
-        
-        return "other"
-
-    def _extract_site_name(self, soup: BeautifulSoup) -> str:
-        """Extract site name from HTML"""
-        selectors = [
-            'meta[property="og:site_name"]',
-            'meta[name="application-name"]'
-        ]
-        
-        for selector in selectors:
-            element = soup.select_one(selector)
-            if element:
-                site_name = element.get('content', '').strip()
-                if site_name:
-                    return site_name
-        
-        return ""
-
-    def _extract_image_url_from_html(self, soup: BeautifulSoup) -> str:
-        """Extract primary image URL"""
-        # Priority order
-        selectors = [
-            'meta[property="og:image"]',
-            'meta[name="twitter:image"]',
-            'img'
-        ]
-        
-        for selector in selectors:
-            element = soup.select_one(selector)
-            if element:
-                if element.name == 'meta':
-                    image_url = element.get('content', '').strip()
-                else:
-                    image_url = element.get('src', '').strip()
-                
-                if image_url and len(image_url) > 0:
-                    return image_url
-        
-        return ""
-
-    def _extract_tags_from_html(self, soup: BeautifulSoup) -> list[str]:
-        """Extract tags/keywords from HTML"""
-        tags = []
-        
-        # Meta keywords
-        keywords_meta = soup.select_one('meta[name="keywords"]')
-        if keywords_meta:
-            keywords = keywords_meta.get('content', '')
-            if keywords:
-                tags.extend([tag.strip() for tag in keywords.split(',') if tag.strip()])
-        
-        # Article tags
-        article_tags = soup.select('meta[property="article:tag"]')
-        for tag_meta in article_tags:
-            tag = tag_meta.get('content', '').strip()
-            if tag:
-                tags.append(tag)
-        
-        # Elements with tag-related classes
-        tag_elements = soup.select('[class*="tag"], [class*="label"], [class*="category"]')
-        for element in tag_elements:
-            tag_text = element.get_text().strip()
-            if tag_text and tag_text not in tags:
-                tags.append(tag_text)
-        
-        return tags[:10]  # Limit to 10 tags
-
-    def _extract_metadata_from_html(self, soup: BeautifulSoup) -> dict:
-        """Extract additional metadata"""
-        metadata = {}
-        
-        # Site name
-        site_name = self._extract_site_name(soup)
-        if site_name:
-            metadata['site_name'] = site_name
-        
-        # Description
-        desc_selectors = [
-            'meta[property="og:description"]',
-            'meta[name="description"]',
-            'meta[name="twitter:description"]'
-        ]
-        
-        for selector in desc_selectors:
-            element = soup.select_one(selector)
-            if element:
-                description = element.get('content', '').strip()
-                if description:
-                    metadata['description'] = description
-                    break
-        
-        return metadata
-
-    def _extract_content_text(self, soup: BeautifulSoup, container, page_type: str) -> str:
-        """Extract content from the main container, preserving HTML structure wrapped in <article> tags"""
-        if not container:
-            return ""
-        
-        # PRIORITY 1: More specific unwanted selectors to avoid removing content
-        # Use prefix matches (^=) and specific classes instead of contains (*=)
-        unwanted_selectors = [
-            'script', 'style', 'nav', 'aside',
-            # Only remove actual structural elements, not content metadata
-            'header:not(article header):not(main header):not([class*="post-header"]):not([class*="article-header"])',
-            'footer:not(article footer):not(main footer):not([class*="post-footer"]):not([class*="article-footer"])',
-            '[role="banner"]', '[role="navigation"]', '[role="complementary"]',
-            # Use prefix matches to be more specific
-            '[class^="nav-"]', '[class^="menu-"]', '[class^="sidebar-"]',
-            # Specific ad/promotional classes
-            '.advertisement', '.ads', '.ad-banner', '.sponsored', '.promo',
-            # Social and newsletter - specific classes only
-            '.social-share', '.newsletter-signup', '.subscribe-box',
-            # Cookie/privacy notices
-            '.cookie-notice', '.privacy-notice', '.cky-consent',
-            # Related content sections - use specific classes
-            '.related-posts', '.recommended-posts', '.recommended-articles'
-        ]
-        
-        # For forum/social media, keep comments
-        if page_type not in ['forum_post', 'social_media']:
-            unwanted_selectors.extend(['.comments-section', '.comment-form', '[id^="comment-"]'])
-        
-        for selector in unwanted_selectors:
-            try:
-                for element in container.select(selector):
-                    element.decompose()
-            except Exception as e:
-                logger.debug(f"Error removing unwanted selector {selector}: {str(e)}")
-                continue
-        
-        # PRIORITY 3: Extract content elements preserving HTML structure
-        # First try semantic tags
-        content_elements = container.select('h1, h2, h3, h4, h5, h6, p, ul, ol, blockquote')
-        
-        # If not enough content found, look for page builder containers (Elementor, Divi, etc.)
-        if not content_elements or len(''.join(e.get_text(strip=True) for e in content_elements)) < 200:
-            logger.debug("Semantic tags yielded insufficient content, checking page builder containers")
-            
-            # Look for Elementor/WordPress widgets
-            page_builder_widgets = container.select(
-                '.elementor-widget-container, .elementor-text-editor, '
-                '.et_pb_text, .fl-rich-text, '  # Divi and Beaver Builder
-                '.wp-block-paragraph, .entry-content > div'  # Gutenberg and WordPress
-            )
-            
-            additional_content = []
-            for widget in page_builder_widgets:
-                # Extract content from widget containers
-                widget_content = widget.select('p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote')
-                additional_content.extend(widget_content)
-            
-            if additional_content:
-                logger.debug(f"Found {len(additional_content)} additional content elements in page builder widgets")
-                content_elements = additional_content
-        
-        # PRIORITY 4: Enhanced fallback - find text-bearing divs
-        if not content_elements:
-            logger.debug("No content elements found, using enhanced fallback")
-            text_parts = []
-            seen_texts = set()  # Track seen text to avoid duplicates
-            
-            # Walk through all text-bearing elements
-            for elem in container.find_all(['div', 'section', 'span', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
-                # Skip empty elements
-                text = elem.get_text(strip=True)
-                if len(text) < 20:  # Minimum meaningful content threshold
-                    continue
-                
-                # Avoid duplicates from nested elements
-                if text in seen_texts:
-                    continue
-                
-                # Check if this text is not a substring of already captured text
-                is_duplicate = False
-                for seen in seen_texts:
-                    if text in seen or seen in text:
-                        # If current text is longer, replace the shorter one
-                        if len(text) > len(seen):
-                            seen_texts.discard(seen)
-                            for i, part in enumerate(text_parts):
-                                if seen in part:
-                                    text_parts[i] = text
-                                    is_duplicate = True
-                                    break
-                        else:
-                            is_duplicate = True
-                        break
-                
-                if not is_duplicate:
-                    text_parts.append(text)
-                    seen_texts.add(text)
-            
-            if text_parts:
-                # Wrap in article with paragraphs
-                paragraphs = ''.join(f'<p>{self._escape_html(text)}</p>' for text in text_parts[:50])  # Limit to 50 parts
-                return f"<article>{paragraphs}</article>"
-            
-            # Ultimate fallback: get all text
-            text = container.get_text(strip=True)
-            if text:
-                return f"<article><p>{self._escape_html(text)}</p></article>"
-            return ""
-        
-        # Create article wrapper
-        article = soup.new_tag('article')
-        
-        # Track processed elements to avoid duplicates (e.g., links inside paragraphs)
-        processed_element_ids = set()
-        
-        # Add each content element to article, preserving structure
-        for element in content_elements:
-            # Skip if element is already processed (e.g., a link inside a paragraph)
-            element_id = id(element)
-            if element_id in processed_element_ids:
-                continue
-            
-            # Special handling for standalone links
-            if element.name == 'a':
-                link_text = element.get_text().strip()
-                link_title_attr = element.get('title', '').strip()
-                link_href = element.get('href', '').strip()
-                
-                # Only include links with meaningful text or title attribute
-                if not link_text and not link_title_attr:
-                    continue
-                
-                # Check if link is nested inside another content element
-                # If so, it will be preserved as part of the parent element
-                parent = element.parent
-                is_nested = False
-                while parent and parent != container:
-                    if parent.name in ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'blockquote']:
-                        # Link is inside a content element, skip standalone processing
-                        is_nested = True
-                        break
-                    parent = parent.parent
-                
-                if is_nested:
-                    # Link will be preserved as part of parent, skip standalone extraction
-                    continue
-                
-                # Link is standalone, include it
-                # Wrap standalone links in a paragraph for better structure
-                p_tag = soup.new_tag('p')
-                cloned_link = self._clone_element(soup, element)
-                if cloned_link:
-                    p_tag.append(cloned_link)
-                    article.append(p_tag)
-                    processed_element_ids.add(element_id)
-                continue
-            
-            # Standard content elements (h1-h6, p, ul, ol, li, blockquote)
-            element_text = element.get_text().strip()
-            if element_text:
-                # Extract the element's HTML string to preserve inner structure
-                # This preserves nested tags, lists, links, etc.
-                cloned_element = self._clone_element(soup, element)
-                if cloned_element:
-                    article.append(cloned_element)
-                    # Mark this element and all its descendants as processed
-                    for descendant in element.descendants:
-                        if hasattr(descendant, 'name'):
-                            processed_element_ids.add(id(descendant))
-        
-        # Return the HTML string
-        return str(article) if article.contents else ""
-    
-    def _clone_element(self, soup: BeautifulSoup, element) -> Optional[Any]:
-        """Clone an element preserving its structure and attributes"""
-        try:
-            element_html = str(element)
-            temp_soup = BeautifulSoup(element_html, 'html.parser')
-            cloned_element = temp_soup.find(element.name)
-            return cloned_element
-        except Exception as e:
-            logger.debug(f"Error cloning element {element.name if hasattr(element, 'name') else 'unknown'}: {str(e)}")
-            return None
-    
-    def _escape_html(self, text: str) -> str:
-        """Escape HTML special characters in text"""
-        return html.escape(text)
-
-    def _calculate_extraction_confidence(self, content: str, title: str, author: str, 
-                                       publication_date: str, image_url: str, 
-                                       tags: list, page_type: str) -> float:
-        """Calculate weighted confidence score"""
-        total_possible = 10  # Total weighted points
-        weighted_score = 0
-        
-        # Content: 3 points
-        if content and len(content.strip()) > 100:
-            weighted_score += 3
-        
-        # Title: 3 points  
-        if title and len(title.strip()) > 0:
-            weighted_score += 3
-        
-        # Author: 1 point
-        if author and author != "":
-            weighted_score += 1
-        
-        # Publication date: 1 point
-        if publication_date and publication_date != "":
-            weighted_score += 1
-        
-        # Image URL: 1 point
-        if image_url and image_url != "":
-            weighted_score += 1
-        
-        # Tags: 0.5 points (if any exist)
-        if tags and len(tags) > 0:
-            weighted_score += 0.5
-        
-        # Page type: 0.5 points (if not "other")
-        if page_type and page_type != "other":
-            weighted_score += 0.5
-        
-        return weighted_score / total_possible
-
-    async def _extract_content_with_llm(self, html_content: str) -> Optional[ContentExtraction]:
-        """Extract content from HTML using Gemini Flash Lite LLM"""
-        try:
-            # Create extraction prompt
-            prompt = f"""Analyze this HTML page and extract its core content intelligently.
-
-1. Identify the page type from these exact options:
-   - blog_post: Personal or company blog articles
-   - news_article: News stories and journalistic content
-   - product_page: Product listings, e-commerce pages
-   - documentation: Technical docs, API docs, help pages
-   - landing_page: Marketing pages, homepage, promotional content
-   - social_media: Social media posts, tweets, updates
-   - forum_post: Discussion forum posts and threads
-   - wiki: Wikipedia-style informational pages
-   - other: Any other type of content
-   - not_clear: When page type cannot be determined or content is confusing
-
-2. Extract ONLY the main content, excluding:
-   - Navigation menus, sidebars, footers, headers
-   - Advertisements and promotional content
-   - Related articles/products lists
-   - Comments sections (unless page type is forum_post/social_media)
-   - Cookie notices, popups, banners
-   - Social media share buttons
-
-3. For social_media: Include post content, author, tags, images
-4. For product_page: Include name, description, price, key features
-5. For news_article/blog_post: Include article text, author, publication date
-6. For documentation: Include the main topic and content
-
-If the page is confusing (e.g., landing page with no clear content), use page_type "not_clear" and explain why extraction isn't possible in extraction_notes.
-
-HTML Content:
-{html_content}
-
-Return structured data with high confidence (0.7-1.0) only if you can clearly identify and extract meaningful content. Use medium confidence (0.4-0.7) if content is present but unclear. Use low confidence (0.0-0.4) if extraction failed or page has no clear content.
-
-Return your response as JSON in this exact format, if the fields are not present, return an empty string.
-{{
-  "page_type": "one_of_the_types_above",
-  "title": "extracted_title",
-  "content": "main_content_text",
-  "author": "author_name_or_empty_string",
-  "publication_date": "date_or_empty_string", 
-  "tags": ["tag1", "tag2"],
-  "metadata": {{}},
-  "extraction_confidence": 0.8,
-  "extraction_notes": "any_notes_or_empty_string"
-}}"""
-
-            # Initialize Gemini service
-            gemini_service = get_gemini_service()
-            
-            # Configure for structured output
-            config = GeminiConfig(
-                temperature=0.0,
-                response_mime_type="application/json"
-            )
-            
-            # Get response from Gemini AI
-            response = await gemini_service.generate_content(
-                prompt=prompt,
-                model=GeminiModel.FLASH_LITE,
-                config=config
-            )
-            
-            # Parse the structured response
-            import json
-            try:
-                response_data = json.loads(response['content'])
-                extraction_result = ContentExtraction(**response_data)
-                logger.info(f"LLM extraction completed: page_type={extraction_result.page_type}, confidence={extraction_result.extraction_confidence}")
-                return extraction_result
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse JSON response from LLM: {e}")
-                return None
-            
-        except Exception as e:
-            logger.error(f"Error in LLM content extraction: {str(e)}")
-            return None
 
     async def fetch_and_update_document(
         self,
@@ -994,31 +313,59 @@ Return your response as JSON in this exact format, if the fields are not present
             success, html_content, fetch_metadata = await fetch_web_page(document.url)
             
             if success and html_content:
-                # Extract enhanced metadata and main content from HTML
-                async with WebPageFetcher() as fetcher:
-                    enhanced_metadata = fetcher.extract_enhanced_metadata(html_content)
-                    content_extraction = fetcher.extract_main_content(html_content)
+                # Use HtmlContentService to parse content
+                html_service = HtmlContentService()
+                
+                # Extract all content and metadata
+                extraction_result = await html_service.extract_content(html_content, document.url)
                 
                 # Update document with fetched content
                 document.raw_html = html_content
-                # Document fetched successfully
                 
                 # Update title if extracted title is better
-                if enhanced_metadata.get('title') and len(enhanced_metadata['title']) > len(document.title):
-                    document.title = enhanced_metadata['title']
+                if extraction_result.title and len(extraction_result.title) > len(document.title):
+                    document.title = extraction_result.title
                 
                 # Store main content
-                if content_extraction.get('content'):
-                    document.content = content_extraction['content']
+                if extraction_result.content:
+                    document.content = extraction_result.content
+                
+                # Store author
+                if extraction_result.author:
+                    document.author = extraction_result.author
+                
+                # Store description
+                if extraction_result.metadata.get('description'):
+                    document.description = extraction_result.metadata['description']
                 
                 # Store extracted metadata
                 if document.document_metadata is None:
                     document.document_metadata = {}
                 document.document_metadata.update({
                     'fetch_metadata': fetch_metadata,
-                    'extracted_metadata': enhanced_metadata,
-                    'content_extraction': content_extraction
+                    'extracted_metadata': extraction_result.metadata,
+                    'content_extraction': extraction_result.model_dump()
                 })
+                
+                # Copy tags
+                if extraction_result.tags:
+                    document.keywords = extraction_result.tags
+                
+                # Store publication date
+                if extraction_result.publication_date:
+                     try:
+                        if 'T' in extraction_result.publication_date:
+                            document.publication_date = datetime.fromisoformat(
+                                extraction_result.publication_date.replace('Z', '+00:00')
+                            )
+                            # Convert to UTC and remove timezone info for PostgreSQL TIMESTAMP WITHOUT TIME ZONE
+                            document.publication_date = document.publication_date.astimezone(timezone.utc).replace(tzinfo=None)
+                     except (ValueError, TypeError):
+                        logger.warning(f"Could not parse publication date: {extraction_result.publication_date}")
+                
+                # Store image URL
+                if extraction_result.image_url:
+                    document.image_url = extraction_result.image_url
                 
                 # Store page detection info if available
                 if fetch_metadata.get('page_detection'):
@@ -1048,23 +395,7 @@ Return your response as JSON in this exact format, if the fields are not present
                     if page_detection.get('issues'):
                         logger.info(f"Document {document.id} has detected issues: {', '.join(page_detection['issues'])}")
                 
-                # Store extracted fields
-                if enhanced_metadata.get('author'):
-                    document.author = enhanced_metadata['author']
-                if enhanced_metadata.get('description'):
-                    document.description = enhanced_metadata['description']
-                if enhanced_metadata.get('keywords'):
-                    document.keywords = enhanced_metadata['keywords']
-                if enhanced_metadata.get('publication_date'):
-                    # Parse publication date if it's a string
-                    try:
-                        if isinstance(enhanced_metadata['publication_date'], str):
-                            # Try to parse ISO format first
-                            document.publication_date = datetime.fromisoformat(
-                                enhanced_metadata['publication_date'].replace('Z', '+00:00')
-                            )
-                    except (ValueError, TypeError):
-                        logger.warning(f"Could not parse publication date: {enhanced_metadata['publication_date']}")
+
                 
                 logger.info(f"Successfully fetched content for document {document.id}")
                 

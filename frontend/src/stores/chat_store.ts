@@ -12,6 +12,7 @@ export interface ChatMessage {
   timestamp: string;
   date: string;
   pending?: boolean;
+  statusText?: string;
 }
 
 export interface ChatSession {
@@ -401,6 +402,14 @@ export const useChatStore = defineStore('chat', () => {
       streamingMessageId = null;
       streamingBuffer = '';
       log('end_stream processed successfully');
+    } else if (type === "agent_status") {
+      log(`STATUS event received: ${content}`);
+      if (activeSession.value && streamingMessageId) {
+        const activeMessage = activeSession.value.messages.find(msg => msg._id === streamingMessageId);
+        if (activeMessage) {
+          activeMessage.statusText = content;
+        }
+      }
     } else if (type === "error") {
       log(`ERROR event received: ${content}`);
       console.error(`[${new Date().toISOString()}] [SSE Handler] Backend SSE error:`, content);

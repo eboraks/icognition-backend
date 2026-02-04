@@ -16,6 +16,11 @@
               <ProgressSpinner strokeWidth="4" style="width: 32px; height: 32px" />
             </div>
             <div v-else class="message-text" v-html="message.content"></div>
+            <!-- Status text -->
+            <div v-if="message.pending && message.statusText" class="message-status">
+                <i class="pi pi-spin pi-spinner" style="font-size: 0.8rem; margin-right: 0.5rem"></i>
+                {{ message.statusText }}
+            </div>
             <div v-if="message.actions && message.actions.length > 0" class="action-buttons">
               <Button
                 v-for="action in message.actions"
@@ -83,6 +88,7 @@ interface ChatMessage {
   actions?: Array<{ id: string; label: string }>;
   resources?: Array<{ id: number; title: string }>;
   pending?: boolean;
+  statusText?: string;
 }
 
 const props = defineProps<{
@@ -424,6 +430,7 @@ watch(
         actions: (msg as any).actions,
         resources: (msg as any).resources,
         pending: (msg as any).pending ?? false,
+        statusText: (msg as any).statusText,
       }));
       
       // Only update if the length changed or content differs (to avoid unnecessary updates)
@@ -433,7 +440,8 @@ watch(
             return (
               !newMsg ||
               msg.content !== newMsg.content ||
-              msg.pending !== newMsg.pending
+              msg.pending !== newMsg.pending ||
+              msg.statusText !== newMsg.statusText
             );
           })) {
         messages.value = [...newMessagesFormatted];
@@ -606,6 +614,15 @@ watch(
   align-items: center;
   justify-content: center;
   min-height: 2rem;
+}
+
+.message-status {
+    font-size: 0.8rem;
+    color: var(--p-text-muted-color);
+    margin-top: 0.5rem;
+    display: flex;
+    align-items: center;
+    font-style: italic;
 }
 
 .filter-message {

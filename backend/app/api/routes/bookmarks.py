@@ -452,7 +452,49 @@ async def _process_html_content_to_document(
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
         
-        # Don't re-raise to avoid breaking the background task
+        
+        # Proper error handling with notification
+        try:
+            # Create a NEW session for error handling since the previous one might be rolled back/invalid
+            async with async_session() as error_session:
+                # Update bookmark status to failed
+                result = await error_session.execute(
+                    select(Bookmark).where(Bookmark.id == bookmark_id)
+                )
+                bookmark = result.scalar_one_or_none()
+                
+                if bookmark:
+                    bookmark.processing_status = "failed"
+                    bookmark.is_processed = True
+                    await error_session.commit()
+                    logger.info(f"Marked bookmark {bookmark_id} as failed in database")
+                
+                # Send error notification to user
+                if user_id:
+                    notification_manager = get_notification_manager()
+                    
+                    # Notify about general error
+                    await notification_manager.send_notification({
+                        "type": "error",
+                        "data": f"Error processing bookmark: {str(e)}"
+                    }, user_id)
+                    
+                    # Also send document_ready with failed status to unblock UI
+                    await notification_manager.send_notification({
+                        "type": "document_ready",
+                        "data": {
+                            "id": str(bookmark.document_id) if bookmark and bookmark.document_id else None,
+                            "title": title or (bookmark.title if bookmark else "Unknown"),
+                            "url": url or (bookmark.url if bookmark else ""),
+                            "status": "failed",
+                            "error": str(e)
+                        }
+                    }, user_id)
+                    logger.info(f"Sent failure notifications to user {user_id}")
+                    
+        except Exception as inner_e:
+            logger.error(f"Failed to handle error for bookmark {bookmark_id}: {inner_e}")
+
 
 
 async def _process_document_embeddings(

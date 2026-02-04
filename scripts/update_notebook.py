@@ -1,153 +1,92 @@
-import nbformat as nbf
-import os
 
-notebook_path = '/Users/eboraks/Projects/icognition/notebooks/langgraph_document_processing.ipynb'
+import json
 
-with open(notebook_path, 'r') as f:
-    nb = nbf.read(f, as_version=4)
+# Read the notebook
+with open('notebooks/intent_based_chat_workflow.ipynb', 'r') as f:
+    nb = json.load(f)
 
-# Update cell 1 (imports and setup)
-setup_code = """import os
-import sys
-from typing import List, Dict, TypedDict, Optional, Literal
-from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.prompts import ChatPromptTemplate
-from langgraph.graph import StateGraph, END
-from pydantic import BaseModel, Field
-import asyncio
+# The content to inject
+new_code_content = """class ChatIntent(BaseModel):
+    \"\"\"Structured representation of the user's intent.\"\"\"
+    describe_the_user_message_intent: str = Field(
+        description="Describe exactly what the user wants, including any skepticism or specific constraints."
+    )
+    refined_query: str = Field(
+        description="A refined, unambiguous version of the user's query that captures their true intent."
+    )
+    reasoning: str = Field(
+        description="Brief explanation of why this intent was chosen."
+    )
 
-# Add backend to path to import models
-sys.path.append(os.path.abspath('../backend'))
-from app.models import LLMContentExtraction, PageType
-from app.db.database import get_session
-from app.services.prompt_service import PromptService
-from app.services.prompt_utils import PromptType
+class AgentState(TypedDict):
+    messages: Annotated[list[BaseMessage], add_messages]
+    intent: Optional[ChatIntent]
+    final_response: Optional[str]"""
 
-# Load environment variables
-if os.path.exists('../backend/.env'):
-    load_dotenv('../backend/.env')
-else:
-    load_dotenv('.env')
+# 1. Update the ChatIntent definition cell (Cell 3, index 3)
+nb['cells'][3]['source'] = new_code_content.splitlines(keepends=True)
 
-api_key = os.getenv("GOOGLE_API_KEY")
-llm_model_name = os.getenv("GEMINI_FLASH_MODEL")
-if not api_key:
-    print(\"WARNING: GOOGLE_API_KEY not found!\")
+# 2. Update the determine_intent function (Cell 7, index 7) to reflect the new field names
+new_determine_intent_source = """intent_llm = llm.with_structured_output(ChatIntent)
 
-# Initialize LLM
-llm = ChatGoogleGenerativeAI(model=llm_model_name, google_api_key=api_key)
-
-# Helper to get prompts from DB
-async def get_db_prompt(prompt_type: str):
-    async for session in get_session():
-        service = PromptService(session)
-        return await service.get_latest_prompt(prompt_type)
-"""
-
-# Find cell by content or index. Cell 1 is index 1 (usually)
-nb.cells[1].source = setup_code
-
-# Update classifier node (index 4 in the original file I saw)
-# Let's find cells by their content to be safe
-
-classifier_code = """classifier_llm = llm.with_structured_output(DocTypeResult)
-
-async def classify_doc(state: AgentState):
-    print(\"--- CLASSIFYING DOCUMENT ---\")
-    content = state[\"content\"]
-    title = state.get(\"title\", \"\")
+async def determine_intent(state: AgentState):
+    print("--- DETERMINING INTENT ---")
+    messages = state["messages"]
+    last_message = messages[-1].content
     
-    # Create a list of allowed categories for the prompt
-    categories = [e.value for e in PageType]
-    
-    # Fallback if classification prompt not in DB
-    system_prompt = f\"You are an expert content classifier. Identify the type of document provided.\\\\nAllowed categories: {', '.join(categories)}.\"
-    user_template = \"Title: {title}\\\\n\\\\nContent: {content}\"
-
-    # Try to load from DB
-    db_prompt = await get_db_prompt(\"Doc Analysis: Classifier\") # Assuming we'll add this type
-    if db_prompt:
-        system_prompt = db_prompt.system_prompt or system_prompt
-        user_template = db_prompt.user_prompt or user_template
+    system_prompt = (
+        "You are an expert intent classifier for a research assistant AI. "
+        "Your job is to understand EXACTLY what the user wants to know. "
+        "Pay close attention to potential ambiguities. "
+        "For example, 'Is that statement true \"X\"?' usually means 'Verify if X is a fact', "
+        "whereas 'Did person Y say \"X\"?' means 'Verify if the quote is attributed to Y'."
+    )
     
     prompt = ChatPromptTemplate.from_messages([
-        (\"system\", system_prompt),
-        (\"user\", user_template)
+        ("system", system_prompt),
+        ("user", last_message)
     ])
     
-    result = await classifier_llm.ainvoke(prompt.format(content=content[:4000], title=title))
-    print(f\"Classified as: {result.category} ({result.reasoning})\")
+    intent = await intent_llm.ainvoke(prompt.format())
+    print(f"Detected Intent: {intent.describe_the_user_message_intent}")
+    print(f"Refined Query: {intent.refined_query}")
+    print(f"Reasoning: {intent.reasoning}")
     
-    return {\"doc_type\": result.category}"""
+    return {"intent": intent}
 
-# Update specialized nodes (index 6)
-specialized_nodes_code = """extraction_llm = llm.with_structured_output(LLMContentExtraction)
-
-async def process_with_db_prompt(state: AgentState, prompt_type: str, agent_name: str):
-    print(f\"--- PROCESSING AS {agent_name.upper()} ---\")
-    content = state[\"content\"]
-    title = state.get(\"title\", \"Untitled\")
+async def run_agent(state: AgentState):
+    print("--- RUNNING AGENT ---")
+    intent: ChatIntent = state["intent"]
     
-    db_prompt = await get_db_prompt(prompt_type)
-    if db_prompt:
-        system_prompt = db_prompt.system_prompt or \"You are a helpful assistant.\"
-        user_template = db_prompt.user_prompt
-        try:
-            user_prompt = user_template.format(content=content, title=title)
-        except (KeyError, ValueError):
-            user_prompt = f\"{user_template}\\\\n\\\\nContent: {content}\"
-        
-        prompt = ChatPromptTemplate.from_messages([
-            (\"system\", system_prompt),
-            (\"user\", user_prompt)
-        ])
-    else:
-        # Fallback to hardcoded logic if DB fails
-        prompt = ChatPromptTemplate.from_messages([
-            (\"system\", f\"You are a {agent_name} analyst.\"),
-            (\"user\", f\"Summarize this {agent_name} content: {content}\")
-        ])
-        
-    result = await extraction_llm.ainvoke(prompt.format())
-    result.agent_name = f\"{agent_name}Agent\"
-    return {\"extraction\": result}
+    # We construct a system prompt that includes the explicit intent context
+    system_prompt = (
+        "You are a helpful research assistant. "
+        "You have access to a tool to retrieve documents from the user's library. "
+        "Use the user's REFINED INTENT to guide your answer."
+        f"\\n\\nUSER INTENT: {intent.describe_the_user_message_intent}"
+        f"\\nREFINED QUERY/GOAL: {intent.refined_query}"
+        "\\n\\nIf the user wants to FACT CHECK something, verify the claim itself against the documents, "
+        "not just who said it (unless the claim is about who said it)."
+    )
+    
+    # Create a simplified react agent for this node
+    # In production, this would use the global checkpointer and cached agent service
+    tools = [mock_retrieve_documents_tool]
+    agent = create_react_agent(llm, tools, state_modifier=system_prompt)
+    
+    # We pass the original messages, but the system prompt (modifier) now guides the interpretation
+    # Alternatively, we could inject a HumanMessage at the end with the refined query
+    response = await agent.ainvoke({"messages": state["messages"]})
+    
+    return {
+        "messages": response["messages"], 
+        "final_response": response["messages"][-1].content
+    }"""
 
-async def process_news(state: AgentState):
-    return await process_with_db_prompt(state, PromptType.EXTRACT_NEWS.value, \"News\")
+nb['cells'][7]['source'] = new_determine_intent_source.splitlines(keepends=True)
 
-async def process_blog(state: AgentState):
-    return await process_with_db_prompt(state, PromptType.EXTRACT_BLOG.value, \"Blog\")
+# Write back to file
+with open('notebooks/intent_based_chat_workflow.ipynb', 'w') as f:
+    json.dump(nb, f, indent=4)
 
-async def process_product_doc(state: AgentState):
-    return await process_with_db_prompt(state, PromptType.EXTRACT_PRODUCT.value, \"ProductDoc\")
-
-async def process_social_media(state: AgentState):
-    return await process_with_db_prompt(state, PromptType.EXTRACT_SOCIAL.value, \"SocialMedia\")
-
-async def process_marketing(state: AgentState):
-    return await process_with_db_prompt(state, PromptType.EXTRACT_MARKETING.value, \"Marketing\")
-
-async def process_book(state: AgentState):
-    return await process_with_db_prompt(state, PromptType.EXTRACT_BOOK.value, \"Book\")
-
-async def process_generic(state: AgentState):
-    return await process_with_db_prompt(state, PromptType.EXTRACT_GENERIC.value, \"Generic\")"""
-
-# Update test calls to be async (index 8 and 10)
-# Actually, I can just use a loop to find and replace
-
-for cell in nb.cells:
-    if cell.cell_type == 'code':
-        if "classifier_llm = llm.with_structured_output(DocTypeResult)" in cell.source:
-            cell.source = classifier_code
-        elif "extraction_llm = llm.with_structured_output(LLMContentExtraction)" in cell.source:
-            cell.source = specialized_nodes_code
-        elif "app.stream(inputs)" in cell.source:
-            # Wrap in async if needed, or just change to await if it's in a cell that allows await
-            # Top-level await is allowed in some environments, but let's be safe
-            cell.source = cell.source.replace("for output in app.stream(inputs):", "async for output in app.astream(inputs):")
-
-with open(notebook_path, 'w') as f:
-    nbf.write(nb, f)
+print("Notebook updated successfully.")

@@ -16,6 +16,11 @@
               <ProgressSpinner strokeWidth="4" style="width: 32px; height: 32px" />
             </div>
             <div v-else class="message-text" v-html="message.content"></div>
+            <!-- Status text for agent actions -->
+            <div v-if="message.streaming && message.statusText" class="message-status">
+                <i class="pi pi-spin pi-spinner" style="font-size: 0.8rem; margin-right: 0.5rem"></i>
+                {{ message.statusText }}
+            </div>
             <!-- Actions and Resources removed for MVP simplicity in extension, can be added later -->
           </div>
         </div>
@@ -214,6 +219,7 @@ const loadMessages = async () => {
                 id: msg.id,
                 content: msg.content,
                 type: msg.role === 'user' ? 'user' : 'system',
+                statusText: '',
                 // Assuming backend format, we might need adjustments
             }));
             
@@ -320,6 +326,10 @@ const handleStreamChunk = (data) => {
             message.streaming = false;
         }
         loading.value = false;
+    } else if (type === 'agent_status') {
+        if (message) {
+            message.statusText = content || '';
+        }
     }
 };
 
@@ -525,6 +535,15 @@ const sendMessage = async () => {
   align-items: center;
   justify-content: center;
   min-height: 2rem;
+}
+
+.message-status {
+    font-size: 0.8rem;
+    color: var(--text-color-secondary);
+    margin-top: 0.5rem;
+    display: flex;
+    align-items: center;
+    font-style: italic;
 }
 
 .user-message {

@@ -8,11 +8,12 @@ from contextlib import AbstractAsyncContextManager
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.tools import tool, Tool
 from langchain_google_community import GoogleSearchAPIWrapper
 from sqlalchemy.ext.asyncio import AsyncSession
 from tenacity import RetryError
+from app.chat_workflows.research_graph import build_research_graph
 
 from app.db.database import get_session, get_database_url
 from app.services.chat_session_service import ChatSessionService
@@ -70,25 +71,7 @@ async def get_checkpointer() -> AsyncPostgresSaver:
     return _checkpointer
 
 
-def strip_html_and_clean(text: str) -> str:
-    """
-    Strip HTML tags and clean up text for better readability.
-    This helps prevent raw HTML from appearing in chat responses.
-    """
-    if not text:
-        return ""
-    
-    try:
-        soup = BeautifulSoup(text, "html.parser")
-        # Get text and clean up whitespace
-        cleaned = soup.get_text(separator=" ", strip=True)
-        # Normalize multiple spaces to single space
-        cleaned = " ".join(cleaned.split())
-        return cleaned
-    except Exception as e:
-        logger.warning(f"Error stripping HTML: {e}, returning original text")
-        return text
-
+from app.chat_workflows.tools import create_retrieve_documents_tool, strip_html_and_clean
 
 def extract_text_from_content(content) -> str:
     """
@@ -119,86 +102,6 @@ def extract_text_from_content(content) -> str:
 
     # Fallback: convert to string
     return str(content)
-
-
-def create_retrieve_documents_tool(user_id: str, scope_type: str, scope_id: Optional[int], db_session: AsyncSession):
-    """
-    Create a context-aware document retrieval tool for a specific chat session.
-    """
-    @tool
-    async def retrieve_documents_tool(query: str) -> str:
-        """
-        Retrieves relevant documents from the user's library to answer a question.
-        Use this tool when the user asks questions that might be answered by documents in their library.
-        
-        Args:
-            query: The search query or question to find relevant documents for.
-        
-        Returns:
-            A formatted string with relevant document titles and content snippets.
-        """
-        try:
-            document_service = DocumentService(db_session)
-            
-            # Get relevant documents with matching chunks using vector search
-            # user_id is Firebase UID (string), which matches Document.user_id type
-            documents_with_chunks = await document_service.get_relevant_documents_with_chunks_for_chat(
-                user_id=user_id,
-                query=query,
-                scope_type=scope_type,
-                scope_id=scope_id,
-                limit=5,
-                similarity_threshold=0.55,  # Lower threshold for broader matching
-                chunks_per_document=5  # Include up to 5 top chunks per document
-            )
-            
-            if not documents_with_chunks:
-                return f"No relevant documents found in your library for the query: '{query}'"
-            
-            # Format documents for the agent with matching chunks prominently displayed
-            result_parts = [f"Found {len(documents_with_chunks)} relevant document(s):"]
-            
-            for i, doc_data in enumerate(documents_with_chunks, 1):
-                doc = doc_data['document']
-                chunks = doc_data['chunks']
-                best_score = doc_data['best_score']
-                
-                result_parts.append(f"\n{i}. **{doc.title}**")
-                if doc.url:
-                    result_parts.append(f"   URL: {doc.url}")
-                
-                # Show matching chunks first - these are the actual text that matched the query
-                if chunks:
-                    result_parts.append(f"   Matching Content (similarity: {best_score:.2f}):")
-                    for j, chunk in enumerate(chunks, 1):
-                        # Clean chunk text
-                        chunk_text = strip_html_and_clean(chunk['text'])
-                        # Limit chunk length to avoid token limits (1500 chars per chunk)
-                        if len(chunk_text) > 1500:
-                            chunk_text = chunk_text[:1500] + "... [chunk truncated]"
-                        
-                        result_parts.append(f"   [{j}] {chunk_text}")
-                        result_parts.append("")  # Empty line between chunks
-                
-                # Optionally include full document content as additional context
-                # Only if chunks don't provide enough information or document is short
-                if doc.content:
-                    raw_content = doc.content
-                    cleaned_content = strip_html_and_clean(raw_content)
-                    # Only include full content if it's relatively short or chunks are few
-                    if len(cleaned_content) < 3000 or len(chunks) < 2:
-                        if len(cleaned_content) > 2000:
-                            cleaned_content = cleaned_content[:2000] + "... [content truncated]"
-                        result_parts.append(f"   Full Document Content: {cleaned_content}")
-                else:
-                    result_parts.append("   [No full content available]")
-            
-            return "\n".join(result_parts)
-        except Exception as e:
-            logger.error(f"Error retrieving documents: {e}", exc_info=True)
-            return f"Error retrieving documents: {str(e)}"
-    
-    return retrieve_documents_tool
 
 
 class ChatAgentService:
@@ -323,7 +226,7 @@ class ChatAgentService:
             
             if not chat_session:
                 logger.error(f"Chat session {session_id} not found for user {user_id}")
-                yield "Error: Chat session not found."
+                yield {"type": "error", "content": "Chat session not found."}
                 return
             
             logger.info(f"Found chat session: scope_type={chat_session.scope_type}, scope_id={chat_session.scope_id}")
@@ -352,7 +255,7 @@ class ChatAgentService:
                 logger.info(f"Initialized LLM with model: {settings.GEMINI_FLASH_MODEL}")
             except Exception as e:
                 logger.error(f"Failed to initialize LLM: {e}", exc_info=True)
-                yield "Error: Failed to initialize AI model."
+                yield {"type": "error", "content": "Failed to initialize AI model."}
                 return
             
             # Create LangGraph ReAct agent with checkpointer for memory
@@ -459,17 +362,21 @@ class ChatAgentService:
 
                 logger.info(f"[Session {session_id}] Getting checkpointer...")
                 checkpointer = await get_checkpointer()
-                logger.info(f"[Session {session_id}] Checkpointer obtained, creating ReAct agent...")
-                agent = create_react_agent(
-                    model=llm,
-                    tools=tools,
-                    prompt=system_prompt,
-                    checkpointer=checkpointer
+                logger.info(f"[Session {session_id}] Checkpointer obtained, creating Research Graph agent...")
+                
+                # Use the new Research Graph instead of generic ReAct
+                # Note: System prompt is now handled inside the graph nodes based on intent/context
+                # We can pass the base system prompt to the builder if we want to support it, 
+                # but for now we'll rely on the logic in research_graph.py
+                agent = build_research_graph(
+                    checkpointer=checkpointer,
+                    retrieve_tool=retrieve_tool,
+                    db_session=db_session
                 )
-                logger.info(f"[Session {session_id}] Created LangGraph ReAct agent with tools and checkpointer")
+                logger.info(f"[Session {session_id}] Created Research Graph agent with tools and checkpointer")
             except Exception as e:
                 logger.error(f"Failed to create agent: {e}", exc_info=True)
-                yield "Error: Failed to create chat agent."
+                yield {"type": "error", "content": "Failed to create chat agent."}
                 return
             
             # Prepare the input with the new user message
@@ -481,6 +388,13 @@ class ChatAgentService:
             # Stream agent responses using LangGraph's value stream (mirrors previous behavior)
             accumulated_text = ""
             chunk_count = 0
+            
+            # State tracking for UI feedback
+            last_reflection_count = 0
+            last_intent = None
+            last_message_count = 0 
+            last_processed_message_id = None
+            
             try:
                 logger.info(f"[Session {session_id}] Calling agent.astream()...")
                 async for chunk in agent.astream(
@@ -489,48 +403,103 @@ class ChatAgentService:
                     stream_mode="values"
                 ):
                     chunk_count += 1
-                    logger.info(f"[Session {session_id}] Received chunk #{chunk_count} from agent.astream()")
+                    logger.info(f"[Session {session_id}] Received chunk #{chunk_count}")
+                    
+                    # --- Status Feedback Logic ---
+                    current_intent = chunk.get("intent")
+                    current_reflection_count = chunk.get("reflection_count", 0)
+                    
+                    # 1. Intent Classified - Only emit if truly changed/new and not None
+                    if current_intent and current_intent != last_intent:
+                        logger.info(f"[Session {session_id}] Intent detected: {current_intent}")
+                        yield {
+                            "type": "status",
+                            "status_type": "thinking",
+                            "content": f"analyzing request ({current_intent})"
+                        }
+                        last_intent = current_intent
+
+                    # 2. Reflection Step
+                    if current_reflection_count > last_reflection_count:
+                        logger.info(f"[Session {session_id}] Reflecting (count: {current_reflection_count})")
+                        yield {
+                            "type": "status",
+                            "status_type": "thinking",
+                            "content": "reflecting on answer"
+                        }
+                        last_reflection_count = current_reflection_count
+
                     messages = chunk.get("messages", [])
                     if not messages:
-                        logger.info(f"[Session {session_id}] Chunk #{chunk_count} has no messages, skipping")
                         continue
 
                     latest_message = messages[-1]
-                    logger.info(f"[Session {session_id}] Chunk #{chunk_count} latest message type: {type(latest_message).__name__}")
                     
-                    # Log tool calls if present
-                    if hasattr(latest_message, "tool_calls") and latest_message.tool_calls:
-                        logger.info(f"[Session {session_id}] Chunk #{chunk_count} has tool calls: {latest_message.tool_calls}")
-
-                    if not isinstance(latest_message, AIMessage):
-                        logger.info(f"[Session {session_id}] Not an AIMessage, skipping")
+                    # 3. Search Step (Detect System Note)
+                    if isinstance(latest_message, HumanMessage) and "SYSTEM NOTE" in str(latest_message.content):
+                        # Ensure we don't spam this if state didn't change efficiently
+                        if getattr(latest_message, 'id', None) != last_processed_message_id:
+                            logger.info(f"[Session {session_id}] Google Search executed")
+                            yield {
+                                "type": "status",
+                                "status_type": "thinking",
+                                "content": "searching google"
+                            }
+                            last_processed_message_id = getattr(latest_message, 'id', None)
+                            accumulated_text = "" # Reset for new message
                         continue
+
+                    # Standard text streaming for AIMessages
+                    if not isinstance(latest_message, AIMessage):
+                        continue
+                    
+                    # Check for Message Boundary based on list length
+                    current_message_count = len(messages)
+                    
+                    # If we have more messages than before, we encountered a new message step
+                    if current_message_count > last_message_count:
+                        # If we were previously streaming (accumulated_text > 0) and now have a new message,
+                        # it implies we moved past that previous message.
+                        if accumulated_text and last_message_count > 0:
+                            # We are starting a fresh message. 
+                            # If this new message is an AIMessage, it might be a refinement or new turn.
+                            # We can emit a separator to be safe if it's a follow-up AI message.
+                            logger.info(f"[Session {session_id}] New message detected (Count: {last_message_count} -> {current_message_count})")
+                            yield {"type": "content", "content": "\n\n---\n*Refining answer based on new information...*\n\n"}
+                        
+                        # Reset for the new message
+                        accumulated_text = ""
+                        last_message_count = current_message_count
+                    
+                    # Ensure we are tracking the count correctly even if we didn't yield above
+                    # e.g. first loop iteration
+                    last_message_count = max(last_message_count, current_message_count)
                     
                     text = extract_text_from_content(getattr(latest_message, "content", None))
                     if not text:
-                        logger.info(f"[Session {session_id}] No text content extracted, skipping")
                         continue
 
                     if text.startswith(accumulated_text):
                         new_text = text[len(accumulated_text):]
                     else:
+                        # Should rarely happen now due to reset, but safe fallback
                         new_text = text
 
                     accumulated_text = text
                     if new_text:
-                        logger.info(f"[Session {session_id}] Yielding chunk: {len(new_text)} chars (total: {len(accumulated_text)})")
-                        yield new_text
+                        logger.info(f"[Session {session_id}] Yielding chunk: {len(new_text)} chars")
+                        yield {"type": "content", "content": new_text}
                     else:
-                        logger.info(f"[Session {session_id}] No new text to yield in this chunk")
+                        logger.info(f"[Session {session_id}] No new text to yield")
                 
                 logger.info(f"[Session {session_id}] Stream loop completed. Total chunks: {chunk_count}, Total text: {len(accumulated_text)} chars")
 
             except RetryError as e:
                 logger.error(f"Network error while contacting AI service: {e}", exc_info=True)
-                yield "I'm having trouble connecting to the AI service. Please check the backend's network connection and DNS settings."
+                yield {"type": "error", "content": "I'm having trouble connecting to the AI service. Please check the backend's network connection and DNS settings."}
             except Exception as e:
                 logger.error(f"Error during agent streaming: {e}", exc_info=True)
-                yield f"\n\nError: {str(e)}"
+                yield {"type": "error", "content": f"\n\nError: {str(e)}"}
         finally:
             # Close the database session
             await db_session.close()
