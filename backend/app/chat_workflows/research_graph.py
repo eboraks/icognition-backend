@@ -66,17 +66,22 @@ def build_research_graph(checkpointer=None, retrieve_tool=None, db_session=None)
         messages = state["messages"]
         last_message = messages[-1].content
         
-        system_prompt = (
-            "You are an expert intent classifier for a research assistant AI. "
-            "Your job is to understand EXACTLY what the user wants to know. "
-            "Pay close attention to potential ambiguities. "
-            "For example, 'Is that statement true \"X\"?' usually means 'Verify if X is a fact', "
-            "whereas 'Did person Y say \"X\"?' means 'Verify if the quote is attributed to Y'."
-        )
+        # Fetch Intent Prompt from DB (STRICT)
+        if not db_session:
+             raise ValueError("CRITICAL: db_session is missing in intent_node. Cannot fetch prompts.")
+
+        prompt_service = PromptService(db_session)
+        db_prompt = await prompt_service.get_latest_prompt(PromptType.CHAT_INTENT_CLASSIFICATION.value)
+        
+        if not db_prompt:
+             raise ValueError(f"CRITICAL: Missing prompt '{PromptType.CHAT_INTENT_CLASSIFICATION.value}' in database. Cannot proceed with intent classification.")
+
+        system_prompt = db_prompt.system_prompt
+        user_template = db_prompt.user_prompt or "{input}"
         
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_prompt),
-            ("human", "{input}"),
+            ("human", user_template),
         ])
         
         classifier = prompt | llm.with_structured_output(IntentClassification)
@@ -145,13 +150,34 @@ def build_research_graph(checkpointer=None, retrieve_tool=None, db_session=None)
                 # Actually, SystemMessage should stay SystemMessage (but we inject our own teacher prompt).
                 pass
 
+        # Fetch Reflection Prompt from DB (STRICT)
+        if not db_session:
+             raise ValueError("CRITICAL: db_session is missing in reflect_node. Cannot fetch prompts.")
+
+        prompt_service = PromptService(db_session)
+        db_prompt = await prompt_service.get_latest_prompt(PromptType.CHAT_REFLECTION.value)
+        
+        if not db_prompt:
+             raise ValueError(f"CRITICAL: Missing prompt '{PromptType.CHAT_REFLECTION.value}' in database. Cannot proceed with reflection.")
+
+        system_prompt = db_prompt.system_prompt
+        # The user_prompt in DB is expected to be a template like "Student Submission:\n{messages}"
+        # We need to format the messages into a string to fit this template
+        user_template = db_prompt.user_prompt or "Student Submission:\n{messages}"
+        
+        # Convert translated messages to a string representation for the teacher
+        # We format them clearly as "Role: Content"
+        msgs_str = "\n\n".join([f"{m.type.upper()}: {m.content}" for m in translated_messages])
+        
+        try:
+            user_content = user_template.format(messages=msgs_str)
+        except Exception:
+            # Fallback if format fails but we must be strict about the prompt existing
+            user_content = f"Student Submission:\n{msgs_str}"
+
         prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are a strict teacher grading an AI's answer.\n"
-                       "Check for:\n1. Hallucinations or unsupported claims.\n2. Missing critical information.\n3. Failed intent (didn't answer the question).\n"
-                       "If the answer is excellent and accurate, set is_satisfactory=True.\n"
-                       "If it needs improvement, set is_satisfactory=False and provide a detailed critique.\n"
-                       "If external verification is needed, set needs_search=True and provide a query."),
-            MessagesPlaceholder(variable_name="messages")
+            ("system", system_prompt),
+            ("human", user_content)
         ])
         
         chain = prompt | llm.with_structured_output(ReflectionOutput)

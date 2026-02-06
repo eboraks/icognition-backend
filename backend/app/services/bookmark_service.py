@@ -5,12 +5,12 @@ Bookmark service for managing bookmark operations with automatic user creation
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update, delete, func
 from sqlalchemy.exc import IntegrityError
 import logging
 
-from app.models import Bookmark, User
 from app.services.user_service import UserService
+from app.models import Bookmark, User, Document, ChatSession, ChatMessage, EntityDocument
 from app.services.base_service import UserIsolatedService, DataIsolationValidator
 from app.utils.logging import get_logger
 
@@ -153,12 +153,78 @@ class BookmarkService(UserIsolatedService[Bookmark]):
         bookmark_id: int,
         firebase_uid: str
     ) -> bool:
-        """Delete bookmark, ensuring user ownership"""
-        return await self.delete_user_record(
-            session=session,
-            record_id=bookmark_id,
-            firebase_uid=firebase_uid
-        )
+        """
+        Delete bookmark AND cascade delete associated document and chats if no other bookmarks use it.
+        """
+        try:
+            # 1. Get the bookmark first to identify document
+            stmt = select(Bookmark).where(
+                Bookmark.id == bookmark_id,
+                Bookmark.user_id == firebase_uid
+            )
+            result = await session.execute(stmt)
+            bookmark = result.scalar_one_or_none()
+            
+            if not bookmark:
+                logger.warning(f"Bookmark {bookmark_id} not found for deletion.")
+                return False
+            
+            document_id = bookmark.document_id
+            
+            # 2. Delete the bookmark
+            await session.delete(bookmark)
+            await session.flush() # Ensure delete is registered for count check
+            
+            # 3. If linked to a document, check if we should cascade delete
+            if document_id:
+                # Check if any other bookmarks reference this document
+                # (Documents are user-specific, so we check only this document ID)
+                count_stmt = select(func.count(Bookmark.id)).where(Bookmark.document_id == document_id)
+                count_result = await session.execute(count_stmt)
+                remaining_bookmarks = count_result.scalar() or 0
+                
+                if remaining_bookmarks == 0:
+                    logger.info(f"Cascading delete for document {document_id} and associated resources")
+                    
+                    # A. Delete associated ChatSessions (scoped to this document)
+                    chat_stmt = select(ChatSession.id).where(
+                        ChatSession.scope_type == 'document',
+                        ChatSession.scope_id == document_id
+                    )
+                    chat_result = await session.execute(chat_stmt)
+                    session_ids = chat_result.scalars().all()
+                    
+                    if session_ids:
+                        # Delete messages first
+                        await session.execute(
+                            delete(ChatMessage).where(ChatMessage.session_id.in_(session_ids))
+                        )
+                        # Delete sessions
+                        await session.execute(
+                            delete(ChatSession).where(ChatSession.id.in_(session_ids))
+                        )
+                        logger.info(f"Deleted {len(session_ids)} chat sessions for document {document_id}")
+                    
+                    # B. Delete EntityDocument links
+                    await session.execute(
+                        delete(EntityDocument).where(EntityDocument.document_id == document_id)
+                    )
+                    
+                    # C. Delete the Document itself
+                    await session.execute(
+                        delete(Document).where(Document.id == document_id)
+                    )
+                    logger.info(f"Deleted document {document_id}")
+                else:
+                    logger.info(f"Document {document_id} preserved (used by {remaining_bookmarks} other bookmarks)")
+
+            await session.commit()
+            return True
+            
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"Error executing cascading delete for bookmark {bookmark_id}: {e}")
+            return False
     
     async def count_user_bookmarks(
         self,
