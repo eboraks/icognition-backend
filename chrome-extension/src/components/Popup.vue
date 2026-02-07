@@ -474,24 +474,27 @@ onMounted(async () => {
         console.log('Status -> server-is', response)
         if (response.status === 'up') {
             // If server is up, check user state
-            chrome.storage.session.get(["session_user"]).then((session) => {
-                // Validate that session_user exists AND has valid authentication data
-                if (session.session_user && session.session_user.stsTokenManager && session.session_user.uid) {
-                    status.value = AppStatusEnum.SERVER_READY
-                    statusMessage.value = AppStatusEnum.SERVER_READY.message
-                    user.value = session.session_user
-                    console.log('User authenticated, status:', status.value.state);
+            // If server is up, check session validity with background script
+            chrome.runtime.sendMessage({ name: 'validate-session' }).then((response) => {
+                if (response && response.valid) {
+                    // Double check we have the user object in storage for UI display
+                    chrome.storage.session.get(["session_user"]).then((store) => {
+                        if (store.session_user) {
+                            user.value = store.session_user;
+                        }
+                        status.value = AppStatusEnum.SERVER_READY
+                        statusMessage.value = AppStatusEnum.SERVER_READY.message
+                        console.log('Session validated, status:', status.value.state);
+                    });
                 } else {
-                    // Invalid or incomplete user data, clear it and show login
-                    if (session.session_user) {
-                        console.log('Invalid user data found, clearing session_user');
-                        chrome.storage.session.remove('session_user');
-                    }
+                    console.log('Session invalid (expired or missing), clearing storage');
+                    chrome.storage.session.remove('session_user');
+                    user.value = null;
                     status.value = AppStatusEnum.UNAUTHENTICATED
                     statusMessage.value = AppStatusEnum.UNAUTHENTICATED.message
                     console.log('User not authenticated, status:', status.value.state);
                 }
-            })
+            });
         } else {
             status.value = AppStatusEnum.SERVER_DOWN
             console.log('Server is down, status:', status.value.state);
@@ -680,9 +683,13 @@ watch(user, (after, before) => {
         // Clear all saved summaries when user logs out
         summariesByUrl.value = {};
         bookmarksByUrl.value = {};
-        bookmarksByUrl.value = {};
         documentIdsByUrl.value = {};
         chatSessionsByUrl.value = {};
+        
+        // Explicitly clear current view state
+        document_summary.value = null;
+        doc.value = null;
+        bookmark.value = null;
         currentChatSessionId.value = null;
     }
 });

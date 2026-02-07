@@ -683,6 +683,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     }
 
+    if (request.name === 'validate-session') {
+        getFirebaseIdToken().then(token => {
+            sendResponse({ valid: !!token });
+        });
+        return true;
+    }
+
     // highlight-citation is handled by the message handler at line 881
     // Don't log unknown requests here - let other handlers process them
     // Return false so other listeners can handle the message
