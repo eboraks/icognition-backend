@@ -94,6 +94,11 @@ dependencies = [
     "langgraph-checkpoint-postgres>=3.0.0",
     "langsmith",
     "langchain-google-community>=3.0.4",
+    "langfuse>=3.13.0",
+    "openinference-instrumentation-dspy>=0.1.0",
+
+    "opentelemetry-sdk>=1.22.0",
+    "opentelemetry-exporter-otlp>=1.22.0",
 ]
 
 [project.optional-dependencies]

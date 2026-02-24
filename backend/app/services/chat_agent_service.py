@@ -18,7 +18,9 @@ from app.chat_workflows.research_graph import build_research_graph
 from app.db.database import get_session, get_database_url
 from app.services.chat_session_service import ChatSessionService
 from app.services.document_service import DocumentService
+from app.services.document_service import DocumentService
 from app.services.prompt_service import PromptService
+from app.utils.langfuse_worker import get_langfuse_handler
 
 logger = get_logger(__name__)
 
@@ -192,7 +194,17 @@ class ChatAgentService:
                 )
                 prompt = "\n".join(filter(None, prompt_parts))
 
-            response = await llm.ainvoke(prompt)
+            # Add Langfuse tracing
+            lf_handler = get_langfuse_handler()
+            callbacks = [lf_handler] if lf_handler else []
+
+            response = await llm.ainvoke(
+                prompt,
+                config={
+                    "callbacks": callbacks,
+                    "run_name": PromptType.CHAT_AGENT_TYPE_AHEAD.value
+                }
+            )
             prediction = extract_text_from_content(response.content).strip()
             
             # Simple cleanup: remove quotes if the model wrapped the response
@@ -381,7 +393,16 @@ class ChatAgentService:
             
             # Prepare the input with the new user message
             # LangGraph will automatically load previous messages from the checkpointer
-            input_messages = [HumanMessage(content=message)]
+            input_messages = []
+            
+            # Add document context if relevant (scoped interactions)
+            if chat_session.scope_type == "document" and chat_session.scope_id and "CURRENT CONTEXT" in system_prompt:
+                # Extract the context header from the prepared system prompt
+                # We use the context part but not the full instruction prompt which is handled by the graph
+                context_part = system_prompt.split("\n\n---\n\n")[0]
+                input_messages.append(SystemMessage(content=context_part))
+                
+            input_messages.append(HumanMessage(content=message))
             
             logger.info(f"[Session {session_id}] Starting stream for thread_id: {thread_id}")
             
@@ -396,10 +417,28 @@ class ChatAgentService:
             last_processed_message_id = None
             
             try:
+                # Add Langfuse tracing
+                lf_handler = get_langfuse_handler()
+                
+                run_config = {"thread_id": thread_id}
+                if lf_handler:
+                    run_config["callbacks"] = [lf_handler]
+                    run_config["run_name"] = PromptType.CHAT_AGENT_SYSTEM.value
+                    # Add metadata for Langfuse traces to easily filter/search
+                    run_config["metadata"] = {
+                        "session_id": str(session_id),
+                        "user_id": str(user_id),
+                        "thread_id": thread_id,
+                        "scope_type": chat_session.scope_type,
+                        "scope_id": str(chat_session.scope_id) if chat_session.scope_id else None
+                    }
+
+                pending_ai_message = None
+                
                 logger.info(f"[Session {session_id}] Calling agent.astream()...")
                 async for chunk in agent.astream(
                     {"messages": input_messages},
-                    config={"thread_id": thread_id},
+                    config=run_config,
                     stream_mode="values"
                 ):
                     chunk_count += 1
@@ -407,9 +446,9 @@ class ChatAgentService:
                     
                     # --- Status Feedback Logic ---
                     current_intent = chunk.get("intent")
-                    current_reflection_count = chunk.get("reflection_count", 0)
+                    current_message_list = chunk.get("messages", [])
                     
-                    # 1. Intent Classified - Only emit if truly changed/new and not None
+                    # 1. Intent Classified
                     if current_intent and current_intent != last_intent:
                         logger.info(f"[Session {session_id}] Intent detected: {current_intent}")
                         yield {
@@ -418,81 +457,66 @@ class ChatAgentService:
                             "content": f"analyzing request ({current_intent})"
                         }
                         last_intent = current_intent
-
-                    # 2. Reflection Step
-                    if current_reflection_count > last_reflection_count:
-                        logger.info(f"[Session {session_id}] Reflecting (count: {current_reflection_count})")
-                        yield {
-                            "type": "status",
-                            "status_type": "thinking",
-                            "content": "reflecting on answer"
-                        }
-                        last_reflection_count = current_reflection_count
-
-                    messages = chunk.get("messages", [])
-                    if not messages:
-                        continue
-
-                    latest_message = messages[-1]
-                    
-                    # 3. Search Step (Detect System Note)
-                    if isinstance(latest_message, HumanMessage) and "SYSTEM NOTE" in str(latest_message.content):
-                        # Ensure we don't spam this if state didn't change efficiently
-                        if getattr(latest_message, 'id', None) != last_processed_message_id:
-                            logger.info(f"[Session {session_id}] Google Search executed")
-                            yield {
-                                "type": "status",
-                                "status_type": "thinking",
-                                "content": "searching google"
-                            }
-                            last_processed_message_id = getattr(latest_message, 'id', None)
-                            accumulated_text = "" # Reset for new message
-                        continue
-
-                    # Standard text streaming for AIMessages
-                    if not isinstance(latest_message, AIMessage):
-                        continue
-                    
-                    # Check for Message Boundary based on list length
-                    current_message_count = len(messages)
-                    
-                    # If we have more messages than before, we encountered a new message step
-                    if current_message_count > last_message_count:
-                        # If we were previously streaming (accumulated_text > 0) and now have a new message,
-                        # it implies we moved past that previous message.
-                        if accumulated_text and last_message_count > 0:
-                            # We are starting a fresh message. 
-                            # If this new message is an AIMessage, it might be a refinement or new turn.
-                            # We can emit a separator to be safe if it's a follow-up AI message.
-                            logger.info(f"[Session {session_id}] New message detected (Count: {last_message_count} -> {current_message_count})")
-                            yield {"type": "content", "content": "\n\n---\n*Refining answer based on new information...*\n\n"}
+ 
+                    # 2. Check for Reflection Outcome (Did we just reject a message?)
+                    # If we had a pending message, and the new state has a critique (HumanMessage) 
+                    # OR is explicitly not satisfactory but we moved past the generation step...
+                    # Actually, we can check if the last message is a HumanMessage (Critique)
+                    if current_message_list:
+                        last_msg = current_message_list[-1]
                         
-                        # Reset for the new message
-                        accumulated_text = ""
-                        last_message_count = current_message_count
-                    
-                    # Ensure we are tracking the count correctly even if we didn't yield above
-                    # e.g. first loop iteration
-                    last_message_count = max(last_message_count, current_message_count)
-                    
-                    text = extract_text_from_content(getattr(latest_message, "content", None))
-                    if not text:
-                        continue
+                        # If the last message is a HumanMessage (Critique) and we have a pending AI message,
+                        # it means the AI message was rejected. Discard it.
+                        if isinstance(last_msg, HumanMessage) and pending_ai_message:
+                             logger.info(f"[Session {session_id}] Discarding pending AI message due to negative reflection.")
+                             pending_ai_message = None 
+                             yield {
+                                "type": "status", 
+                                "status_type": "thinking", 
+                                "content": "refining answer based on critique"
+                             }
+                             
+                        # If the last message is a System Note (Search), handled below, but also implies refinement
+                        if isinstance(last_msg, HumanMessage) and "SYSTEM NOTE" in str(last_msg.content):
+                             if getattr(last_msg, 'id', None) != last_processed_message_id:
+                                logger.info(f"[Session {session_id}] Google Search executed")
+                                yield {
+                                    "type": "status",
+                                    "status_type": "thinking",
+                                    "content": "searching google for updated info"
+                                }
+                                last_processed_message_id = getattr(last_msg, 'id', None)
+                                # If we searched, we definitely discard any previous AI answer (it was insufficient)
+                                pending_ai_message = None
 
-                    if text.startswith(accumulated_text):
-                        new_text = text[len(accumulated_text):]
-                    else:
-                        # Should rarely happen now due to reset, but safe fallback
-                        new_text = text
-
-                    accumulated_text = text
-                    if new_text:
-                        logger.info(f"[Session {session_id}] Yielding chunk: {len(new_text)} chars")
-                        yield {"type": "content", "content": new_text}
-                    else:
-                        logger.info(f"[Session {session_id}] No new text to yield")
+                        # If the last message is an AIMessage, we BUFFER it.
+                        # We do NOT yield it yet. We wait for the next step (Reflection) to validate it.
+                        if isinstance(last_msg, AIMessage):
+                            # If we already had a pending one and this is NEW, it means we replaced it?
+                            # Or maybe it's the same one (streaming updates?).
+                            # In 'values' mode, we get the whole list.
+                            # So 'last_msg' IS the potential answer.
+                            if last_msg != pending_ai_message:
+                                logger.info(f"[Session {session_id}] Buffering new AI message candidate.")
+                                pending_ai_message = last_msg
+                            
+                            # If is_satisfactory is TRUE in this chunk, we can yield it immediately!
+                            # Because the graph state says it's good.
+                            if chunk.get("is_satisfactory"):
+                                logger.info(f"[Session {session_id}] Message verified satisfactory. Yielding.")
+                                text = extract_text_from_content(pending_ai_message.content)
+                                yield {"type": "content", "content": text}
+                                pending_ai_message = None # Flushed
+                                return # End stream, we are done
+                                
+                # If loop finishes and we still have a pending message (e.g. max reflections reached),
+                # we must yield it as best-effort.
+                if pending_ai_message:
+                     logger.info(f"[Session {session_id}] Yielding final buffered message (Max reflections or End of Stream).")
+                     text = extract_text_from_content(pending_ai_message.content)
+                     yield {"type": "content", "content": text}
                 
-                logger.info(f"[Session {session_id}] Stream loop completed. Total chunks: {chunk_count}, Total text: {len(accumulated_text)} chars")
+                logger.info(f"[Session {session_id}] Stream loop completed.")
 
             except RetryError as e:
                 logger.error(f"Network error while contacting AI service: {e}", exc_info=True)

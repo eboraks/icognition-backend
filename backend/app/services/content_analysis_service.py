@@ -18,6 +18,7 @@ from app.db.database import get_session
 from app.services.prompt_service import PromptService
 from app.services.prompt_utils import PromptType
 from app.utils.logging import get_logger
+from app.utils.langfuse_worker import get_langfuse_handler
 
 # Load environment variables
 load_dotenv()
@@ -93,8 +94,18 @@ class ContentAnalysisService:
         ])
         
         try:
-             # Truncate content for classification to save tokens
-            result = await self.classifier_llm.ainvoke(prompt.format(content=content[:5000], title=title))
+            # Add Langfuse tracing
+            lf_handler = get_langfuse_handler()
+            callbacks = [lf_handler] if lf_handler else []
+
+            # Truncate content for classification to save tokens
+            result = await self.classifier_llm.ainvoke(
+                prompt.format(content=content[:5000], title=title),
+                config={
+                    "callbacks": callbacks,
+                    "run_name": "content_classification"
+                }
+            )
             logger.info(f"Classified as: {result.category} ({result.reasoning})")
             return {"doc_type": result.category}
         except Exception as e:
@@ -128,7 +139,17 @@ class ContentAnalysisService:
                 ("user", f"Summarize this content and extract key insights: {content}")
             ])
             
-        result = await self.extraction_llm.ainvoke(prompt.format())
+        # Add Langfuse tracing
+        lf_handler = get_langfuse_handler()
+        callbacks = [lf_handler] if lf_handler else []
+
+        result = await self.extraction_llm.ainvoke(
+            prompt.format(),
+            config={
+                "callbacks": callbacks,
+                "run_name": f"extract_{agent_name.lower()}"
+            }
+        )
         result.agent_name = f"{agent_name}Agent"
         return {"extraction": result}
 
@@ -238,8 +259,22 @@ class ContentAnalysisService:
         
         # Invoke the graph
         try:
+             # Add Langfuse tracing
+            lf_handler = get_langfuse_handler()
+            
+            run_config = {}
+            if lf_handler:
+                run_config["callbacks"] = [lf_handler]
+                run_config["run_name"] = "content_analysis_workflow"
+                run_config["metadata"] = {
+                    "title": title or "Untitled",
+                    "url": url,
+                    "content_length": len(content),
+                    "service": "ContentAnalysisService"
+                }
+
              # Use ainvoke for async execution
-            result = await self.app.ainvoke(inputs)
+            result = await self.app.ainvoke(inputs, config=run_config)
             
             if "extraction" in result and result["extraction"]:
                 ext = result["extraction"]

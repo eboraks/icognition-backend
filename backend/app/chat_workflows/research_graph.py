@@ -13,7 +13,7 @@ from app.chat_workflows.tools import get_google_search_tool, create_retrieve_doc
 
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
-    intent: str
+    intent_description: str
     reflection_count: int
     search_needed: bool
     latest_query: str
@@ -85,17 +85,16 @@ def build_research_graph(checkpointer=None, retrieve_tool=None, db_session=None)
         ])
         
         classifier = prompt | llm.with_structured_output(IntentClassification)
-        result = await classifier.ainvoke({"input": last_message})
+        result = await classifier.ainvoke(
+            {"input": last_message},
+            config={"run_name": PromptType.CHAT_INTENT_CLASSIFICATION.value}
+        )
         
-        # Simple mapping to graph state intent for now, can be expanded
-        # We default to document_qa unless it's clearly external or chatter
-        intent_type = "document_qa"
-        if "external" in result["describe_the_user_message_intent"].lower():
-            intent_type = "external_research"
-        elif "chat" in result["describe_the_user_message_intent"].lower():
-            intent_type = "general_chat"
-            
-        return {"intent": intent_type, "latest_query": result["refined_query"]}
+          
+        return {
+            "latest_query": result["refined_query"],
+            "intent_description": result["describe_the_user_message_intent"]
+        }
 
     async def generate_node(state: AgentState):
         """Generates an answer based on context and tools."""
@@ -114,10 +113,33 @@ def build_research_graph(checkpointer=None, retrieve_tool=None, db_session=None)
             except Exception as e:
                 print(f"Error fetching system prompt: {e}")
 
-        # We manually construct the prompt to ensure system message is first
-        prompt_msgs = [SystemMessage(content=system_msg)] + messages
+        # Append intent description and refined query to the last user message content
+        # This ensures the model sees the intent as part of the immediate context
+        intent_desc = state.get("intent_description")
+        refined_query = state.get("latest_query")
         
-        response = await llm_with_tools.ainvoke(prompt_msgs)
+        prompt_msgs = list(messages)
+        if intent_desc or refined_query:
+            last_msg = prompt_msgs[-1]
+            if isinstance(last_msg, HumanMessage):
+                context_block = "\n\n[Analysis Context]"
+                if intent_desc:
+                    context_block += f"\nIntent: {intent_desc}"
+                if refined_query:
+                    context_block += f"\nRefined Query: {refined_query}"
+                
+                # Create a new message with enhanced content for the prompt
+                # We do this instead of modifying state directly to preserve history cleanliness if needed
+                enhanced_msg = HumanMessage(content=str(last_msg.content) + context_block)
+                prompt_msgs[-1] = enhanced_msg
+
+        # We manually construct the prompt to ensure system message is first
+        prompt_msgs = [SystemMessage(content=system_msg)] + prompt_msgs
+        
+        response = await llm_with_tools.ainvoke(
+            prompt_msgs,
+            config={"run_name": PromptType.CHAT_AGENT_SYSTEM.value}
+        )
         return {"messages": [response]}
 
     async def reflect_node(state: AgentState):
@@ -175,14 +197,19 @@ def build_research_graph(checkpointer=None, retrieve_tool=None, db_session=None)
             # Fallback if format fails but we must be strict about the prompt existing
             user_content = f"Student Submission:\n{msgs_str}"
 
+        # Use Message objects directly to prevent LangChain from interpreting content as templates
         prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            ("human", user_content)
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_content)
         ])
         
         chain = prompt | llm.with_structured_output(ReflectionOutput)
-        # We pass the translated messages to the chain
-        result = await chain.ainvoke({"messages": translated_messages})
+        # We pass the translated messages to the chain (though prompt is already formatted)
+        # Add run_name for Langfuse
+        result = await chain.ainvoke(
+            {"messages": translated_messages},
+            config={"run_name": PromptType.CHAT_REFLECTION.value}
+        )
         
         # LOGIC:
         # If is_satisfactory is True -> we are done.

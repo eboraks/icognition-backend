@@ -13,6 +13,7 @@ from app.utils.logging import get_logger
 from app.services.dspy_models import ContentExtract
 from app.models import Document
 from app.utils.text_utils import extract_text_from_html
+from app.utils.langfuse_worker import setup_dspy_instrumentation
 
 logger = get_logger(__name__)
 
@@ -91,6 +92,9 @@ class DspyExtractionService:
             api_key=self.api_key
         )
         
+        # Setup instrumentation (Langfuse/OpenInference)
+        setup_dspy_instrumentation()
+
         dspy.configure(lm=self.lm)
         
         # Initialize the extractor program
