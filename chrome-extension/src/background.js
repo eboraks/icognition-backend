@@ -23,7 +23,7 @@ const initializeBaseUrl = async () => {
         }
         console.log('Base URL initialized to:', base_url);
     } catch (error) {
-        console.error('Error initializing base URL:', error);
+        console.log('[ERROR]', 'Error initializing base URL:', error);
     }
 };
 
@@ -87,7 +87,7 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
 // Add these variables to track connection state
 let isConnecting = false;
 let reconnectAttempts = 0;
-let maxReconnectAttempts = 10;
+let maxReconnectAttempts = 2;
 let reconnectTimeout = null;
 // Removed heartbeatInterval - SSE handles this automatically
 
@@ -113,7 +113,11 @@ async function getFirebaseIdToken() {
             return newToken;
         } catch (error) {
             const errMsg = error?.message || error?.toString() || 'Unknown error';
-            console.error('getFirebaseIdToken -> Failed to refresh token:', errMsg);
+            if (errMsg.includes('No authenticated user') || errMsg.includes('auth') || errMsg.includes('Token expired')) {
+                console.log('getFirebaseIdToken -> Failed to refresh token (expected if logged out):', errMsg);
+            } else {
+                console.log('[ERROR]', 'getFirebaseIdToken -> Failed to refresh token:', errMsg);
+            }
             return null;
         }
     }
@@ -164,13 +168,13 @@ async function makeAuthenticatedRequest(url, options = {}) {
                     return await fetch(url, retryOptions);
                 }
             } catch (refreshError) {
-                console.error('makeAuthenticatedRequest -> Token refresh failed:', refreshError);
+                console.log('[ERROR]', 'makeAuthenticatedRequest -> Token refresh failed:', refreshError);
             }
         }
 
         return response;
     } catch (error) {
-        console.error('makeAuthenticatedRequest -> Request failed:', error);
+        console.log('[ERROR]', 'makeAuthenticatedRequest -> Request failed:', error);
         const errorMessage = error?.message || error?.toString() || 'Unknown error';
 
         // Check if it's a network/connection error
@@ -241,7 +245,7 @@ const registerSSEConnection = async () => {
     try {
         const token = await getFirebaseIdToken();
         if (!token) {
-            console.error('Failed to get Firebase token');
+            console.log('Failed to setup SSE: No Firebase token (user likely logged out)');
             isConnecting = false;
             return;
         }
@@ -307,7 +311,7 @@ const registerSSEConnection = async () => {
                                 const message = JSON.parse(data);
                                 handleSSEMessage(message);
                             } catch (e) {
-                                console.error('Failed to parse SSE data:', data, e);
+                                console.log('[ERROR]', 'Failed to parse SSE data:', data, e);
                             }
                         }
                     }
@@ -317,7 +321,7 @@ const registerSSEConnection = async () => {
                     if (error.name === 'AbortError') {
                         console.log('SSE connection aborted');
                     } else {
-                        console.error('Error reading SSE stream:', error);
+                        console.log('[ERROR]', 'Error reading SSE stream:', error);
                         handleSSEDisconnect();
                     }
                 });
@@ -328,13 +332,13 @@ const registerSSEConnection = async () => {
             if (error.name === 'AbortError') {
                 console.log('SSE connection aborted');
             } else {
-                console.error('Error opening SSE connection:', error);
+                console.log('[ERROR]', 'Error opening SSE connection:', error);
                 handleSSEDisconnect();
             }
         });
     } catch (error) {
         console.info('Store session user:', store.session_user);
-        console.error('Error setting up SSE connection:', error);
+        console.log('[ERROR]', 'Error setting up SSE connection:', error);
         isConnecting = false;
         handleSSEDisconnect();
     }
@@ -362,7 +366,7 @@ function handleSSEMessage(message) {
         }).then((response) => {
             console.log('render-document response: ', response);
         }).catch(error => {
-            console.error('Error sending NEW_DOC message:', error);
+            console.log('[ERROR]', 'Error sending NEW_DOC message:', error);
         });
     }
 
@@ -374,7 +378,7 @@ function handleSSEMessage(message) {
         }).then((response) => {
             console.log('progress_percentage response: ', response);
         }).catch(error => {
-            console.error('Error sending PROGRESS_PERCENTAGE message:', error);
+            console.log('[ERROR]', 'Error sending PROGRESS_PERCENTAGE message:', error);
         });
     }
 
@@ -386,7 +390,7 @@ function handleSSEMessage(message) {
         }).then((response) => {
             console.log('error response: ', response);
         }).catch(error => {
-            console.error('Error sending ERROR message:', error);
+            console.log('[ERROR]', 'Error sending ERROR message:', error);
         });
     }
 }
@@ -463,14 +467,14 @@ async function postBookmark(tab) {
 
     function getBody() { return document.documentElement.innerHTML; }
 
-
     try {
-        const injectionResults = await chrome.scripting.executeScript({
+        let injectionResults;
+        injectionResults = await chrome.scripting.executeScript({
             target: { tabId: tab.id, allFrames: false },
             func: getBody,
         });
 
-        if (injectionResults[0].result != null) {
+        if (injectionResults && injectionResults[0] && injectionResults[0].result != null) {
             console.log('postBookmark -> HTML recieved from content script')
             html = injectionResults[0].result
         }
@@ -497,7 +501,7 @@ async function postBookmark(tab) {
         return { status: response.status, content: _content }
     }
     catch (err) {
-        console.error('postBookmark -> error:', err)
+        console.log('[ERROR]', 'postBookmark -> error:', err)
         return { status: 500, content: { detail: err.message || 'Failed to create bookmark' } }
     }
 }
@@ -576,7 +580,7 @@ const searchBookmarksByUrl = async (user_id, url) => {
         if (!response.ok) {
             const errorJson = await response.json();
             const errorMsg = (typeof errorJson.detail === 'string') ? errorJson.detail : JSON.stringify(errorJson.detail || errorJson);
-            console.error('searchBookmarkByUrl -> error response: ', errorMsg);
+            console.log('[ERROR]', 'searchBookmarkByUrl -> error response: ', errorMsg);
             return { bookmark: undefined, error: errorMsg };
         }
 
@@ -584,7 +588,7 @@ const searchBookmarksByUrl = async (user_id, url) => {
         console.log('searchBookmarkByUrl -> server data: ', data);
         return { bookmark: data, error: null };
     } catch (err) {
-        console.error('searchBookmarkByUrl -> error: ', err);
+        console.log('[ERROR]', 'searchBookmarkByUrl -> error: ', err);
         const errorMessage = err?.message || err?.toString() || 'Unknown error';
 
         // Check if it's an auth or connection error
@@ -645,7 +649,7 @@ async function refreshBookmarksCache(user_uid) {
         storeBookmarks(bookmarks);
     } catch (error) {
         const errMsg = error?.message || error?.toString() || 'Unknown error';
-        console.error(`refreshBookmarksCache -> error from ${base_url}:`, errMsg);
+        console.log('[ERROR]', `refreshBookmarksCache -> error from ${base_url}:`, errMsg);
     }
 }
 
@@ -719,7 +723,11 @@ async function handleCreateChatSession(data) {
         return { success: true, data: session };
     } catch (error) {
         const errMsg = error?.message || error?.toString() || 'Unknown error';
-        console.error(`Error creating chat session at ${base_url}:`, errMsg);
+        if (errMsg.includes('Authentication token not available')) {
+            console.log(`Error creating chat session at ${base_url}:`, errMsg);
+        } else {
+            console.log('[ERROR]', `Error creating chat session at ${base_url}:`, errMsg);
+        }
         return { success: false, error: errMsg };
     }
 }
@@ -745,7 +753,11 @@ async function handleSendChatMessage(data) {
         return { success: true, data: message };
     } catch (error) {
         const errMsg = error?.message || error?.toString() || 'Unknown error';
-        console.error(`Error sending chat message to ${base_url}:`, errMsg);
+        if (errMsg.includes('Authentication token not available')) {
+            console.log(`Error sending chat message to ${base_url}:`, errMsg);
+        } else {
+            console.log('[ERROR]', `Error sending chat message to ${base_url}:`, errMsg);
+        }
         return { success: false, error: errMsg };
     }
 }
@@ -804,7 +816,7 @@ async function handleStreamChatResponse(data) {
                             data: { ...messageData, sessionId }
                         }).catch(() => { }); // Ignore if popup closed
                     } catch (e) {
-                        console.error('Failed to parse chat SSE data:', dataStr, e);
+                        console.log('[ERROR]', 'Failed to parse chat SSE data:', dataStr, e);
                     }
                 } else if (line.startsWith('event: error')) {
                     // Handle error event if needed, usually data line follows or is part of it?
@@ -817,7 +829,7 @@ async function handleStreamChatResponse(data) {
         }
 
     } catch (error) {
-        console.error('Error in chat stream:', error);
+        console.log('[ERROR]', 'Error in chat stream:', error);
         chrome.runtime.sendMessage({
             name: 'chat-stream-error',
             data: { sessionId, messageId, error: error.message }
@@ -848,7 +860,11 @@ async function handleGetChatSuggestion(data) {
         return { success: true, data: result };
     } catch (error) {
         const errMsg = error?.message || error?.toString() || 'Unknown error';
-        console.error(`Error getting chat suggestion from ${base_url}:`, errMsg);
+        if (errMsg.includes('Authentication token not available')) {
+            console.log(`Error getting chat suggestion from ${base_url}:`, errMsg);
+        } else {
+            console.log('[ERROR]', `Error getting chat suggestion from ${base_url}:`, errMsg);
+        }
         return { success: false, error: errMsg };
     }
 }
@@ -871,7 +887,11 @@ async function handleGetChatMessages(data) {
         return { success: true, data: messages };
     } catch (error) {
         const errMsg = error?.message || error?.toString() || 'Unknown error';
-        console.error(`Error getting chat messages from ${base_url}:`, errMsg);
+        if (errMsg.includes('Authentication token not available')) {
+            console.log(`Error getting chat messages from ${base_url}:`, errMsg);
+        } else {
+            console.log('[ERROR]', `Error getting chat messages from ${base_url}:`, errMsg);
+        }
         return { success: false, error: errMsg };
     }
 }
@@ -1042,7 +1062,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         searchBookmarksByUrl(user.value?.uid, request.tab.url).then((result) => {
             sendResponse(result)
         }).catch(err => {
-            console.error('Error checking bookmarks:', err);
+            console.log('[ERROR]', 'Error checking bookmarks:', err);
             sendResponse({ bookmark: undefined, error: err.message });
         });
         return true; // Keep channel open
@@ -1060,7 +1080,7 @@ chrome.runtime.onMessage.addListener(
                 console.log('background.js postBookmark Results: ', result.status, ' -> ', result.content)
                 sendResponse({ status: result.status, content: result.content })
             }).catch((error) => {
-                console.error('background.js postBookmark Error: ', error)
+                console.log('[ERROR]', 'background.js postBookmark Error: ', error)
                 sendResponse({
                     status: 500,
                     content: { detail: error.message || 'Failed to create bookmark' }
@@ -1085,7 +1105,7 @@ chrome.runtime.onInstalled.addListener(() => {
     chrome.storage.local.clear(function () {
         var error = chrome.runtime.lastError;
         if (error) {
-            console.error(error);
+            console.log('[ERROR]', error);
         }
     });
 
@@ -1150,7 +1170,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
                 await handleHighlighting(targetTabId, message.verbatim, sendResponse);
             } catch (error) {
-                console.error('Error in highlight-citation handler:', error);
+                console.log('[ERROR]', 'Error in highlight-citation handler:', error);
                 sendResponse({ success: false, error: error.message || 'Unknown error' });
             }
         })();
@@ -1165,7 +1185,7 @@ async function handleHighlighting(tabId, verbatim, sendResponse) {
         // First check if the tab exists
         const tab = await chrome.tabs.get(tabId);
         if (!tab) {
-            console.error('Tab not found');
+            console.log('[ERROR]', 'Tab not found');
             sendResponse({
                 success: false,
                 error: 'Tab not found'
@@ -1183,7 +1203,7 @@ async function handleHighlighting(tabId, verbatim, sendResponse) {
             });
             console.log('Content script injected successfully');
         } catch (injectionError) {
-            console.error('Error injecting content script:', injectionError);
+            console.log('[ERROR]', 'Error injecting content script:', injectionError);
             // Continue anyway, as the script might already be there
         }
 
@@ -1200,7 +1220,7 @@ async function handleHighlighting(tabId, verbatim, sendResponse) {
                 (response) => {
                     const lastError = chrome.runtime.lastError;
                     if (lastError) {
-                        console.error('Error sending message to content script:', lastError);
+                        console.log('[ERROR]', 'Error sending message to content script:', lastError);
                         resolve({ success: false, error: lastError.message });
                     } else {
                         console.log('Highlight response:', response);
@@ -1221,7 +1241,7 @@ async function handleHighlighting(tabId, verbatim, sendResponse) {
         const result = await Promise.race([messagePromise, timeoutPromise]);
         sendResponse(result);
     } catch (error) {
-        console.error('Error in handleHighlighting:', error);
+        console.log('[ERROR]', 'Error in handleHighlighting:', error);
         sendResponse({
             success: false,
             error: error.message || 'Unknown error in highlighting process'
@@ -1261,13 +1281,35 @@ const deleteBookmark = async (bookmarkId) => {
             } catch (e) {
                 errorDetail = await response.text().catch(() => 'Unknown error/Not JSON');
             }
-            console.error('Error deleting bookmark:', errorDetail);
+            console.log('[ERROR]', 'Error deleting bookmark:', errorDetail);
             return { success: false, error: errorDetail };
         }
     } catch (err) {
         const errMsg = err?.message || err?.toString() || 'Unknown error';
-        console.error('Error deleting bookmark:', errMsg);
+        console.log('[ERROR]', 'Error deleting bookmark:', errMsg);
         return { success: false, error: errMsg };
+    }
+}
+
+// Add fetchBookmarkStatus function for lightweight polling
+const fetchBookmarkStatus = async (bookmarkId) => {
+    try {
+        if (!bookmarkId || bookmarkId === 'undefined') {
+            const msg = `Invalid bookmarkId: ${bookmarkId}. Cannot fetch status.`;
+            return { success: false, error: msg };
+        }
+
+        const url = `${base_url}${Endpoints.bookmark_by_id.replace('{ID}', bookmarkId)}`;
+        const response = await makeAuthenticatedRequest(url, { method: 'GET' });
+
+        if (response.ok) {
+            const bookmark = await response.json();
+            return { success: true, is_processed: bookmark.is_processed, processing_status: bookmark.processing_status };
+        } else {
+            return { success: false, error: 'Failed to check status' };
+        }
+    } catch (err) {
+        return { success: false, error: err?.message || 'Unknown error' };
     }
 }
 
@@ -1276,7 +1318,7 @@ const fetchBookmarkDocument = async (bookmarkId) => {
     try {
         if (!bookmarkId || bookmarkId === 'undefined') {
             const msg = `Invalid bookmarkId: ${bookmarkId}. Cannot fetch document.`;
-            console.error(msg);
+            console.log('[ERROR]', msg);
             return { success: false, error: msg };
         }
 
@@ -1304,7 +1346,7 @@ const fetchBookmarkDocument = async (bookmarkId) => {
                     return { success: true, bookmark, document };
                 } else {
                     const docError = await docResponse.json().catch(() => ({ detail: 'Failed to fetch document' }));
-                    console.error(`Error fetching document (${docResponse.status}):`, docError);
+                    console.log('[ERROR]', `Error fetching document (${docResponse.status}):`, docError);
                     // Return bookmark even if document fetch failed
                     return { success: true, bookmark, document: null, docError: JSON.stringify(docError) };
                 }
@@ -1321,7 +1363,7 @@ const fetchBookmarkDocument = async (bookmarkId) => {
                 errorDetail = await response.text().catch(() => 'Unknown error/Not JSON');
             }
 
-            console.error(`Error fetching bookmark (${response.status}):`, errorDetail);
+            console.log('[ERROR]', `Error fetching bookmark (${response.status}):`, errorDetail);
 
             // If bookmark not found on server, refresh local cache to stay in sync
             if (response.status === 404 || errorDetail === 'Bookmark not found') {
@@ -1336,7 +1378,11 @@ const fetchBookmarkDocument = async (bookmarkId) => {
         }
     } catch (err) {
         const errMsg = err?.message || err?.toString() || 'Unknown error';
-        console.error('Error in fetchBookmarkDocument:', errMsg);
+        if (errMsg.includes('Authentication token not available')) {
+            console.log('Error in fetchBookmarkDocument:', errMsg);
+        } else {
+            console.log('[ERROR]', 'Error in fetchBookmarkDocument:', errMsg);
+        }
         return { success: false, error: errMsg };
     }
 }
@@ -1360,12 +1406,12 @@ const deleteDocument = async (documentId) => {
             } catch (e) {
                 errorDetail = await response.text().catch(() => 'Unknown error/Not JSON');
             }
-            console.error('Error deleting document:', errorDetail);
+            console.log('[ERROR]', 'Error deleting document:', errorDetail);
             return { success: false, error: errorDetail };
         }
     } catch (err) {
         const errMsg = err?.message || err?.toString() || 'Unknown error';
-        console.error('Error deleting document:', errMsg);
+        console.log('[ERROR]', 'Error deleting document:', errMsg);
         return { success: false, error: errMsg };
     }
 }
@@ -1401,7 +1447,7 @@ const cancelProcessing = async (bookmarkId, documentId) => {
             console.log('Document deleted successfully');
         } else {
             results.errors.push(`Document deletion failed: ${docResult.error?.detail || docResult.error}`);
-            console.error('Failed to delete document:', docResult.error);
+            console.log('[ERROR]', 'Failed to delete document:', docResult.error);
         }
     }
 
@@ -1414,7 +1460,7 @@ const cancelProcessing = async (bookmarkId, documentId) => {
             console.log('Bookmark deleted successfully');
         } else {
             results.errors.push(`Bookmark deletion failed: ${bookmarkResult.error?.detail || bookmarkResult.error}`);
-            console.error('Failed to delete bookmark:', bookmarkResult.error);
+            console.log('[ERROR]', 'Failed to delete bookmark:', bookmarkResult.error);
         }
     }
 
@@ -1452,13 +1498,23 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
         return true;
     }
+    else if (request.name === 'check-bookmark-status') {
+        fetchBookmarkStatus(request.bookmarkId).then((result) => {
+            sendResponse(result);
+        }).catch((error) => {
+            const errMsg = error?.message || error?.toString() || 'Unknown error';
+            console.log('[ERROR]', 'Error in check-bookmark-status handler:', errMsg);
+            sendResponse({ success: false, error: errMsg });
+        });
+        return true;
+    }
     else if (request.name === 'fetch-bookmark-document') {
         console.log('Fetching document for bookmark:', request.bookmarkId);
         fetchBookmarkDocument(request.bookmarkId).then((result) => {
             sendResponse(result);
         }).catch((error) => {
             const errMsg = error?.message || error?.toString() || 'Unknown error';
-            console.error('Error in fetch-bookmark-document handler:', errMsg);
+            console.log('[ERROR]', 'Error in fetch-bookmark-document handler:', errMsg);
             sendResponse({ success: false, error: errMsg });
         });
         return true;
@@ -1519,7 +1575,7 @@ function sendFocusMessage() {
 function openPanelThenFocus() {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (chrome.runtime.lastError) {
-            console.error('Error querying tabs:', chrome.runtime.lastError.message);
+            console.log('[ERROR]', 'Error querying tabs:', chrome.runtime.lastError.message);
             return;
         }
 

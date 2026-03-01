@@ -115,7 +115,7 @@
                 ? props.chat.response 
                 : JSON.stringify(props.chat.response);
         } catch (e) {
-            console.error('Error formatting response:', e, props.chat.response);
+            console.log('[ERROR]', 'Error formatting response:', e, props.chat.response);
             // If it's not valid JSON, just return the original response
             return props.chat.response;
         }
@@ -196,7 +196,7 @@
             }
             
             if (!verbatim) {
-                console.error('No citation text found');
+                console.log('[ERROR]', 'No citation text found');
                 showError.value = true;
                 
                 // Show error notification
@@ -250,7 +250,7 @@
                 }, 10000);
             }
         } catch (error) {
-            console.error('Error in handleCitationClick:', error);
+            console.log('[ERROR]', 'Error in handleCitationClick:', error);
             showError.value = true;
         } finally {
             // Remove loading indicator

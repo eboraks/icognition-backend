@@ -69,19 +69,15 @@ class DSPyExtractionTest:
             "pass": is_valid_length
         }
     
-    def validate_key_takeaways(self, takeaways: List[str]) -> Dict[str, Any]:
-        """Validate key takeaways"""
-        count = len(takeaways)
-        is_valid_count = 3 <= count <= 7
-        
-        # Check each takeaway has content
-        all_valid = all(len(t.strip()) > 10 for t in takeaways)
+    def validate_markdown_content(self, markdown_content: str) -> Dict[str, Any]:
+        """Validate markdown content"""
+        length = len(markdown_content)
+        is_valid_length = length > 50
         
         return {
-            "count": count,
-            "is_valid_count": is_valid_count,
-            "all_have_content": all_valid,
-            "pass": is_valid_count and all_valid
+            "length": length,
+            "is_valid_length": is_valid_length,
+            "pass": is_valid_length
         }
     
     def validate_entities(
@@ -147,7 +143,7 @@ class DSPyExtractionTest:
         """Run all validation checks"""
         validations = {
             "summary": self.validate_summary(extracted_data.summary),
-            "key_takeaways": self.validate_key_takeaways(extracted_data.key_takeaways),
+            "markdown_content": self.validate_markdown_content(extracted_data.markdown_content),
             "entities": self.validate_entities(
                 [e.model_dump() for e in extracted_data.key_entities],
                 original_content
@@ -159,7 +155,7 @@ class DSPyExtractionTest:
                 bool(extracted_data.title),
                 bool(extracted_data.source_type),
                 bool(extracted_data.summary),
-                bool(extracted_data.key_takeaways),
+                bool(extracted_data.markdown_content),
             ])
         }
         

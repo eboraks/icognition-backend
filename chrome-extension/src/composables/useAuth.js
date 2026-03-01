@@ -53,7 +53,7 @@ const handleSignOut = () => {
         chrome.storage.session.remove('session_user')
         user.value = null
     }).catch((error) => {
-    console.error('error signing out: ', error)
+    console.log('[ERROR]', 'error signing out: ', error)
     });
 }
 

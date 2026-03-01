@@ -51,9 +51,8 @@ async def test_content_extraction(document_id: int):
             
             print("✓ Content extraction successful")
             print(f"\nSummary (ai_is_about): {result['summary'][:200]}...")
-            print(f"\nKey Takeaways (ai_bullet_points): {len(result['bullet_points'])} items")
-            for i, takeaway in enumerate(result['bullet_points'][:3], 1):
-                print(f"  {i}. {takeaway[:100]}...")
+            print(f"\nMarkdown Content length: {len(result['markdown_content'])}")
+            print(f"  Preview: {result['markdown_content'][:100]}...")
             
             print(f"\nExtracted Content Fields:")
             ec = result['extracted_content']

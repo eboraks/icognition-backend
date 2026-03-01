@@ -35,7 +35,7 @@ class SSENotificationManager:
             connections = self.active_connections.setdefault(user_id, set())
             connections.add(queue)
         
-        logger.info(
+        logger.debug(
             "SSE connection registered for user %s. Total connections: %s",
             user_id,
             len(connections),
@@ -52,7 +52,7 @@ class SSENotificationManager:
                 if not connections:
                     self.active_connections.pop(user_id, None)
         
-        logger.info("SSE connection unregistered for user %s", user_id)
+        logger.debug("SSE connection unregistered for user %s", user_id)
     
     async def send_notification(
         self,
@@ -125,7 +125,7 @@ async def stream_notifications(
     user_id = user_context.user.id
     manager = get_notification_manager()
     
-    logger.info(f"SSE connection attempt from user: {user_id}")
+    logger.debug(f"SSE connection attempt from user: {user_id}")
     
     # Register connection
     queue = await manager.connect(user_id)
@@ -173,7 +173,7 @@ async def stream_notifications(
         finally:
             # Unregister connection
             await manager.disconnect(user_id, queue)
-            logger.info(f"SSE connection closed for user {user_id}")
+            logger.debug(f"SSE connection closed for user {user_id}")
     
     return StreamingResponse(
         generate_stream(),

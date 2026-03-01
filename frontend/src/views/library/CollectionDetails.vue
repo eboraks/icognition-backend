@@ -4,6 +4,7 @@
     import { useStudyCollection } from '@/composables/useStudyCollection';
     import user_state from '@/composables/getUser';
     import { defineAsyncComponent, ref, onMounted } from 'vue';
+    import { marked } from 'marked';
     import { useDialog } from 'primevue/usedialog';
     import { useRouter } from 'vue-router';
     import { AskQuestionPayload } from '@/components/models/AskQuestion.ts';
@@ -59,6 +60,14 @@
         search_term.value = '';
         searchHandle();
     }
+
+    const renderMarkdown = (content?: string) => {
+        if (!content) return '';
+        const renderer = new marked.Renderer();
+        renderer.link = ({ href, title, text }) => `<a href="${href}" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline" title="${title || ''}">${text}</a>`;
+        marked.setOptions({ renderer });
+        return marked.parse(content);
+    };
 
     const handleApply = async () => {
         if (!selectedDocuments.value) {
@@ -361,9 +370,8 @@
                                                 <p>Key Points:</p>
                                             </div>
                                             <div class="col-11 font-mono" style="max-width: 60%;">
-                                                <ul v-for="item in slotProps.data.tldr">
-                                                    <li>{{ item }}</li>
-                                                </ul>
+                                                <div v-if="slotProps.data.tldr" v-html="renderMarkdown(slotProps.data.tldr)"></div>
+                                                <div v-else>No key points available.</div>
                                             </div>  
                                         </div>
                                     </div>

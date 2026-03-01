@@ -20,7 +20,7 @@ PROMPTS = [
     {
         "prompt_type": "DSPy: Content Extraction",
         "system_prompt": "You are an expert content analysis engine. Your sole task is to analyze the provided text and return a valid JSON object that conforms to the ContentExtract Pydantic model.",
-        "user_prompt": "### JSON Generation Rules:\n\n1. **Focus on Quality:** Extract accurate title, neutral summary, 4-6 key takeaways, tone, and intent.\n2. **Links and URLs:** Include full URLs in summary and bullet points.\n3. **Paywalls:** Note if content is limited.\n4. **Opinion Pieces:** Set objectivity correctly.\n5. **Social Media:** Set source_type correctly.\n6. **Multi-Topic:** Ensure key_takeaways cover all topics.\n\nContent: {content}",
+        "user_prompt": "### JSON Generation Rules:\n\n1. **Focus on Quality:** Extract accurate title, neutral summary, a detailed markdown representation (`markdown_content`), tone, and intent.\n2. **Links and URLs:** Include full URLs in summary and markdown content.\n3. **Paywalls:** Note if content is limited.\n4. **Opinion Pieces:** Set objectivity correctly.\n5. **Social Media:** Set source_type correctly.\n6. **Multi-Topic:** Ensure markdown_content covers all topics.\n\nContent: {content}",
         "description": "Instructions for DSPy content extraction signature"
     },
     {

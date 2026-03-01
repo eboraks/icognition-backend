@@ -10,6 +10,7 @@
 
 <script setup lang="ts">
     import { inject, onMounted, ref, watch } from 'vue';
+    import { marked } from 'marked';
     import { DataTableExpandedRows, ProgressSpinner } from 'primevue';
     import moment from 'moment';
     import { StudyCollection } from '@/components/models/StudyCollection';
@@ -113,6 +114,14 @@
         }
     )
 
+    const renderMarkdown = (content?: string) => {
+        if (!content) return '';
+        const renderer = new marked.Renderer();
+        renderer.link = ({ href, title, text }) => `<a href="${href}" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline" title="${title || ''}">${text}</a>`;
+        marked.setOptions({ renderer });
+        return marked.parse(content);
+    };
+
 </script>
 
 <template>
@@ -195,9 +204,8 @@
                                                         <p>Key Points:</p>
                                                     </div>
                                                     <div class="col-11" style="max-width: 60%;">
-                                                        <ul v-for="item in slotProps.data.tldr">
-                                                            <li>{{ item }}</li>
-                                                        </ul>
+                                                        <div v-if="slotProps.data.tldr" v-html="renderMarkdown(slotProps.data.tldr)"></div>
+                                                        <div v-else>No key points available.</div>
                                                     </div>  
                                                 </div>
                                             </div>

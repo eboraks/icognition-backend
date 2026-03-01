@@ -9,7 +9,7 @@ const getBaseUrl = async () => {
         }
         return 'https://stg.api.icognition.ai';
     } catch (error) {
-        console.error('Error getting base URL:', error);
+        console.log('[ERROR]', 'Error getting base URL:', error);
         return 'http://localhost:8000'; // Default to development on error
     }
 };

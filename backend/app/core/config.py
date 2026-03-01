@@ -75,6 +75,11 @@ class Settings(BaseSettings):
     
     # Hugging Face Configuration
     HF_API_TOKEN: Optional[str] = os.getenv("HF_API_TOKEN")
+
+    # X.com API Configuration
+    X_CONSUMER_KEY: Optional[str] = os.getenv("X_CONSUMER_KEY")
+    X_SECRET_KEY: Optional[str] = os.getenv("X_SECRET_KEY")
+    X_BEARER_TOKEN: Optional[str] = os.getenv("X_BEARER_TOKEN")
     
     # Security Configuration
     SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-here")

@@ -50,6 +50,7 @@
 
 <script setup>
 import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue';
+import { marked } from 'marked';
 import Button from 'primevue/button';
 import TypedChatInput from './TypedChatInput.vue';
 import ScrollPanel from 'primevue/scrollpanel';
@@ -82,7 +83,7 @@ const extractVocabulary = () => {
 
     const textParts = [];
     if (props.initialSummary.summary) textParts.push(props.initialSummary.summary);
-    if (props.initialSummary.bullet_points) textParts.push(...props.initialSummary.bullet_points);
+    if (props.initialSummary.markdown_content) textParts.push(props.initialSummary.markdown_content);
 
     // Join all text, remove Markdown/HTML-like chars if simple ones exist (mostly raw text expected)
     const text = textParts.join(' ').toLowerCase();
@@ -188,7 +189,7 @@ watch(() => props.sessionId, (newId, oldId) => {
 
 // Watch for summary updates to inject content if it was previously empty
 watch(() => props.initialSummary, (newSummary) => {
-    if (newSummary && (newSummary.summary || (newSummary.bullet_points && newSummary.bullet_points.length > 0))) {
+    if (newSummary && (newSummary.summary || newSummary.markdown_content)) {
         const hasSummary = messages.value.some(m => m.id === 'initial-summary');
         const summaryMsg = messages.value.find(m => m.id === 'initial-summary');
         
@@ -226,7 +227,7 @@ const loadMessages = async () => {
             messages.value = fetchedMessages;
         }
     } catch (error) {
-        console.error('Failed to load messages:', error);
+        console.log('[ERROR]', 'Failed to load messages:', error);
     } finally {
         loading.value = false;
         // Always add summary as the very first message context
@@ -241,19 +242,12 @@ const initChat = () => {
     if (props.initialSummary) {
         let content = '';
         // Always add title if available as a header to prevent blank state
-        if (props.initialSummary.title) {
+        if (props.initialSummary.title && props.initialSummary.title.trim()) {
             content += `<h3 class="text-lg font-bold mb-3 border-bottom-1 border-200 pb-2">${escapeHtml(props.initialSummary.title)}</h3>`;
         }
         
-        if (props.initialSummary.summary) {
-            content += `<h4 class="font-semibold mb-1">Summary</h4><p class="mb-2">${formatUrlsAsLinks(props.initialSummary.summary)}</p>`;
-        }
-        if (props.initialSummary.bullet_points && props.initialSummary.bullet_points.length > 0) {
-            content += `<h4 class="font-semibold mb-1 mt-1">Key Points</h4><ul class="pl-3 mt-1 list-disc">`;
-            props.initialSummary.bullet_points.forEach(point => {
-                content += `<li class="mb-1">${formatUrlsAsLinks(point)}</li>`;
-            });
-            content += `</ul>`;
+        if (props.initialSummary.markdown_content) {
+            content += `<h4 class="font-semibold mb-1 mt-1">Content</h4><div class="mt-1">${marked.parse(props.initialSummary.markdown_content)}</div>`;
         }
         
         // Extract vocabulary for autocomplete
@@ -344,7 +338,7 @@ const handleStreamEnd = (data) => {
 };
 
 const handleStreamError = (data) => {
-    console.error('Stream error:', data.error);
+    console.log('[ERROR]', 'Stream error:', data.error);
     loading.value = false;
     const lastMessage = messages.value[messages.value.length - 1];
     if (lastMessage) {
@@ -403,7 +397,7 @@ const sendMessage = async () => {
              throw new Error(response.error || 'Failed to send message');
         }
     } catch (error) {
-        console.error('Error sending message:', error);
+        console.log('[ERROR]', 'Error sending message:', error);
         loading.value = false;
         // Update placeholder with error
         const lastMessage = messages.value[messages.value.length - 1];

@@ -276,7 +276,10 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             "user_agent": request.headers.get("user-agent", "unknown")
         }
         
-        logger.info(f"REQUEST: {log_entry}")
+        if "/api/v1/notifications/stream" in request.url.path:
+            logger.debug(f"REQUEST: {log_entry}")
+        else:
+            logger.info(f"REQUEST: {log_entry}")
     
     def _log_security_violation(
         self, 

@@ -53,11 +53,8 @@ class ContentExtractNoEntities(BaseModel):
     source_type: SourceType = Field(
         description="The type of source."
     )
-    summary: str = Field(
-        description="A neutral, one-paragraph summary."
-    )
-    key_takeaways: List[str] = Field(
-        description="A list of the most important facts, conclusions, or arguments."
+    markdown_content: str = Field(
+        description="Detailed extracted content in Markdown format, such as paragraphs, bullet points, or tables depending on the source."
     )
     analysis: ContentAnalysis = Field(
         description="Analysis metadata including objectivity, tone, and intent."

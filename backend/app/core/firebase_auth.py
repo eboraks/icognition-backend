@@ -83,7 +83,7 @@ class FirebaseAuth:
         try:
             # Verify the ID token
             decoded_token = auth.verify_id_token(id_token)
-            logger.info(f"Successfully verified token for user: {decoded_token.get('uid')}")
+            logger.debug(f"Successfully verified token for user: {decoded_token.get('uid')}")
             return decoded_token
         
         except auth.ExpiredIdTokenError:

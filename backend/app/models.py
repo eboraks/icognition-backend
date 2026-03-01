@@ -40,8 +40,7 @@ class PageType(str, Enum):
 
 class LLMContentExtraction(BaseModel):
     """Complete content extraction result from LLM"""
-    summary: str = Field(description="Summary of the content of the document given to the LLM", default=None, nullable=True)
-    bullet_points: list[str] = Field(description="Bullet points with the key points of the content of the document given to the LLM", default=[], nullable=True)
+    markdown_content: str = Field(description="Detailed content extraction in Markdown format. May include paragraphs, lists, or any other appropriate structure based on the content type.", default="", nullable=True)
     agent_name: str = Field(description="Name of the agent that extracted the content", default=None, nullable=True)
     updated_at: Optional[datetime] = Field(
         default_factory=datetime.utcnow,
@@ -193,9 +192,9 @@ class Document(SQLModel, table=True):
     content: Optional[str] = Field(default=None, sa_column=Column(Text))  # New field
     # content_vector removed - embeddings now stored in centralized Embedding table
     
-    # AI analysis fields (legacy model)
+    # AI analysis fields
     ai_is_about: str = Field(default=None, nullable=True)
-    ai_bullet_points: List[str] = Field(default=[], sa_column=Column(JSON))
+    ai_markdown_content: str = Field(default="", sa_column=Column(Text))
     ai_citations: List[Dict] = Field(default=[], sa_column=Column(JSON))
     
     # Publication and processing
@@ -233,7 +232,7 @@ class Document(SQLModel, table=True):
             "site_name": self.site_name,
             "cosine_similarity": self.cosine_similarity,
             "ai_is_about": self.ai_is_about,
-            "ai_bullet_points": self.ai_bullet_points,
+            "ai_markdown_content": self.ai_markdown_content,
             
         }
     

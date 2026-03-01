@@ -74,21 +74,20 @@ class TestDspyContentService:
         # Verify result structure
         assert result is not None
         assert 'summary' in result
-        assert 'bullet_points' in result
+        assert 'markdown_content' in result
         assert 'extracted_content' in result
         
         # Verify content quality
         assert len(result['summary']) > 50
-        assert isinstance(result['bullet_points'], list)
-        assert len(result['bullet_points']) >= 3
-        assert len(result['bullet_points']) <= 7
+        assert isinstance(result['markdown_content'], str)
+        assert len(result['markdown_content']) > 50
         
         # Verify extracted_content structure
         ec = result['extracted_content']
         assert 'title' in ec
         assert 'source_type' in ec
         assert 'summary' in ec
-        assert 'key_takeaways' in ec
+        assert 'markdown_content' in ec
         assert 'analysis' in ec
         assert 'objectivity' in ec['analysis']
         assert 'tone' in ec['analysis']
@@ -96,7 +95,7 @@ class TestDspyContentService:
         
         print(f"\n✓ Content analysis successful")
         print(f"  Summary: {result['summary'][:100]}...")
-        print(f"  Bullet points: {len(result['bullet_points'])}")
+        print(f"  Markdown content length: {len(result['markdown_content'])}")
         print(f"  Source type: {ec['source_type']}")
 
 
@@ -259,7 +258,7 @@ class TestDspyIntegration:
             
             # Update document with content analysis
             document.ai_is_about = content_result['summary']
-            document.ai_bullet_points = content_result['bullet_points']
+            document.ai_markdown_content = content_result['markdown_content']
             document.extracted_content = content_result['extracted_content']
             document.source_type = content_result['extracted_content']['source_type']
             
@@ -282,13 +281,13 @@ class TestDspyIntegration:
             
             # Verify complete processing
             assert document.ai_is_about is not None
-            assert len(document.ai_bullet_points) > 0
+            assert len(document.ai_markdown_content) > 0
             assert document.extracted_content is not None
             assert entity_result['entities_processed'] > 0
             
             print(f"\n✓ Full document processing successful")
             print(f"  Summary: {document.ai_is_about[:100]}...")
-            print(f"  Bullet points: {len(document.ai_bullet_points)}")
+            print(f"  Markdown length: {len(document.ai_markdown_content)}")
             print(f"  Entities: {entity_result['entities_processed']}")
             print(f"  Source type: {document.source_type}")
             

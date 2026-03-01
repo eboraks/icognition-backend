@@ -57,7 +57,7 @@ export const useDocumentStore = defineStore('documentStore', () => {
             docs.value = response.documents.map(docResponse => {
                 const docModel = new DocModel(docResponse.title, docResponse.url || '', docResponse.id);
                 docModel.is_about = docResponse.ai_is_about;
-                docModel.tldr = docResponse.ai_bullet_points || [];
+                docModel.tldr = docResponse.ai_markdown_content || "";
                 docModel.updateAt = docResponse.updated_at ? moment(docResponse.updated_at) : moment();
                 return docModel;
             });

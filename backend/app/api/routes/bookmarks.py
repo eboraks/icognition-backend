@@ -24,6 +24,7 @@ from app.services.entity_extraction_task_manager import get_entity_extraction_ta
 from app.services.dspy_entity_service import get_dspy_entity_service
 from app.services.dspy_entity_adapter import DspyEntityAdapter
 from app.services.embedding_service import get_embedding_service
+from app.services.x_api_service import get_x_api_service
 from app.core.config import settings
 from app.api.routes.websocket import get_connection_manager
 from app.api.routes.notifications import get_notification_manager
@@ -74,7 +75,7 @@ async def _send_document_ready_message(
             "title": title or document.title,
             "url": url or document.url,
             "ai_is_about": document.ai_is_about,
-            "ai_bullet_points": document.ai_bullet_points,
+            "ai_markdown_content": document.ai_markdown_content,
             "created_at": document.created_at.isoformat() if document.created_at else None,
             "updated_at": document.updated_at.isoformat() if document.updated_at else None
         }
@@ -87,7 +88,8 @@ async def _process_document_content(
     document_id: str,
     title: Optional[str],
     url: Optional[str],
-    user_id: Optional[str] = None
+    user_id: Optional[str] = None,
+    image_urls: Optional[List[str]] = None
 ):
     """
     Background task to process document content for summarization and bullet points
@@ -97,6 +99,7 @@ async def _process_document_content(
         title: Document title
         url: Document URL
         user_id: User ID for WebSocket notifications
+        image_urls: Optional list of image URLs for multimodal analysis (X posts)
     """
     notification_manager = get_notification_manager()
     
@@ -157,7 +160,7 @@ async def _process_document_content(
                 
                 # Mark as processed without AI analysis
                 document.ai_is_about = "Content not available for analysis"
-                document.ai_bullet_points = []
+                document.ai_markdown_content = ""
                 document.updated_at = datetime.now()
                 await session.commit()
                 await session.refresh(document)
@@ -182,16 +185,35 @@ async def _process_document_content(
                     "data": 50
                 }, user_id)
             
-            # Get DSPy content service (NEW: using DSPy instead of old ContentAnalysisService)
-            dspy_content_service = get_dspy_content_service()
-            
-            # Analyze the document content using DSPy
-            logger.info(f"Analyzing document content with DSPy for {doc_id}")
-            analysis_result = await dspy_content_service.analyze_document_content(
-                content=document.content or "",
-                title=title,
-                url=url
-            )
+            if "x.com" in url.lower() or "twitter.com" in url.lower():
+                logger.info(f"Analyzing X.com content with LangGraph XPostProcessingService for {doc_id}")
+                from app.services.x_post_processing_service import get_x_post_processing_service
+                x_post_service = get_x_post_processing_service()
+                
+                # Use image_urls passed directly as parameter
+                x_image_urls = image_urls or []
+                if not x_image_urls:
+                    # Fallback: check document metadata
+                    if document.document_metadata and isinstance(document.document_metadata, dict):
+                        x_image_urls = document.document_metadata.get("image_urls", [])
+                
+                if x_image_urls:
+                    logger.info(f"Passing {len(x_image_urls)} image URLs to X post analysis")
+                
+                analysis_result = await x_post_service.analyze_x_post(
+                    content=document.content or "",
+                    title=title,
+                    url=url,
+                    image_urls=x_image_urls
+                )
+            else:
+                logger.info(f"Analyzing document content with DSPy for {doc_id}")
+                dspy_content_service = get_dspy_content_service()
+                analysis_result = await dspy_content_service.analyze_document_content(
+                    content=document.content or "",
+                    title=title,
+                    url=url
+                )
             
             # Send progress update
             if user_id:
@@ -202,7 +224,7 @@ async def _process_document_content(
             
             # Update document with DSPy analysis results
             document.ai_is_about = analysis_result['summary']
-            document.ai_bullet_points = analysis_result['bullet_points']
+            document.ai_markdown_content = analysis_result.get('markdown_content', '')
             document.extracted_content = analysis_result['extracted_content']
             document.source_type = analysis_result['extracted_content']['source_type']
             document.updated_at = datetime.now()
@@ -423,6 +445,15 @@ async def _process_html_content_to_document(
                     await session.refresh(bookmark)
                     logger.info(f"Successfully created document {document.id} from HTML content for bookmark {bookmark_id}")
             
+            # Propagate image_urls from bookmark metadata to document metadata
+            if bookmark.bookmark_metadata and isinstance(bookmark.bookmark_metadata, dict):
+                image_urls = bookmark.bookmark_metadata.get("image_urls", [])
+                if image_urls:
+                    if not document.document_metadata:
+                        document.document_metadata = {}
+                    document.document_metadata["image_urls"] = image_urls
+                    logger.info(f"Propagated {len(image_urls)} image URLs to document {document.id} metadata")
+            
             # Update bookmark processing status
             bookmark.is_processed = True
             bookmark.processing_status = "completed"
@@ -432,9 +463,14 @@ async def _process_html_content_to_document(
             # Launch 3 independent background tasks
             logger.info(f"Launching 3 background tasks for document {document.id}")
             
+            # Extract image URLs from bookmark metadata for X posts
+            bm_image_urls = None
+            if bookmark.bookmark_metadata and isinstance(bookmark.bookmark_metadata, dict):
+                bm_image_urls = bookmark.bookmark_metadata.get("image_urls", None)
+            
             # Task 1: Summary & Bullet Points (critical for UX)
             create_task(_process_document_content(
-                document.id, title, url, user_id
+                document.id, title, url, user_id, image_urls=bm_image_urls
             ))
             
             # Task 2: Entity Extraction (for filtering)
@@ -718,12 +754,19 @@ async def re_analyze_bookmark(
         
         # Start background processing
         content_analysis_service = get_content_analysis_service()
+        
+        # Extract image URLs from bookmark metadata for X posts
+        bm_image_urls = None
+        if bookmark.bookmark_metadata and isinstance(bookmark.bookmark_metadata, dict):
+            bm_image_urls = bookmark.bookmark_metadata.get("image_urls", None)
+        
         background_tasks.add_task(
             _process_document_content,
             bookmark.document_id,
             bookmark.title,
             bookmark.url,
-            user_context.user.id
+            user_context.user.id,
+            bm_image_urls
         )
         
         # Add entity extraction as separate background task
@@ -815,6 +858,41 @@ async def create_bookmark(
     """Create a new bookmark with full document processing workflow"""
     try:
         logger.info(f"Creating bookmark for URL: {bookmark_data.url}")
+
+        # X.com API Integration
+        if "x.com" in bookmark_data.url.lower() or "twitter.com" in bookmark_data.url.lower():
+            x_api = get_x_api_service()
+            tweet_id = x_api.extract_tweet_id(bookmark_data.url)
+            if tweet_id:
+                logger.info(f"Detected X.com URL, fetching thread for tweet ID: {tweet_id}")
+                focal_tweet = await x_api.get_tweet_details(tweet_id)
+                if focal_tweet:
+                    conversation_id = focal_tweet.get("data", {}).get("conversation_id")
+                    if conversation_id:
+                        # Extract min_likes from metadata or default to 5
+                        min_likes = 5
+                        if bookmark_data.metadata and "min_likes" in bookmark_data.metadata:
+                            try:
+                                min_likes = int(bookmark_data.metadata["min_likes"])
+                            except (ValueError, TypeError):
+                                pass
+                        
+                        replies = await x_api.get_replies(conversation_id, min_likes=min_likes)
+                        bookmark_data.content = x_api.format_to_article(focal_tweet, replies)
+                        
+                        # Extract image URLs from tweet media
+                        image_urls = x_api.get_media_urls(focal_tweet)
+                        if image_urls:
+                            if not bookmark_data.metadata:
+                                bookmark_data.metadata = {}
+                            bookmark_data.metadata["image_urls"] = image_urls
+                            logger.info(f"Extracted {len(image_urls)} image URLs from tweet")
+                        
+                        logger.info(f"Successfully fetched X.com thread with {len(replies)} replies")
+                    else:
+                        logger.warning(f"Could not find conversation_id for tweet {tweet_id}")
+                else:
+                    logger.warning(f"Could not fetch details for tweet {tweet_id}")
         
         document_service = DocumentService(session)
         
@@ -870,13 +948,19 @@ async def create_bookmark(
                 await session.refresh(existing_document)
                 
                 # Still check if document needs AI processing
-                if existing_document.ai_is_about is None or existing_document.ai_bullet_points is None:
+                if existing_document.ai_is_about is None or not existing_document.ai_markdown_content:
+                    # Extract image URLs from bookmark metadata for X posts
+                    bm_image_urls = None
+                    if bookmark_data.metadata and isinstance(bookmark_data.metadata, dict):
+                        bm_image_urls = bookmark_data.metadata.get("image_urls", None)
+                    
                     background_tasks.add_task(
                         _process_document_content,
                         existing_document.id,
                         existing_bookmark.title,
                         existing_bookmark.url,
-                        user_context.user.id
+                        user_context.user.id,
+                        bm_image_urls
                     )
                     background_tasks.add_task(
                         _process_document_entities,
@@ -887,7 +971,7 @@ async def create_bookmark(
                         _process_document_embeddings,
                         existing_document.id
                     )
-                elif existing_document.ai_is_about and existing_document.ai_bullet_points:
+                elif existing_document.ai_is_about and existing_document.ai_markdown_content:
                     await _send_document_ready_message(
                         existing_document, 
                         user_context.user.id, 
@@ -930,9 +1014,9 @@ async def create_bookmark(
                     existing_document.content = sanitize_content_for_db(bookmark_data.content)
                 existing_document.updated_at = datetime.now()
                 # Reset AI processing if content changed
-                if existing_document.ai_is_about or existing_document.ai_bullet_points:
+                if existing_document.ai_is_about or existing_document.ai_markdown_content:
                     existing_document.ai_is_about = None
-                    existing_document.ai_bullet_points = []
+                    existing_document.ai_markdown_content = ""
             
             await session.commit()
             await session.refresh(existing_bookmark)
@@ -940,12 +1024,18 @@ async def create_bookmark(
             
             # Trigger background processing if content was updated
             if raw_html_changed:
+                # Extract image URLs from bookmark metadata for X posts
+                bm_image_urls = None
+                if bookmark_data.metadata and isinstance(bookmark_data.metadata, dict):
+                    bm_image_urls = bookmark_data.metadata.get("image_urls", None)
+                
                 background_tasks.add_task(
                     _process_document_content,
                     existing_document.id,
                     existing_bookmark.title,
                     existing_bookmark.url,
-                    user_context.user.id
+                    user_context.user.id,
+                    bm_image_urls
                 )
                 background_tasks.add_task(
                     _process_document_entities,
@@ -986,7 +1076,7 @@ async def create_bookmark(
                 user_id=user_context.user.id,
                 document_id=existing_document.id,
                 is_processed=True,
-                processing_status="completed" if (existing_document.ai_is_about and existing_document.ai_bullet_points) else "pending"
+                processing_status="completed" if (existing_document.ai_is_about and existing_document.ai_markdown_content) else "pending"
             )
             
             session.add(bookmark)
@@ -994,13 +1084,19 @@ async def create_bookmark(
             await session.refresh(bookmark)
             
             # If document needs AI processing, trigger it
-            if existing_document.ai_is_about is None or existing_document.ai_bullet_points is None:
+            if existing_document.ai_is_about is None or not existing_document.ai_markdown_content:
+                # Extract image URLs from bookmark metadata for X posts
+                bm_image_urls = None
+                if bookmark_data.metadata and isinstance(bookmark_data.metadata, dict):
+                    bm_image_urls = bookmark_data.metadata.get("image_urls", None)
+                
                 background_tasks.add_task(
                     _process_document_content,
                     existing_document.id,
                     bookmark.title,
                     bookmark.url,
-                    user_context.user.id
+                    user_context.user.id,
+                    bm_image_urls
                 )
                 background_tasks.add_task(
                     _process_document_entities,
@@ -1011,7 +1107,7 @@ async def create_bookmark(
                     _process_document_embeddings,
                     existing_document.id
                 )
-            elif existing_document.ai_is_about and existing_document.ai_bullet_points:
+            elif existing_document.ai_is_about and existing_document.ai_markdown_content:
                 await _send_document_ready_message(
                     existing_document, 
                     user_context.user.id, 
@@ -1041,13 +1137,21 @@ async def create_bookmark(
                 user_id=user_context.user.id,
                 document_id=existing_bookmark.document_id
             )
-            if document is not None and (document.ai_is_about is None or document.ai_bullet_points is None):
+            if document is not None and (document.ai_is_about is None or not document.ai_markdown_content):
+                # Extract image URLs from bookmark metadata for X posts
+                bm_image_urls = None
+                if existing_bookmark.bookmark_metadata and isinstance(existing_bookmark.bookmark_metadata, dict):
+                    bm_image_urls = existing_bookmark.bookmark_metadata.get("image_urls", None)
+                elif bookmark_data.metadata and isinstance(bookmark_data.metadata, dict):
+                    bm_image_urls = bookmark_data.metadata.get("image_urls", None)
+                
                 background_tasks.add_task(
                     _process_document_content,
                     document.id,
                     existing_bookmark.title,
                     existing_bookmark.url,
-                    user_context.user.id
+                    user_context.user.id,
+                    bm_image_urls
                 )
                 # Add entity extraction as separate background task
                 background_tasks.add_task(
@@ -1079,12 +1183,20 @@ async def create_bookmark(
                     await session.commit()
                     
                     # Launch 3 background tasks for the new document
+                    # Extract image URLs from bookmark metadata
+                    bm_image_urls = None
+                    if existing_bookmark.bookmark_metadata and isinstance(existing_bookmark.bookmark_metadata, dict):
+                        bm_image_urls = existing_bookmark.bookmark_metadata.get("image_urls", None)
+                    elif bookmark_data.metadata and isinstance(bookmark_data.metadata, dict):
+                        bm_image_urls = bookmark_data.metadata.get("image_urls", None)
+                    
                     background_tasks.add_task(
                         _process_document_content,
                         document.id,
                         existing_bookmark.title,
                         existing_bookmark.url,
-                        user_context.user.id
+                        user_context.user.id,
+                        bm_image_urls
                     )
                     background_tasks.add_task(
                         _process_document_entities,
@@ -1100,7 +1212,7 @@ async def create_bookmark(
                 else:
                     logger.error(f"Failed to create document for existing bookmark {existing_bookmark.id}")
                     
-            elif document is not None and document.ai_is_about and document.ai_bullet_points:
+            elif document is not None and document.ai_is_about and document.ai_markdown_content:
                 # Document already has AI content, broadcast it immediately
                 await _send_document_ready_message(
                     document, 
@@ -1342,14 +1454,20 @@ async def create_bookmark(
                 content_available = False
             
             # Only trigger background tasks if content is available
-            if content_available and (_doc.ai_is_about is None or _doc.ai_bullet_points is None):
+            if content_available and (_doc.ai_is_about is None or not _doc.ai_markdown_content):
+                # Extract image URLs from bookmark metadata for X posts
+                bm_image_urls = None
+                if bookmark.bookmark_metadata and isinstance(bookmark.bookmark_metadata, dict):
+                    bm_image_urls = bookmark.bookmark_metadata.get("image_urls", None)
+                
                 # Start background processing tasks
                 background_tasks.add_task(
                     _process_document_content,
                     _doc.id,
                     bookmark.title,
                     bookmark.url,
-                    user_context.user.id
+                    user_context.user.id,
+                    bm_image_urls
                 )
                 
                 # Add entity extraction as separate background task

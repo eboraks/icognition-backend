@@ -27,7 +27,7 @@ export interface DocumentResponse {
   updated_at: string;
   user_id: string;
   ai_is_about?: string;
-  ai_bullet_points?: string[];
+  ai_markdown_content?: string;
 }
 
 export interface DocumentListResponse {

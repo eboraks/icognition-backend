@@ -6,7 +6,7 @@ export class DocModel {
     authors?: any[];
     title: string;
     url: string;
-    tldr?: [string];
+    tldr?: string;
     publicationDate?: Moment;
     llmServiceMeta?: Object;
     status?: string;

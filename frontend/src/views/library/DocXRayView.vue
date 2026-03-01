@@ -10,6 +10,7 @@
 
 <script setup lang="ts" >
   import { ref, h, onBeforeMount, watch } from 'vue';
+  import { marked } from 'marked';
   import { useRouter } from 'vue-router';
   import { useCustomQandA } from '@/composables/useCustomQandA.ts';
   import { useDocQuesAnswers } from '@/composables/useDocQuesAnswers.ts';
@@ -77,6 +78,14 @@
         console.log("Error: ", err);
       }
   });
+
+  const renderMarkdown = (content?: string) => {
+    if (!content) return '';
+    const renderer = new marked.Renderer();
+    renderer.link = ({ href, title, text }) => `<a href="${href}" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline" title="${title || ''}">${text}</a>`;
+    marked.setOptions({ renderer });
+    return marked.parse(content);
+  };
 
   function add_to_pdf(element: string, text: string): any {
     switch(element) {
@@ -361,9 +370,7 @@
                       <p class="line-height-2 summary-content" v-if="doc != null && doc.is_about != null">{{ doc.is_about }}</p>
                       <div v-if="doc != null && doc.tldr != null">
                         <h4 class="pt-3">Key Points:</h4>
-                        <ul class="key-points-content">
-                          <li v-for="item in doc.tldr">{{ item }}</li>
-                        </ul>
+                        <div class="key-points-content" v-html="renderMarkdown(doc.tldr)"></div>
                       </div>
                       <div v-if="doc != null && qa_store.config.list.size > 0">
                         <h4 class="pt-3">Questions answered by this document</h4>

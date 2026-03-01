@@ -87,10 +87,11 @@
         </div>
 
         <!-- Document summary interface container (Replaced with Chat Interface) -->
-        <div v-if="document_summary" class="document-interface-container h-full flex flex-column custom-chat-height" tabindex="-1">
+        <div v-if="document_summary && status.state !== AppStatusEnum.PROCESSING.state" class="document-interface-container h-full flex flex-column custom-chat-height" tabindex="-1">
             <div class="page-info p-2 bg-primary-50 flex-none" tabindex="-1">
                 <div class="flex align-items-center justify-content-between" tabindex="-1">
-                    <span class="text-sm text-primary-800 white-space-nowrap overflow-hidden text-overflow-ellipsis mr-2" :title="getCurrentPageTitle()">{{ getCurrentPageTitle() }}</span>
+                    <span v-if="!isSocialMedia" class="text-sm text-primary-800 white-space-nowrap overflow-hidden text-overflow-ellipsis mr-2" :title="getCurrentPageTitle()">{{ getCurrentPageTitle() }}</span>
+                    <span v-else class="text-sm text-primary-800 font-bold mr-2">X Post</span>
                     <Button tabindex="2" @click="clearCurrentChat" icon="pi pi-trash" class="p-button-text p-button-sm p-button-danger flex-none"></Button>
                 </div>
             </div>
@@ -108,12 +109,11 @@
             </div>
             <!-- Fallback if chat fails to start but summary exists -->
             <div v-else class="summary-container p-3" tabindex="-1">
-                <div class="document-title mb-2" tabindex="-1">
+                <div v-if="!isSocialMedia" class="document-title mb-2" tabindex="-1">
                     <h3 class="text-lg font-bold">{{ document_summary.title }}</h3>
                 </div>
-                <div v-if="document_summary.summary" class="document-summary mb-3" tabindex="-1">
-                    <h4 class="text-md font-semibold mb-1">Summary</h4>
-                    <p :style="{ fontSize: fontSizeMap[selectedFontSize] }" v-html="formatUrlsAsLinks(document_summary.summary)"></p>
+                <div v-if="document_summary.markdown_content" class="document-summary mb-3" tabindex="-1">
+                    <div :style="{ fontSize: fontSizeMap[selectedFontSize] }" v-html="marked.parse(document_summary.markdown_content)"></div>
                 </div>
                  <div class="text-center mt-3">
                     <Button label="Start Chat" @click="initializeChatSession(cleanUrl(active_tab.url), documentIdsByUrl[cleanUrl(active_tab.url)])" class="p-button-sm" />
@@ -121,7 +121,7 @@
             </div>
         </div>
 
-        <div v-if="status.severity === AppStatusEnum.ERROR.severity" class="m-2 p-2 flex align-items-center justify-content-center">
+        <div v-if="status.severity === AppStatusEnum.ERROR.severity && status.state !== AppStatusEnum.CONNECTION_ERROR.state" class="m-2 p-2 flex align-items-center justify-content-center">
             <Message id="status-message" 
                     :severity="status.severity" 
                     class="w-full" 
@@ -255,7 +255,8 @@
     </Dialog>
 </template>
 <script setup>
-import { ref, onMounted, watch, nextTick, onUnmounted } from 'vue'
+import { ref, computed, onMounted, watch, nextTick, onUnmounted } from 'vue'
+import { marked } from 'marked';
 import { cleanUrl, CommunicationEnum, formatUrlsAsLinks, detectPageType } from '../composables/utils.js';
 import Button from 'primevue/button';
 import DocSummary from './DocSummary.vue';
@@ -344,7 +345,7 @@ const isCreatingChatSession = ref(false);
 
 const pollingTimer = ref(null);
 const lastStatusCheck = ref(0);
-const POLLING_INTERVAL = 3000; // 3 seconds
+const POLLING_INTERVAL = 8000; // 8 seconds
 
 // Add these new refs for autocomplete functionality
 const showAutocomplete = ref(false);
@@ -373,6 +374,13 @@ const buttonHasFocus = ref(false);
 const showSettings = ref(false);
 const selectedEnvironment = ref('development');
 const selectedFontSize = ref('medium'); // Default to medium (12px)
+
+// Computed property to check if current page is social media
+const isSocialMedia = computed(() => {
+    if (!active_tab.value || !active_tab.value.url) return false;
+    const url = active_tab.value.url.toLowerCase();
+    return url.includes('twitter.com') || url.includes('x.com');
+});
 
 // Font size mapping
 const fontSizeMap = {
@@ -416,7 +424,7 @@ const loadSettings = async () => {
             console.log('Loaded font size preference:', selectedFontSize.value);
         }
     } catch (error) {
-        console.error('Error loading settings:', error);
+        console.log('[ERROR]', 'Error loading settings:', error);
     }
 };
 
@@ -457,7 +465,7 @@ const saveSettings = async () => {
             handleTabChange(active_tab.value);
         }
     } catch (error) {
-        console.error('Error saving environment preference:', error);
+        console.log('[ERROR]', 'Error saving environment preference:', error);
         handleError('Failed to save environment preference');
     }
 };
@@ -638,22 +646,24 @@ const handleTabChange = (tab) => {
         bookmark.value = bookmarksByUrl.value[currentUrl] || null;
         
         if (documentIdsByUrl.value[currentUrl]) {
-            status.value = AppStatusEnum.DOCUMENT_READY;
-            console.log('Setting status to DOCUMENT_READY');
-            initializeChatSession(currentUrl, documentIdsByUrl.value[currentUrl]);
-            
-            // If the cached summary is minimal (no content), trigger a server refresh in background
+            // First check if the cached summary has content
             const summary = document_summary.value;
-            const isMinimal = !summary || (!summary.summary && (!summary.bullet_points || summary.bullet_points.length === 0));
+            const isMinimal = !summary || (!summary.summary && !summary.markdown_content);
             
             if (isMinimal) {
-                console.log('Cached summary is minimal or missing content, triggering refresh for URL:', currentUrl);
+                console.log('Cached summary is minimal or missing content, setting status to PROCESSING and triggering refresh for URL:', currentUrl);
+                status.value = AppStatusEnum.PROCESSING;
+                progressPercent.value = 5; // Reset progress
                 searchBookmarksByUrl(currentUrl);
+            } else {
+                console.log('Setting status to DOCUMENT_READY');
+                status.value = AppStatusEnum.DOCUMENT_READY;
+                initializeChatSession(currentUrl, documentIdsByUrl.value[currentUrl]);
             }
         }
     } else if (user.value) {
         // If no saved chat but user is logged in, check for bookmarks
-        // Don't set status here, let searchBookmarksByUrl handle it
+        status.value = AppStatusEnum.SERVER_READY;
         isSearchingBookmark.value = true;
         console.log('No saved chat, user logged in, searching bookmarks');
         console.log('Searching bookmarks for URL:', currentUrl);
@@ -664,7 +674,6 @@ const handleTabChange = (tab) => {
         console.log('No user logged in, setting status to UNAUTHENTICATED');
     }
     
-
     console.log('Final status after tab change:', status.value.state);
 };
 
@@ -754,12 +763,17 @@ const searchBookmarksByUrl = async (url) => {
                         if (response && response.success && response.document) {
                         console.log('Got document from server:', response.document);
                         document_summary.value = {
-                            title: response.document.title,
+                            title: isSocialMedia.value ? '' : response.document.title,
                             summary: response.document.ai_is_about,
-                            bullet_points: response.document.ai_bullet_points
+                            markdown_content: response.document.ai_markdown_content
                         };
                         doc.value = response.document;
-                        status.value = AppStatusEnum.DOCUMENT_READY;
+                        if (!response.document.ai_markdown_content) {
+                            status.value = AppStatusEnum.PROCESSING;
+                            progressPercent.value = 5;
+                        } else {
+                            status.value = AppStatusEnum.DOCUMENT_READY;
+                        }
                         
                         // Cache the summary
                         summariesByUrl.value[cleanedUrl] = {...document_summary.value};
@@ -791,14 +805,19 @@ const searchBookmarksByUrl = async (url) => {
                             // This guarantees the document interface renders
                             if (!document_summary.value) {
                                 document_summary.value = {
-                                    title: currentBookmark.title || found.title || 'Analysis Result',
+                                    title: isSocialMedia.value ? '' : (currentBookmark.title || found.title || 'Analysis Result'),
                                     summary: '',
-                                    bullet_points: []
+                                    markdown_content: ''
                                 };
                             }
                             
                             doc.value = { id: docId, title: currentBookmark.title || found.title };
-                            status.value = AppStatusEnum.DOCUMENT_READY;
+                            if (!document_summary.value.markdown_content) {
+                                status.value = AppStatusEnum.PROCESSING;
+                                progressPercent.value = 5;
+                            } else {
+                                status.value = AppStatusEnum.DOCUMENT_READY;
+                            }
                             
                             const bookmarkToSave = {...currentBookmark};
                             if (!bookmarkToSave.document_id && docId) {
@@ -818,7 +837,7 @@ const searchBookmarksByUrl = async (url) => {
                     }
                 }
             } catch (error) {
-                    console.error('Error fetching document from server:', error);
+                    console.log('[ERROR]', 'Error fetching document from server:', error);
                     // Still show the bookmark but without document summary
                 }
                 return;
@@ -829,10 +848,14 @@ const searchBookmarksByUrl = async (url) => {
         console.log('No bookmarks found in local storage, checking server via background...');
         
         try {
-            const response = await chrome.runtime.sendMessage({ 
+            const fetchPromise = chrome.runtime.sendMessage({ 
                 name: 'check-for-bookmarks',
                 tab: { url: url, id: active_tab.value?.id }
             });
+            const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('check-for-bookmarks timed out')), 5000);
+            });
+            const response = await Promise.race([fetchPromise, timeoutPromise]);
             
             if (response && response.bookmark) {
                 console.log('Found bookmark on server:', response.bookmark);
@@ -851,9 +874,9 @@ const searchBookmarksByUrl = async (url) => {
                 if (docResponse && docResponse.success && docResponse.document) {
                     console.log('Got document from server:', docResponse.document);
                     document_summary.value = {
-                        title: docResponse.document.title,
+                        title: isSocialMedia.value ? '' : docResponse.document.title,
                         summary: docResponse.document.ai_is_about,
-                        bullet_points: docResponse.document.ai_bullet_points
+                        markdown_content: docResponse.document.ai_markdown_content
                     };
                     doc.value = docResponse.document;
                     status.value = AppStatusEnum.DOCUMENT_READY;
@@ -873,9 +896,9 @@ const searchBookmarksByUrl = async (url) => {
                          console.log('Using bookmark document ID fallback');
                          // Ensure document_summary is initialized
                          document_summary.value = {
-                             title: currentBookmark.title || 'Analysis Result',
+                             title: isSocialMedia.value ? '' : (currentBookmark.title || 'Analysis Result'),
                              summary: '',
-                             bullet_points: []
+                             markdown_content: ''
                          };
                          
                          doc.value = { id: currentBookmark.document_id, title: currentBookmark.title };
@@ -896,34 +919,34 @@ const searchBookmarksByUrl = async (url) => {
                 status.value = AppStatusEnum.SERVER_READY;
             }
         } catch (err) {
-            console.error('Error checking server for bookmarks:', err);
+            console.log('[ERROR]', 'Error checking server for bookmarks:', err);
             status.value = AppStatusEnum.SERVER_READY;
         }
 
         } catch (error) {
-            console.error('Error searching bookmarks by URL:', error);
-            // Check if it's an auth or connection error
             const errorMessage = error?.message || error?.toString() || 'Unknown error';
-            if (errorMessage.includes('Authentication token not available') || 
-                errorMessage.includes('Failed to fetch') ||
-                errorMessage.includes('NetworkError') ||
-                errorMessage.includes('ERR_')) {
-                handleConnectionError('Authentication or connection error. Please check your connection and try again.');
+            if (errorMessage.includes('Authentication token not available')) {
+                console.log('Error searching bookmarks by URL (expected if logged out):', error);
+                status.value = AppStatusEnum.UNAUTHENTICATED;
             } else {
-                handleError('Error searching bookmarks');
-                status.value = AppStatusEnum.SERVER_READY;
+                console.log('[ERROR]', 'Error searching bookmarks by URL:', error);
+                // Check if it's a connection error
+                if (errorMessage.includes('Failed to fetch') ||
+                    errorMessage.includes('NetworkError') ||
+                    errorMessage.includes('ERR_')) {
+                    handleConnectionError('Connection error. Please check your connection and try again.');
+                } else {
+                    handleError('Error searching bookmarks');
+                    status.value = AppStatusEnum.SERVER_READY;
+                }
             }
     } finally {
-        // Only set isSearchingBookmark to false if we're not in DOCUMENT_READY state
-        // And not transitioning to another loading state
-        if (status.value.state !== AppStatusEnum.DOCUMENT_READY.state) {
-            isSearchingBookmark.value = false;
-        }
+        isSearchingBookmark.value = false;
     }
 }
 
 const handleConnectionError = (message) => {
-    console.error('Connection error:', message);
+    console.log('[ERROR]', 'Connection error:', message);
     connectionErrorMessage.value = message;
     status.value = AppStatusEnum.CONNECTION_ERROR;
     isSearchingBookmark.value = false;
@@ -962,7 +985,7 @@ const handleRetryConnection = async () => {
             status.value = AppStatusEnum.CONNECTION_ERROR;
         }
     } catch (error) {
-        console.error('Error retrying connection:', error);
+        console.log('[ERROR]', 'Error retrying connection:', error);
         if (connectionRetryCount.value >= 2) {
             connectionErrorMessage.value = 'Server is currently unavailable. Please wait a couple of minutes and try again.';
         } else {
@@ -1002,7 +1025,11 @@ const initializeChatSession = async (url, docId) => {
             chatSessionsByUrl.value[url] = response.data.id;
             currentChatSessionId.value = response.data.id;
         } else {
-            console.error('Failed to create chat session:', response.error);
+            if (response.error && typeof response.error === 'string' && response.error.includes('Authentication token not available')) {
+                console.log('Failed to create chat session (expected if logged out):', response.error);
+            } else {
+                console.log('[ERROR]', 'Failed to create chat session:', response.error);
+            }
             // If session creation fails because doc/bookmark is gone, reset to analyze
             if (response.error?.includes('404') || response.error?.includes('not found')) {
                 console.log('Document not found during chat init, resetting to SERVER_READY');
@@ -1013,7 +1040,7 @@ const initializeChatSession = async (url, docId) => {
             }
         }
     } catch (error) {
-        console.error('Error initializing chat:', error);
+        console.log('[ERROR]', 'Error initializing chat:', error);
     } finally {
         isCreatingChatSession.value = false;
     }
@@ -1091,7 +1118,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                             btnEl.classList.remove('button-focus-highlight');
                         }, 2000);
                     } else {
-                        console.error('Could not find analyze button via querySelector');
+                        console.log('[ERROR]', 'Could not find analyze button via querySelector');
                     }
                 }
             }
@@ -1112,7 +1139,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                         appState: status.value.state
                     });
                 } catch (e) {
-                    console.error('Error sending response:', e);
+                    console.log('[ERROR]', 'Error sending response:', e);
                 }
             }
         }, focusDelay);
@@ -1121,51 +1148,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
     
     if (request.name === CommunicationEnum.NEW_DOC) {
-        console.log('NEW_DOC received:', request.data);
-        doc.value = request.data
-        document_summary.value = {
-            title: request.data.title,
-            summary: request.data.ai_is_about,
-            bullet_points: request.data.ai_bullet_points
-        }
-        
-        // Update progress to 100% when document is ready
-        progressPercent.value = 100;
-        
-        status.value = AppStatusEnum.DOCUMENT_READY
-        console.log('New document received, status:', status.value.state)
-        console.log('Document summary:', document_summary.value)
-        
-        // Parse document ID (backend may send as string)
-        const documentId = request.data.id ? parseInt(request.data.id) : request.data.id;
-        console.log('Document ID (parsed):', documentId);
-        
-        // Save document ID and summary for current URL
-        if (active_tab.value && active_tab.value.url) {
-            const cleanedUrl = cleanUrl(active_tab.value.url);
-            documentIdsByUrl.value[cleanedUrl] = documentId;
-            summariesByUrl.value[cleanedUrl] = {...document_summary.value};
-            
-            // Auto-start chat session
-            initializeChatSession(cleanedUrl, documentId);
-            
-            // Update bookmark with document_id if we have the bookmark
-            if (bookmark.value && bookmark.value.id) {
-                bookmark.value.document_id = documentId;
-                bookmark.value.is_processed = true;
-                bookmark.value.processing_status = 'completed';
-                bookmarksByUrl.value[cleanedUrl] = {...bookmark.value};
-                console.log('Updated bookmark with document_id:', documentId);
-                console.log('Updated bookmark:', bookmark.value);
-            } else {
-                console.warn('No bookmark found to update with document_id');
-            }
-        } else {
-            console.warn('No active tab URL found to save document');
-        }
-
-        // Stop polling when document is ready
-        stopPolling();
+        handleNewDoc({ data: request.data, name: request.name });
     }
 
     // Chat-related message handlers removed - will be re-implemented in future update
@@ -1177,10 +1160,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     if (request.name === 'connection-error') {
         console.log('Connection error received from background:', request.error);
-        const errorMsg = request.type === 'auth_or_connection' 
-            ? 'Authentication or connection error. Please check your connection and try again.'
-            : 'Unable to connect to server. Please try again.';
-        handleConnectionError(errorMsg);
+        
+        if (request.error && typeof request.error === 'string' && request.error.includes('Authentication token not available')) {
+            console.log('Authentication token missing, setting state to UNAUTHENTICATED to show login button');
+            status.value = AppStatusEnum.UNAUTHENTICATED;
+        } else {
+            const errorMsg = request.type === 'auth_or_connection' 
+                ? 'Authentication or connection error. Please check your connection and try again.'
+                : 'Unable to connect to server. Please try again.';
+            handleConnectionError(errorMsg);
+        }
     }
     
     if (request.name === 'sse-disconnected') {
@@ -1290,7 +1279,7 @@ const createBookmark = async () => {
         console.log('handleBookmark -> response:', response)
 
         if (!response) {
-            console.error('handleBookmark -> No response received');
+            console.log('[ERROR]', 'handleBookmark -> No response received');
             handleError('No response from bookmark creation');
             return;
         }
@@ -1325,27 +1314,13 @@ const createBookmark = async () => {
                     
                     if (docResponse && docResponse.success && docResponse.document) {
                          console.log('Fetched document details:', docResponse.document);
-                         // Use the NEW_DOC handler logic
-                         doc.value = docResponse.document;
-                         document_summary.value = {
-                            title: docResponse.document.title,
-                            summary: docResponse.document.ai_is_about,
-                            bullet_points: docResponse.document.ai_bullet_points
-                         };
-                         progressPercent.value = 100;
-                         status.value = AppStatusEnum.DOCUMENT_READY;
-                         
-                         // Initialize chat
-                         if (active_tab.value && active_tab.value.url) {
-                            const cleanedUrl = cleanUrl(active_tab.value.url);
-                            documentIdsByUrl.value[cleanedUrl] = docResponse.document.id;
-                            summariesByUrl.value[cleanedUrl] = {...document_summary.value};
-                            initializeChatSession(cleanedUrl, docResponse.document.id);
-                         }
+                         // Use the NEW_DOC handler logic so all title stripping and
+                         // progress management logic stays in one place
+                         handleNewDoc({ data: docResponse.document });
                          return;
                     }
                 } catch (err) {
-                    console.error('Failed to fetch document:', err);
+                    console.log('[ERROR]', 'Failed to fetch document:', err);
                     // Fall through to waiting state logic
                 }
             }
@@ -1362,7 +1337,7 @@ const createBookmark = async () => {
             }
         }
     }).catch((error) => {
-        console.error('handleBookmark -> Error:', error);
+        console.log('[ERROR]', 'handleBookmark -> Error:', error);
         handleError('Failed to create bookmark: ' + (error.message || 'Unknown error'));
     });
 }
@@ -1404,6 +1379,9 @@ const handleBookmark = async () => {
 // Chat functions removed - will be re-implemented in future update
 
 const getCurrentPageTitle = () => {
+    if (isSocialMedia.value) {
+        return 'X Post';
+    }
     if (active_tab.value && active_tab.value.title) {
         return active_tab.value.title.length > 40 
             ? active_tab.value.title.substring(0, 40) + '...' 
@@ -1430,19 +1408,29 @@ const startPolling = () => {
         lastStatusCheck.value = now;
         
         if (bookmark.value && bookmark.value.id) {
-            console.log('Polling status for bookmark:', bookmark.value.id);
+            console.log('Polling lightweight status for bookmark:', bookmark.value.id);
             try {
-                const response = await chrome.runtime.sendMessage({
-                    name: 'fetch-bookmark-document',
+                // First check status without downloading the heavy document payload
+                const statusCheck = await chrome.runtime.sendMessage({
+                    name: 'check-bookmark-status',
                     bookmarkId: bookmark.value.id
                 });
                 
-                if (response && response.success && response.document) {
-                    console.log('Polling found ready document!', response.document);
-                    handleNewDoc({ data: response.document, name: CommunicationEnum.NEW_DOC });
+                // If the backend has finished processing, fetch the full document
+                if (statusCheck && statusCheck.success && statusCheck.is_processed) {
+                    console.log('Backend reports processing complete! Fetching full document.');
+                    const response = await chrome.runtime.sendMessage({
+                        name: 'fetch-bookmark-document',
+                        bookmarkId: bookmark.value.id
+                    });
+                    
+                    if (response && response.success && response.document) {
+                        console.log('Polling found ready document!', response.document);
+                        handleNewDoc({ data: response.document, name: CommunicationEnum.NEW_DOC });
+                    }
                 }
             } catch (err) {
-                console.error('Polling error:', err);
+                console.log('[ERROR]', 'Polling error:', err);
             }
         }
     }, POLLING_INTERVAL);
@@ -1460,16 +1448,25 @@ const handleNewDoc = (request) => {
     console.log('NEW_DOC handler called:', request.data);
     doc.value = request.data
     document_summary.value = {
-        title: request.data.title,
+        title: isSocialMedia.value ? '' : request.data.title,
         summary: request.data.ai_is_about,
-        bullet_points: request.data.ai_bullet_points
+        markdown_content: request.data.ai_markdown_content
     }
     
-    // Update progress to 100% when document is ready
-    progressPercent.value = 100;
+    // Check if the document truly has rendered content (LLM is finished)
+    const isFinished = !!request.data.ai_markdown_content;
     
-    status.value = AppStatusEnum.DOCUMENT_READY
-    console.log('New document processed, status:', status.value.state)
+    if (!isFinished) {
+        console.log('Document received but missing markdown_content. Staying in PROCESSING state.');
+        status.value = AppStatusEnum.PROCESSING;
+        // keep polling active, but don't force progress percent back to 5.
+    } else {
+        // Update progress to 100% when document is fully ready
+        progressPercent.value = 100;
+        status.value = AppStatusEnum.DOCUMENT_READY;
+        console.log('New document processed fully, status:', status.value.state);
+        stopPolling();
+    }
     
     // Parse document ID
     const documentId = request.data.id ? parseInt(request.data.id) : request.data.id;
@@ -1480,8 +1477,10 @@ const handleNewDoc = (request) => {
         documentIdsByUrl.value[cleanedUrl] = documentId;
         summariesByUrl.value[cleanedUrl] = {...document_summary.value};
         
-        // Auto-start chat session
-        initializeChatSession(cleanedUrl, documentId);
+        // Auto-start chat session ONLY if finished
+        if (isFinished) {
+            initializeChatSession(cleanedUrl, documentId);
+        }
         
         // Update bookmark
         if (bookmark.value && bookmark.value.id) {
@@ -1491,8 +1490,6 @@ const handleNewDoc = (request) => {
             bookmarksByUrl.value[cleanedUrl] = {...bookmark.value};
         }
     }
-    
-    stopPolling();
 }
 
 // Watch status to trigger polling
@@ -1570,7 +1567,7 @@ const extractPageMetadata = async (tabId) => {
             console.log('✅ Extracted metadata:', metadata);
         }
     } catch (error) {
-        console.error('❌ Error extracting metadata:', error);
+        console.log('[ERROR]', '❌ Error extracting metadata:', error);
         // Fallback to tab title if extraction fails
         if (active_tab.value && active_tab.value.title) {
             metadata.title = active_tab.value.title;
@@ -1662,11 +1659,11 @@ const handleQuickBookmark = async () => {
             }, 2000);
         } else {
             const errorData = await response.json();
-            console.error('❌ Quick bookmark error:', errorData);
+            console.log('[ERROR]', '❌ Quick bookmark error:', errorData);
             handleError(errorData.detail || 'Failed to create bookmark');
         }
     } catch (error) {
-        console.error('❌ Quick bookmark error:', error);
+        console.log('[ERROR]', '❌ Quick bookmark error:', error);
         handleError('Failed to create bookmark: ' + (error.message || 'Unknown error'));
     } finally {
         isQuickSaving.value = false;
@@ -1719,11 +1716,11 @@ const handleCancelProcessing = async () => {
             console.log('Processing cancelled successfully');
         } else {
             const errorMsg = response?.errors?.join(', ') || response?.error || 'Unknown error';
-            console.error('Failed to cancel processing:', errorMsg);
+            console.log('[ERROR]', 'Failed to cancel processing:', errorMsg);
             handleError(`Failed to cancel processing: ${errorMsg}`);
         }
     } catch (error) {
-        console.error('Error cancelling processing:', error);
+        console.log('[ERROR]', 'Error cancelling processing:', error);
         handleError('Error cancelling processing');
     }
 }
@@ -1761,11 +1758,11 @@ const clearCurrentChat = async () => {
                         hasBookmark: false
                     });
                 } else {
-                    console.error('Failed to delete bookmark:', response.error);
+                    console.log('[ERROR]', 'Failed to delete bookmark:', response.error);
                     handleError('Failed to delete bookmark');
                 }
             } catch (error) {
-                console.error('Error deleting bookmark:', error);
+                console.log('[ERROR]', 'Error deleting bookmark:', error);
                 handleError('Error deleting bookmark');
             }
         } else {
@@ -1792,8 +1789,20 @@ const clearCurrentChat = async () => {
 
 function handleError(errorMessage) {
   // Ensure errorMessage is a string for display
-  const displayMsg = (typeof errorMessage === 'string') ? errorMessage : JSON.stringify(errorMessage);
+  let displayMsg = '';
+  if (typeof errorMessage === 'string') {
+    displayMsg = errorMessage;
+  } else if (errorMessage && errorMessage.message) {
+    displayMsg = errorMessage.message;
+  } else {
+    displayMsg = JSON.stringify(errorMessage);
+  }
   
+  if (displayMsg.includes('Authentication token not available')) {
+    status.value = AppStatusEnum.UNAUTHENTICATED;
+    return;
+  }
+
   // Set error status and messages
   status.value = {
     ...AppStatusEnum.ERROR,
@@ -1810,7 +1819,7 @@ function handleError(errorMessage) {
     delete summariesByUrl.value[currentUrl];
   }
   
-  console.error('Error:', errorMessage);
+  console.log('[ERROR]', 'Error:', errorMessage);
 }
 
 // Update handleKeydownInTextarea to be the only handler active when textarea is focused
@@ -2024,7 +2033,7 @@ const selectSuggestedQuestion = (question) => {
             try {
                 questionTextarea.value.focus();
             } catch (e) {
-                console.error('Error focusing textarea:', e);
+                console.log('[ERROR]', 'Error focusing textarea:', e);
             }
         }
     });
@@ -2063,7 +2072,7 @@ const scrollChatToBottom = (forceSmooth = true) => {
                     }, 300);
                 }
             } catch (error) {
-                console.error('Error scrolling element to bottom:', error);
+                console.log('[ERROR]', 'Error scrolling element to bottom:', error);
                 // Fallback to the simple method
                 element.scrollTop = element.scrollHeight;
             }
@@ -2125,7 +2134,7 @@ const handleAsk = () => {
     
     // Check if we have a document ID to ask against
     if (!documentId) {
-        console.error('No document ID available for question');
+        console.log('[ERROR]', 'No document ID available for question');
         // Instead of calling handleError, add an error message to the chat
         addErrorMessageToChat('No document available to ask questions against');
         return;
@@ -2200,7 +2209,7 @@ const handleAsk = () => {
             });
         }
     }).catch(error => {
-        console.error('Error asking question:', error);
+        console.log('[ERROR]', 'Error asking question:', error);
         // Add error to chat instead of showing banner
         addErrorMessageToChat('Error submitting your question. Please try again.');
     });
@@ -2314,10 +2323,10 @@ const focusAnalyzeButton = () => {
             
             return true;
         } catch (e) {
-            console.error('Error focusing analyze button via ref:', e);
+            console.log('[ERROR]', 'Error focusing analyze button via ref:', e);
         }
     } else {
-        console.error('analyzeButton ref is not defined or not rendered');
+        console.log('[ERROR]', 'analyzeButton ref is not defined or not rendered');
     }
     
     // Fallback to using querySelector if the ref doesn't work
@@ -2349,10 +2358,10 @@ const focusAnalyzeButton = () => {
             return true;
         }
     } catch (e) {
-        console.error('Error focusing button via querySelector:', e);
+        console.log('[ERROR]', 'Error focusing button via querySelector:', e);
     }
     
-    console.error('Could not focus analyze button via any method');
+    console.log('[ERROR]', 'Could not focus analyze button via any method');
     return false;
 };
 
@@ -2407,7 +2416,7 @@ const createFocusAnimation = () => {
             }
         }, 5000);
     } catch (e) {
-        console.error('Error creating focus animation:', e);
+        console.log('[ERROR]', 'Error creating focus animation:', e);
     }
 };
 

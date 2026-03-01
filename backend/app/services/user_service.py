@@ -6,7 +6,7 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 import logging
 import asyncio
 
@@ -23,12 +23,21 @@ class UserService:
     async def get_user_by_firebase_uid(session: AsyncSession, firebase_uid: str) -> Optional[User]:
         """Get user by Firebase UID (stored as id)"""
         try:
-            result = await session.execute(
-                select(User).where(User.id == firebase_uid)
+            result = await asyncio.wait_for(
+                session.execute(
+                    select(User).where(User.id == firebase_uid)
+                ),
+                timeout=3.0
             )
             user = result.scalar_one_or_none()
             
             return user
+        except asyncio.TimeoutError:
+            logger.error(f"Database timeout getting user by Firebase UID {firebase_uid}")
+            raise SQLAlchemyError("Database connection timeout")
+        except SQLAlchemyError as db_e:
+            logger.error(f"Database connection error getting user by Firebase UID {firebase_uid}: {db_e}")
+            raise  # Let caller handle connection errors
         except Exception as e:
             logger.error(f"Error getting user by Firebase UID {firebase_uid}: {e}")
             return None
@@ -37,10 +46,16 @@ class UserService:
     async def get_user_by_email(session: AsyncSession, email: str) -> Optional[User]:
         """Get user by email"""
         try:
-            result = await session.execute(
-                select(User).where(User.email == email)
+            result = await asyncio.wait_for(
+                session.execute(
+                    select(User).where(User.email == email)
+                ),
+                timeout=3.0
             )
             return result.scalar_one_or_none()
+        except asyncio.TimeoutError:
+            logger.error(f"Database timeout getting user by email {email}")
+            raise SQLAlchemyError("Database connection timeout")
         except Exception as e:
             logger.error(f"Error getting user by email {email}: {e}")
             return None
@@ -72,12 +87,16 @@ class UserService:
             )
             
             session.add(user)
-            await session.commit()
+            await asyncio.wait_for(session.commit(), timeout=3.0)
             await session.refresh(user)
             
             logger.info(f"Created new user with Firebase UID: {firebase_uid}")
             return user
             
+        except asyncio.TimeoutError:
+            await session.rollback()
+            logger.error(f"Database timeout creating user with Firebase UID {firebase_uid}")
+            raise SQLAlchemyError("Database connection timeout")
         except IntegrityError as e:
             await session.rollback()
             logger.warning(f"User with Firebase UID {firebase_uid} already exists, attempting to retrieve: {e}")
@@ -128,6 +147,9 @@ class UserService:
                 preferences=preferences
             )
             
+        except SQLAlchemyError as db_e:
+            logger.error(f"Database connection error in get_or_create_user passing through: {db_e}")
+            raise  # Fail fast if DB is down
         except Exception as e:
             logger.error(f"Error in get_or_create_user for Firebase UID {firebase_uid}: {e}")
             return None

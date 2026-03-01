@@ -119,7 +119,7 @@ const scrollToBottom = (smooth = true) => {
                         }, 300); // Match the default smooth scroll duration
                     }
                 } catch (e) {
-                    console.error('Error with wrapper.scrollTo:', e);
+                    console.log('[ERROR]', 'Error with wrapper.scrollTo:', e);
                     // Fallback to direct scrollTop assignment
                     wrapper.scrollTop = scrollPosition;
                 }
@@ -187,7 +187,7 @@ const handleAsk = () => {
     }
     
     if (!document_id) {
-        console.error('No document_id found in chat messages');
+        console.log('[ERROR]', 'No document_id found in chat messages');
         return;
     }
     
@@ -232,11 +232,11 @@ const handleAsk = () => {
                 }, 100);
             });
         } else {
-            console.error('DocSummary -> Invalid response format:', response);
+            console.log('[ERROR]', 'DocSummary -> Invalid response format:', response);
             processing_question.value = false;
         }
     }).catch(error => {
-        console.error('Error asking question:', error);
+        console.log('[ERROR]', 'Error asking question:', error);
         processing_question.value = false;
     });
 }

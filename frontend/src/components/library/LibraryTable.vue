@@ -53,10 +53,10 @@
         <div class="text-sm text-600 mb-2 font-semibold">Summary</div>
         <div class="mb-4 text-700" v-html="formatUrlsAsLinks(data.summary || 'No summary available.')"></div>
         <div class="text-sm text-600 mb-2 font-semibold">Key Points</div>
-        <ul class="pl-3 text-700">
-          <li v-for="(kp, i) in data.keyPoints" :key="i" class="mb-1" v-html="formatUrlsAsLinks(kp)"></li>
-          <li v-if="!data.keyPoints || data.keyPoints.length === 0" class="text-600">No key points available.</li>
-        </ul>
+        <div class="pl-3 text-700">
+          <div v-if="data.keyPoints" class="mb-1" v-html="renderMarkdown(data.keyPoints)"></div>
+          <div v-else class="text-600">No key points available.</div>
+        </div>
       </div>
     </template>
   </DataTable>
@@ -64,6 +64,7 @@
 
 <script setup lang="ts">
 import { ref, watchEffect, computed } from 'vue';
+import { marked } from 'marked';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import SplitButton from 'primevue/splitbutton';
@@ -81,7 +82,7 @@ interface DocRow {
   sourceUrl?: string;
   sourceHost?: string;
   summary?: string;
-  keyPoints?: string[];
+  keyPoints?: string;
   type?: string;
 }
 
@@ -91,6 +92,15 @@ const emit = defineEmits(['open', 'refresh']);
 const expandedRows = ref<any>({});
 const confirm = useConfirm();
 const toast = useToast();
+
+const renderMarkdown = (content?: string) => {
+  if (!content) return '';
+  // Fixes a bug where links open within app by setting target to _blank
+  const renderer = new marked.Renderer();
+  renderer.link = ({ href, title, text }) => `<a href="${href}" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline" title="${title || ''}">${text}</a>`;
+  marked.setOptions({ renderer });
+  return marked.parse(content);
+};
 
 const getIconForType = (type?: string) => {
   switch (type) {

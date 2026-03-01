@@ -32,24 +32,24 @@ of the JSON.
 1.  **Focus on Quality:**
     - Extract accurate title
     - Generate a neutral, informative summary (one paragraph)
-    - Identify 4-6 key takeaways (most important facts/arguments)
+    - Provide a detailed extraction of the content formatted exclusively as markdown (`markdown_content`). This can include headings, bullet point lists, or multiple paragraphs depending on what best represents the source material.
     - Analyze objectivity, tone, and intent
 
 2.  **Links and URLs:**
     - **IMPORTANT**: When the content contains links or URLs (especially in social media posts), 
-      explicitly include the full URL in both the summary and relevant bullet points.
+      explicitly include the full URL in both the summary and relevant sections of the markdown content.
     - If a link is the subject of a post (e.g., "Check out this article: [link]"), 
-      include the complete URL in the summary and at least one bullet point.
+      include the complete URL in the summary and in the markdown content.
     - For social media posts that reference external articles, always include the 
-      article URL in the summary and key takeaways.
+      article URL in the summary and markdown content.
     - Extract URLs from anchor tags, plain text URLs, or shortened links mentioned in the content.
-    - Include the full URL as plain text in the summary and key takeaways (the frontend will format them as links).
+    - Include the full URL as plain text in the summary and in the markdown content (the frontend will format them as links).
 
 3.  **Paywalls:** If content is limited, fill `access_notes` with 
     'Full analysis is limited; content is behind a paywall.'
 4.  **Opinion Pieces:** Set `objectivity` correctly (e.g., 'Subjective (Opinion)').
 5.  **Social Media:** Set `source_type` to 'Social Media Post'.
-6.  **Multi-Topic:** Ensure `key_takeaways` covers all topics.
+6.  **Multi-Topic:** Ensure `markdown_content` covers all topics accurately.
 """
     
     content_text: str = dspy.InputField(
@@ -169,13 +169,13 @@ class DspyContentService:
             # Prepare result in compatible format with old service
             # Note: URLs are returned as plain text - frontend will handle link formatting
             result = {
-                'summary': extracted.summary,
-                'bullet_points': extracted.key_takeaways,
+                'summary': None,
+                'markdown_content': extracted.markdown_content,
                 'extracted_content': {
                     'title': extracted.title,
                     'source_type': extracted.source_type,
-                    'summary': extracted.summary,
-                    'key_takeaways': extracted.key_takeaways,
+                    'summary': None,
+                    'markdown_content': extracted.markdown_content,
                     'analysis': {
                         'objectivity': extracted.analysis.objectivity,
                         'tone': extracted.analysis.tone,

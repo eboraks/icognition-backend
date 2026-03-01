@@ -123,7 +123,7 @@ const fetchSuggestion = async () => {
         }
     }
   } catch (err) {
-    console.error("Type-ahead error:", err);
+    console.log('[ERROR]', "Type-ahead error:", err);
   }
 };
 

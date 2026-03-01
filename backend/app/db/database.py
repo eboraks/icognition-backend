@@ -4,6 +4,7 @@ Database connection and session management for iCognition Backend
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import text, create_engine
+import asyncio
 from typing import AsyncGenerator
 import os
 
@@ -34,9 +35,10 @@ engine = create_async_engine(
     future=True,
     pool_size=5,
     max_overflow=10,
-    pool_timeout=30,
+    pool_timeout=5,
     pool_recycle=1800,  # Recycle connections after 30 minutes
     pool_pre_ping=True,  # Verify connections before use
+    connect_args={"timeout": 3.0}  # Fail fast if DB is unreachable
 )
 
 # Create async session factory
@@ -57,10 +59,16 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
             yield session
         except Exception as e:
             logger.error(f"Database session error: {e}")
-            await session.rollback()
+            try:
+                await asyncio.wait_for(session.rollback(), timeout=3.0)
+            except Exception as rollback_err:
+                logger.error(f"Error rolling back session: {rollback_err}")
             raise
         finally:
-            await session.close()
+            try:
+                await asyncio.wait_for(session.close(), timeout=3.0)
+            except Exception as close_err:
+                logger.error(f"Error closing session: {close_err}")
 
 
 def get_sync_connection():

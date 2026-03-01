@@ -91,7 +91,7 @@ class UserContextManager:
                         # Verify Firebase ID token
                         decoded_token = await firebase_auth.verify_id_token(id_token)
                         firebase_uid = decoded_token.get("uid")
-                        logger.info(f"Successfully verified Firebase token for user: {firebase_uid}")
+                        logger.debug(f"Successfully verified Firebase token for user: {firebase_uid}")
                     except HTTPException as e:
                         # Token verification failed
                         logger.warning(f"Firebase token verification failed: {e.detail}")
@@ -107,21 +107,34 @@ class UserContextManager:
                 return UserContext()
             
             # Get or create user in local database
-            user = await UserService.get_or_create_user(
-                session=session,
-                firebase_uid=firebase_uid,
-                email=decoded_token.get("email") if decoded_token else None,
-                display_name=decoded_token.get("name") if decoded_token else None,
-                photo_url=decoded_token.get("picture") if decoded_token else None,
-                email_verified=decoded_token.get("email_verified", False) if decoded_token else False
-            )
+            try:
+                user = await UserService.get_or_create_user(
+                    session=session,
+                    firebase_uid=firebase_uid,
+                    email=decoded_token.get("email") if decoded_token else None,
+                    display_name=decoded_token.get("name") if decoded_token else None,
+                    photo_url=decoded_token.get("picture") if decoded_token else None,
+                    email_verified=decoded_token.get("email_verified", False) if decoded_token else False
+                )
+                
+                if not user:
+                    logger.error(f"Failed to get or create user for Firebase UID: {firebase_uid}")
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="Database connection error. Please try again later."
+                    )
+                
+                return UserContext(user=user)
+            except Exception as db_e:
+                logger.error(f"Database error getting user: {db_e}")
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Database connection error. Please try again later."
+                )
             
-            if not user:
-                logger.error(f"Failed to get or create user for Firebase UID: {firebase_uid}")
-                return UserContext()
-            
-            return UserContext(user=user)
-            
+        except HTTPException:
+            # Re-raise HTTPExceptions (like the 503 we just added)
+            raise
         except Exception as e:
             logger.error(f"Error getting user from request: {e}")
             return UserContext()

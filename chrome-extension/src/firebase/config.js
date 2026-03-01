@@ -56,7 +56,7 @@ async function refreshFirebaseToken() {
             console.log('Firebase token refreshed successfully');
             resolve(newToken);
         } catch (error) {
-            console.error('Failed to refresh Firebase token:', error);
+            console.log('[ERROR]', 'Failed to refresh Firebase token:', error);
             reject(error);
         } finally {
             tokenRefreshPromise = null;
@@ -80,7 +80,7 @@ function isTokenExpired(token) {
         const bufferTime = 5 * 60; // 5 minutes in seconds
         return (expirationTime - currentTime) < bufferTime;
     } catch (error) {
-        console.error('Error checking token expiration:', error);
+        console.log('[ERROR]', 'Error checking token expiration:', error);
         return true; // If we can't parse the token, consider it expired
     }
 }

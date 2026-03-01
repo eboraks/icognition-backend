@@ -172,7 +172,7 @@ export function detectPageType(url, hasContent = true) {
         };
 
         // JavaScript-required domains
-        const jsRequiredDomains = ['x.com', 'twitter.com', 'facebook.com', 'fb.com', 'instagram.com', 'linkedin.com'];
+        const jsRequiredDomains = ['facebook.com', 'fb.com', 'instagram.com', 'linkedin.com'];
         for (const jsDomain of jsRequiredDomains) {
             if (domain.includes(jsDomain)) {
                 detection.page_type = 'js_required';

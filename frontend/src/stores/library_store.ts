@@ -12,7 +12,7 @@ interface DocRow {
   sourceUrl?: string;
   sourceHost?: string;
   summary?: string;
-  keyPoints?: string[];
+  keyPoints?: string;
 }
 
 export const useLibraryStore = defineStore('library', () => {
@@ -78,7 +78,7 @@ export const useLibraryStore = defineStore('library', () => {
         sourceUrl: doc.url || '',
         sourceHost: doc.url ? new URL(doc.url).hostname : undefined,
         summary: doc.is_about,
-        keyPoints: doc.tldr || [],
+        keyPoints: doc.tldr || "",
         type: 'web'
       }));
 

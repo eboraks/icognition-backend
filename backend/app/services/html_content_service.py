@@ -283,7 +283,7 @@ class HtmlContentService:
             return "wiki"
         elif '/docs/' in url.lower() or '/documentation/' in url.lower():
             return "documentation"
-        elif 'reddit.com' in url.lower():
+        elif 'twitter.com' in url.lower() or 'x.com' in url.lower() or 'reddit.com' in url.lower():
             return "social_media"
         elif 'medium.com' in url.lower():
             return "blog_post"
