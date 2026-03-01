@@ -320,11 +320,6 @@ class ChatAgentService:
                             if doc.ai_is_about:
                                 context_parts.append(f"Summary: {doc.ai_is_about}")
                             
-                            # Add key points if available
-                            if doc.ai_bullet_points:
-                                points = "\n- ".join(doc.ai_bullet_points)
-                                context_parts.append(f"Key Points:\n- {points}")
-                            
                             # Prepend to system prompt
                             context_header = "\n".join(context_parts)
                             system_prompt = f"{context_header}\n\n---\n\n{system_prompt}"

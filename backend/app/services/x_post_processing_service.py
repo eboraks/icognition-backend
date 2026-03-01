@@ -16,6 +16,7 @@ from app.db.database import get_session
 from app.services.prompt_service import PromptService
 from app.utils.logging import get_logger
 from app.utils.langfuse_worker import get_langfuse_handler
+from app.services.image_analysis_service import get_image_analysis_service
 
 load_dotenv()
 logger = get_logger(__name__)
@@ -135,52 +136,16 @@ class XPostProcessingService:
             return {"image_descriptions": []}
         
         logger.info(f"--- ANALYZING {len(image_urls)} IMAGES ---")
-        descriptions = []
         
+        image_service = get_image_analysis_service()
+        results_map = await image_service.analyze_images(image_urls)
+        
+        descriptions = []
         for img_url in image_urls:
-            try:
-                # Download the image
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    response = await client.get(img_url)
-                    response.raise_for_status()
-                    image_data = response.content
-                    content_type = response.headers.get("content-type", "image/jpeg")
-                
-                # Encode to base64
-                image_b64 = base64.b64encode(image_data).decode("utf-8")
-                
-                # Send to Gemini for multimodal analysis
-                from langchain_core.messages import HumanMessage
-                
-                message = HumanMessage(
-                    content=[
-                        {
-                            "type": "text",
-                            "text": "Describe this image from a tweet in detail. Focus on: what is depicted, any text visible in the image, the apparent message or meaning, and the artistic style. Be concise but thorough."
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{content_type};base64,{image_b64}"
-                            }
-                        }
-                    ]
-                )
-                
-                lf_handler = get_langfuse_handler()
-                callbacks = [lf_handler] if lf_handler else []
-                
-                result = await self.llm.ainvoke(
-                    [message],
-                    config={"callbacks": callbacks}
-                )
-                
-                description = result.content if hasattr(result, 'content') else str(result)
-                descriptions.append(description)
-                logger.info(f"Successfully analyzed image: {img_url[:80]}...")
-                
-            except Exception as e:
-                logger.error(f"Error analyzing image {img_url}: {e}")
+            desc = results_map.get(img_url)
+            if desc:
+                descriptions.append(desc)
+            else:
                 descriptions.append(f"[Image could not be analyzed: {img_url}]")
         
         return {"image_descriptions": descriptions}

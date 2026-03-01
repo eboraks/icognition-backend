@@ -13,6 +13,8 @@ from app.core.config import settings
 from app.utils.logging import get_logger
 from app.services.dspy_models_no_entities import ContentExtractNoEntities
 from app.models import Document
+from bs4 import BeautifulSoup
+from app.services.image_analysis_service import get_image_analysis_service
 
 logger = get_logger(__name__)
 
@@ -45,11 +47,14 @@ of the JSON.
     - Extract URLs from anchor tags, plain text URLs, or shortened links mentioned in the content.
     - Include the full URL as plain text in the summary and in the markdown content (the frontend will format them as links).
 
-3.  **Paywalls:** If content is limited, fill `access_notes` with 
+3.  **Images:**
+    - If the content contains `[Image Description: ...]`, seamlessly incorporate this visual context into the markdown summary or explanation where relevant. Do not simply list the images; weave their meaning into the narrative to provide a complete understanding of the content.
+
+4.  **Paywalls:** If content is limited, fill `access_notes` with 
     'Full analysis is limited; content is behind a paywall.'
-4.  **Opinion Pieces:** Set `objectivity` correctly (e.g., 'Subjective (Opinion)').
-5.  **Social Media:** Set `source_type` to 'Social Media Post'.
-6.  **Multi-Topic:** Ensure `markdown_content` covers all topics accurately.
+5.  **Opinion Pieces:** Set `objectivity` correctly (e.g., 'Subjective (Opinion)').
+6.  **Social Media:** Set `source_type` to 'Social Media Post'.
+7.  **Multi-Topic:** Ensure `markdown_content` covers all topics accurately.
 """
     
     content_text: str = dspy.InputField(
@@ -155,6 +160,63 @@ class DspyContentService:
         instructions = await self._get_db_instructions()
         
         try:
+            # --- Inline Image Processing ---
+            # Try to parse HTML to extract and describe images
+            image_descriptions_map = {}
+            filtered_html = content
+            
+            if "<img" in content.lower():
+                try:
+                    soup = BeautifulSoup(content, 'html.parser')
+                    img_tags = soup.find_all('img')
+                    
+                    # Filter images by heuristics
+                    valid_urls = []
+                    for img in img_tags:
+                        src = img.get('src')
+                        if not src or src.startswith('data:'):
+                            continue
+                            
+                        # Basic filtering heuristics
+                        alt = (img.get('alt') or '').lower()
+                        src_lower = src.lower()
+                        width = img.get('width')
+                        height = img.get('height')
+                        
+                        # Skip tiny images or typical icons/avatars
+                        if width and str(width).isdigit() and int(width) < 100:
+                            continue
+                        if height and str(height).isdigit() and int(height) < 100:
+                            continue
+                        if any(kw in src_lower or kw in alt for kw in ['icon', 'avatar', 'logo', 'spinner', 'tracker', 'pixel']):
+                            continue
+                            
+                        valid_urls.append(src)
+                        
+                    # Limit to top 5 images to save LLM tokens/time
+                    valid_urls = valid_urls[:5]
+                    
+                    if valid_urls:
+                        logger.info(f"Extracting meanings for {len(valid_urls)} inline images in document")
+                        image_service = get_image_analysis_service()
+                        image_descriptions_map = await image_service.analyze_images(valid_urls)
+                        
+                        # Replace img tags with semantic text markers
+                        for img in img_tags:
+                            src = img.get('src')
+                            if src in image_descriptions_map:
+                                desc = image_descriptions_map[src]
+                                # Create a text node to replace the image
+                                new_tag = soup.new_tag("p")
+                                new_tag.string = f"[Image Description: {desc}]"
+                                img.replace_with(new_tag)
+                        
+                        filtered_html = str(soup)
+                except Exception as img_err:
+                    logger.warning(f"Failed to extract inline images: {img_err}")
+                    # Fallback to original content
+                    filtered_html = content
+
             # Use anyio.to_thread.run_sync to offload synchronous DSPy calls
             # This prevents blocking the event loop during LLM processing
             lm = dspy.LM(self.model_name, api_key=self.api_key)
@@ -162,7 +224,7 @@ class DspyContentService:
             def run_extraction():
                 with dspy.context(lm=lm):
                     program = ContentExtractorProgram(instructions=instructions)
-                    return program(text=content)
+                    return program(text=filtered_html)
             
             extracted = await anyio.to_thread.run_sync(run_extraction)
             

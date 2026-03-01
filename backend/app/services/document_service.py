@@ -109,7 +109,11 @@ class DocumentService(UserIsolatedService[Document]):
                 document.raw_html = html_content
                 
                 # Update title if not provided or if extracted title is better
-                if not title and extraction_result.title:
+                if extraction_result.title and (
+                    not title 
+                    or document.title == "Fetching..."
+                    or len(extraction_result.title) > len(document.title)
+                ):
                     document.title = extraction_result.title
                 
                 # Store main content
@@ -231,7 +235,9 @@ class DocumentService(UserIsolatedService[Document]):
             extraction_result = await html_service.extract_content(content, url or "")
             
             # Use provided title or extracted title
-            final_title = title or extraction_result.title or "Untitled Document"
+            final_title = title or "Untitled Document"
+            if extraction_result.title and (not title or len(extraction_result.title) > len(title)):
+                final_title = extraction_result.title
             
             document_data = {
                 "user_id": user.id,

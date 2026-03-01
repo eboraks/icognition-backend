@@ -283,7 +283,7 @@ class HtmlContentService:
             return "wiki"
         elif '/docs/' in url.lower() or '/documentation/' in url.lower():
             return "documentation"
-        elif 'twitter.com' in url.lower() or 'x.com' in url.lower() or 'reddit.com' in url.lower():
+        elif 'twitter.com' in url.lower() or 'x.com' in url.lower() or 'reddit.com' in url.lower() or ('substack.com' in url.lower() and '/note/' in url.lower()):
             return "social_media"
         elif 'medium.com' in url.lower():
             return "blog_post"
@@ -353,6 +353,33 @@ class HtmlContentService:
         # Ideally we clone it, but BeautifulSoup cloning can be slow. 
         # For now, we assume we can modify the soup as this is the last step.
         
+        # Try JSON-LD first for known dynamic/schema-heavy platforms (like Substack Notes)
+        # It's much cleaner than trying to parse JS-rendered DOM if it exists.
+        json_ld_scripts = soup.find_all('script', type='application/ld+json')
+        for script in json_ld_scripts:
+            try:
+                data = json.loads(script.string)
+                # Handle both single objects and lists of objects
+                if isinstance(data, dict):
+                    objects = [data]
+                elif isinstance(data, list):
+                    objects = data
+                else:
+                    objects = []
+                    
+                for obj in objects:
+                    if obj.get('@type') in ['SocialMediaPosting', 'DiscussionForumPosting'] or (obj.get('@type') in ['Article', 'NewsArticle', 'BlogPosting'] and page_type == 'social_media'):
+                        text = obj.get('text') or obj.get('articleBody') or obj.get('description')
+                        if text and len(text) > 50:
+                            # Convert plain text with newlines to simple HTML paragraphs
+                            paragraphs = text.split('\n\n')
+                            html_text = ''.join(f'<p>{p.strip()}</p>' for p in paragraphs if p.strip())
+                            if len(html_text) > 100:
+                                return f"<article>{html_text}</article>"
+            except Exception as e:
+                logger.debug(f"JSON-LD parsing error: {e}")
+                continue
+        
         # Remove unwanted elements
         unwanted_selectors = [
             'script', 'style', 'nav', 'aside', 'noscript', 'iframe',
@@ -374,16 +401,13 @@ class HtmlContentService:
                 element.decompose()
         
         # Extract content elements
-        content_elements = container.select('h1, h2, h3, h4, h5, h6, p, ul, ol, blockquote, pre, code')
+        content_elements = container.select('h1, h2, h3, h4, h5, h6, p, ul, ol, blockquote, pre, code, img, picture, figure, figcaption')
         
-        # Fallback to text accumulation if no semantic tags
-        if not content_elements or len(''.join(e.get_text(strip=True) for e in content_elements)) < 200:
-             # Look for page builder containers or fallback to all text blocks
-             pass # Logic from DocumentService can be fully copied here if needed.
-             # For brevity in this initial implementation, I'll stick to the core logic.
-             # If simple semantic extraction fails, we might need the complex text walker from DocumentService.
-             
-             # Let's include the text walker fallback from DocumentService for robustness.
+        # Determine extraction length to decide on fallbacks
+        extracted_text_len = len(''.join(e.get_text(strip=True) for e in content_elements)) if content_elements else 0
+
+        # Fallback 2: Text accumulation if no semantic tags and JSON-LD failed
+        if not content_elements or extracted_text_len < 200:
              text_parts = []
              seen_texts = set()
              for elem in container.find_all(['div', 'section', 'span', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
@@ -402,8 +426,6 @@ class HtmlContentService:
         # Construct new article
         new_article = soup.new_tag('article')
         for element in content_elements:
-            # We clone the element to put in our new container
-            # or just append (which moves it). Moving is fine.
             new_article.append(element)
             
         return str(new_article)
