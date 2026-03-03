@@ -71,6 +71,27 @@ async def get_contextual_message(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/entity/{entity_id}/relationships")
+async def get_entity_relationships(
+    entity_id: int,
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Get all relationships for a specific entity (as source or target).
+    Returns the entity details plus a list of directed relationships.
+    """
+    try:
+        knowledge_service = KnowledgeService(session)
+        result = await knowledge_service.get_entity_relationships(entity_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error getting entity relationships: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/action")
 async def handle_action(
     request: ActionRequest,

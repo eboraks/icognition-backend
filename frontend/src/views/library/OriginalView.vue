@@ -44,7 +44,7 @@
     const html_elements_for_original_page = ref(dialogRef.value.data.html_elements);
     let html_elements_for_pdf: ElementTextObject[] = dialogRef.value.data.html_elements;
     let html_to_pdf: [any[] | null] = [null];
-    let updated_at = ref(formate_date(dialogRef.value.data.updateAt));
+    let updated_at = ref(formate_date(dialogRef.value.data.updatedAt));
 
     onBeforeMount(async () => {
       try {

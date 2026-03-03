@@ -4,7 +4,7 @@ Embedding Service for vector search and similarity operations
 
 import asyncio
 import json
-from typing import Dict, Any, List, Optional, Tuple, Union
+from typing import Dict, Any, List, Optional, Union
 from datetime import datetime
 from dataclasses import dataclass
 import numpy as np
@@ -238,225 +238,6 @@ class EmbeddingService:
                 error=str(e)
             )
     
-    async def update_document_embedding(
-        self,
-        session: AsyncSession,
-        document_id: int,
-        user_id: int,
-        force_regenerate: bool = False
-    ) -> bool:
-        """
-        Update embedding for a document
-        
-        Args:
-            session: Database session
-            document_id: ID of document to update
-            user_id: User ID for data isolation
-            force_regenerate: Whether to regenerate even if embedding exists
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            # Get document
-            stmt = sqlmodel_select(Document).where(
-                Document.id == document_id,
-                Document.user_id == user_id
-            )
-            result = await session.execute(stmt)
-            document = result.scalar_one_or_none()
-            
-            if not document:
-                logger.warning(f"Document {document_id} not found for user {user_id}")
-                return False
-            
-            # DEPRECATED: This method uses the old content_vector field which has been removed.
-            # Use generate_and_store_document_embeddings() instead, which stores embeddings in the Embedding table.
-            logger.warning(
-                "update_document_embedding() is deprecated. "
-                "Use generate_and_store_document_embeddings() instead."
-            )
-            
-            # Check if embeddings already exist in Embedding table
-            stmt = select(Embedding).where(
-                Embedding.source_type == "document",
-                Embedding.source_id == document_id,
-                Embedding.user_id == user_id
-            )
-            result = await session.execute(stmt)
-            if result.scalar_one_or_none() and not force_regenerate:
-                logger.info(f"Document {document_id} already has embeddings")
-                return True
-            
-            # Use the new centralized method
-            from app.models import Document
-            doc_result = await session.execute(
-                select(Document).where(Document.id == document_id)
-            )
-            doc = doc_result.scalar_one_or_none()
-            if not doc:
-                return False
-            
-            return await self.generate_and_store_document_embeddings(
-                session=session,
-                document=doc,
-                user_id=user_id,
-                force_regenerate=force_regenerate
-            )
-            
-        except Exception as e:
-            logger.error(f"Error updating document embedding: {str(e)}")
-            await session.rollback()
-            return False
-    
-    async def search_similar_documents(
-        self,
-        session: AsyncSession,
-        query_text: str,
-        user_id: int,
-        limit: int = 10,
-        similarity_threshold: float = 0.7,
-        include_content: bool = False
-    ) -> VectorSearchResult:
-        """
-        Search for documents similar to query text
-        
-        Args:
-            session: Database session
-            query_text: Text to search for
-            user_id: User ID for data isolation
-            limit: Maximum number of results
-            similarity_threshold: Minimum similarity score
-            include_content: Whether to include full content in results
-            
-        Returns:
-            VectorSearchResult with similar documents
-        """
-        start_time = datetime.now()
-        
-        try:
-            # Generate embedding for query
-            query_embedding_result = await self.generate_embedding(query_text)
-            
-            if not query_embedding_result.success:
-                return VectorSearchResult(
-                    results=[],
-                    total_found=0,
-                    search_time=0.0,
-                    success=False,
-                    error=f"Failed to generate query embedding: {query_embedding_result.error}"
-                )
-            
-            query_embedding = query_embedding_result.embedding
-            
-            # DEPRECATED: This method uses the old content_vector field which has been removed.
-            # Use search_embeddings() instead, which searches the centralized Embedding table.
-            logger.warning(
-                "search_similar_documents() is deprecated. "
-                "Use search_embeddings() instead."
-            )
-            
-            # Use the new centralized search method
-            embedding_results = await self.search_embeddings(
-                session=session,
-                query_text=query_text,
-                user_id=str(user_id),
-                source_types=['document'],
-                limit=limit,
-                similarity_threshold=similarity_threshold
-            )
-            
-            if not embedding_results:
-                return VectorSearchResult(
-                    results=[],
-                    total_found=0,
-                    search_time=0.0,
-                    success=True
-                )
-            
-            # Get document IDs and fetch documents
-            doc_ids = [r['source_id'] for r in embedding_results]
-            stmt = sqlmodel_select(Document).where(
-                Document.id.in_(doc_ids),
-                Document.user_id == user_id
-            )
-            result = await session.execute(stmt)
-            documents = result.scalars().all()
-            
-            # Create document score map
-            doc_scores = {r['source_id']: r['similarity_score'] for r in embedding_results}
-            
-            # Sort documents by similarity score
-            documents.sort(key=lambda d: doc_scores.get(d.id, 0), reverse=True)
-            
-            # Build results
-            results = []
-            for doc in documents:
-                doc_data = {
-                    'id': doc.id,
-                    'title': doc.title,
-                    'url': doc.url,
-                    'similarity_score': doc_scores.get(doc.id, 0)
-                }
-                if include_content:
-                    doc_data['content'] = doc.content
-                results.append(doc_data)
-            
-            search_time = (datetime.now() - start_time).total_seconds()
-            
-            return VectorSearchResult(
-                results=results,
-                total_found=len(results),
-                search_time=search_time,
-                success=True
-            )
-            
-        except Exception as e:
-            search_time = (datetime.now() - start_time).total_seconds()
-            logger.error(f"Error searching similar documents: {str(e)}")
-            
-            return VectorSearchResult(
-                results=[],
-                total_found=0,
-                search_time=search_time,
-                success=False,
-                error=str(e)
-            )
-    
-    async def find_duplicate_documents(
-        self,
-        session: AsyncSession,
-        user_id: int,
-        similarity_threshold: float = 0.95,
-        limit: int = 50
-    ) -> List[Tuple[Document, Document, float]]:
-        """
-        Find duplicate documents based on content similarity
-        
-        Args:
-            session: Database session
-            user_id: User ID for data isolation
-            similarity_threshold: Minimum similarity for duplicates
-            limit: Maximum number of comparisons
-            
-        Returns:
-            List of tuples (doc1, doc2, similarity_score)
-        """
-        try:
-            # DEPRECATED: This method uses the old content_vector field which has been removed.
-            # This functionality should be refactored to use the Embedding table.
-            logger.warning(
-                "find_duplicate_documents() is deprecated. "
-                "This method needs to be refactored to use the Embedding table."
-            )
-            
-            # For now, return empty list as this functionality needs refactoring
-            return []
-            
-        except Exception as e:
-            logger.error(f"Error finding duplicate documents: {str(e)}")
-            return []
-    
     async def batch_update_embeddings(
         self,
         session: AsyncSession,
@@ -514,8 +295,11 @@ class EmbeddingService:
             
             for document in documents:
                 try:
-                    success = await self.update_document_embedding(
-                        session, document.id, user_id, force_regenerate
+                    success = await self.generate_and_store_document_embeddings(
+                        session=session,
+                        document=document,
+                        user_id=user_id,
+                        force_regenerate=force_regenerate
                     )
                     if success:
                         successful += 1
@@ -614,70 +398,81 @@ class EmbeddingService:
                     logger.info(f"Document {document.id} already has embeddings")
                     return True
             
-            embeddings_to_create = []
-            
-            # 1. Embed document title if it exists
+            # --- Collect all texts to embed (title + content chunks) ---
+            # (field_name, text) pairs; order is preserved so results can be zipped back.
+            tasks_meta: List[tuple] = []
+
             if document.title and document.title.strip():
-                title_text = document.title.strip()
-                embedding_result = await self.generate_embedding(
-                    text=title_text,
-                    dimensions=self.embedding_dimensions
-                )
-                if embedding_result.success:
-                    embeddings_to_create.append(Embedding(
-                        user_id=user_id,
-                        source_type="document",
-                        source_id=document.id,
-                        field="title",
-                        text=title_text,
-                        vector=embedding_result.embedding,
-                        version=1
-                    ))
-                    logger.info(f"Generated title embedding for document {document.id}")
-            
-            # 2. Embed document content as chunks
+                tasks_meta.append(("title", document.title.strip()))
+
             if document.content and document.content.strip():
                 content_html = document.content.strip()
                 plain_text_content = extract_text_from_html(content_html)
                 has_html = self._has_html_structure(content_html)
-                
-                # Check if content has HTML structure
+
                 if has_html:
-                    # Use HTML splitter for structured content
                     try:
                         chunks = self.html_splitter.split_text(content_html)
-                        logger.info(f"Chunked document {document.id} HTML content into {len(chunks)} chunks using HTMLSectionSplitter")
+                        logger.info(
+                            f"Chunked document {document.id} HTML into "
+                            f"{len(chunks)} sections via HTMLSectionSplitter"
+                        )
                     except Exception as e:
-                        logger.warning(f"HTML splitter failed for document {document.id}, falling back to text splitter: {e}")
-                        # Fallback to text splitter if HTML splitter fails
+                        logger.warning(
+                            f"HTML splitter failed for document {document.id}, "
+                            f"falling back to text splitter: {e}"
+                        )
                         chunks = self.text_splitter.split_text(plain_text_content)
                 else:
-                    # Use text splitter for plain text
                     chunks = self.text_splitter.split_text(plain_text_content)
-                    logger.info(f"Chunked document {document.id} plain text content into {len(chunks)} chunks using RecursiveCharacterTextSplitter")
-                
+                    logger.info(
+                        f"Chunked document {document.id} plain text into "
+                        f"{len(chunks)} chunks via RecursiveCharacterTextSplitter"
+                    )
+
                 for idx, chunk in enumerate(chunks):
-                    # Extract text from chunk (chunk may be a Document object from LangChain)
                     chunk_text = chunk.page_content if hasattr(chunk, 'page_content') else str(chunk)
                     if self._has_html_structure(chunk_text):
                         chunk_text = extract_text_from_html(chunk_text)
-                    
-                    embedding_result = await self.generate_embedding(
-                        text=chunk_text,
-                        dimensions=self.embedding_dimensions
+                    tasks_meta.append((f"content_chunk_{idx}", chunk_text))
+
+            if not tasks_meta:
+                logger.warning(f"No content to embed for document {document.id}")
+                return False
+
+            # --- Run all embedding API calls concurrently ---
+            embed_start = datetime.now()
+            raw_results = await asyncio.gather(
+                *[
+                    self.generate_embedding(text=text, dimensions=self.embedding_dimensions)
+                    for _, text in tasks_meta
+                ],
+                return_exceptions=True,
+            )
+            elapsed = (datetime.now() - embed_start).total_seconds()
+            logger.info(
+                f"Generated {len(tasks_meta)} embeddings for document {document.id} "
+                f"concurrently in {elapsed:.2f}s"
+            )
+
+            embeddings_to_create = []
+            for (field, text), result in zip(tasks_meta, raw_results):
+                if isinstance(result, Exception):
+                    logger.warning(
+                        f"Failed to embed field '{field}' for document {document.id}: {result}"
                     )
-                    if embedding_result.success:
-                        embeddings_to_create.append(Embedding(
-                            user_id=user_id,
-                            source_type="document",
-                            source_id=document.id,
-                            field=f"content_chunk_{idx}",
-                            text=chunk_text,
-                            vector=embedding_result.embedding,
-                            version=1
-                        ))
-                        logger.debug(f"Generated embedding for chunk {idx} of document {document.id}")
-            
+                    continue
+                if result.success:
+                    embeddings_to_create.append(Embedding(
+                        user_id=user_id,
+                        source_type="document",
+                        source_id=document.id,
+                        field=field,
+                        text=text,
+                        vector=result.embedding,
+                        version=1
+                    ))
+
             # Store all embeddings
             if embeddings_to_create:
                 for emb in embeddings_to_create:
@@ -823,51 +618,58 @@ class EmbeddingService:
                 return []
             
             query_vector = query_embedding_result.embedding
-            
+
             # Convert vector to pgvector format string: '[1.0, 2.0, 3.0]'
-            # Following pgvector examples: https://github.com/pgvector/pgvector
+            # Passed as a named bind parameter — never interpolated into SQL.
             vector_str = '[' + ','.join(str(v) for v in query_vector) + ']'
-            
-            # Build source_types list for IN clause
-            source_types_str = ','.join([f"'{st}'" for st in source_types])
-            
-            # Build WHERE clause
+
+            # Build named parameters for source_types so they are fully bound,
+            # never interpolated as raw strings into the query.
+            source_type_placeholders = []
+            params: Dict[str, Any] = {
+                'query_vector': vector_str,
+                'threshold': similarity_threshold,
+                'limit': limit,
+            }
+            for i, st in enumerate(source_types):
+                param_name = f'source_type_{i}'
+                params[param_name] = st
+                source_type_placeholders.append(f':{param_name}')
+            source_types_clause = f"e.source_type IN ({', '.join(source_type_placeholders)})"
+
+            # Build WHERE clause — only condition strings are assembled here,
+            # all runtime values are bound parameters.
             where_clauses = [
-                f"e.source_type IN ({source_types_str})",
+                source_types_clause,
                 "e.vector IS NOT NULL",
-                f"1 - (e.vector <=> '{vector_str}'::vector) >= :threshold"
+                "1 - (e.vector <=> CAST(:query_vector AS vector)) >= :threshold",
             ]
-            
+
             # Filter by user_id only if provided and auth is not disabled
             if user_id is not None and not settings.DISABLE_AUTH:
                 where_clauses.append("e.user_id = :user_id")
-            
+                params['user_id'] = user_id
+
             # Filter by source_id if provided
             if source_id is not None:
                 where_clauses.append("e.source_id = :source_id")
-            
+                params['source_id'] = source_id
+
             where_clause_str = " AND ".join(where_clauses)
-            
+
             stmt = text(f"""
-                SELECT 
+                SELECT
                     e.id as embedding_id,
                     e.source_type,
                     e.source_id,
                     e.field,
                     e.text,
-                    1 - (e.vector <=> '{vector_str}'::vector) as similarity_score
+                    1 - (e.vector <=> CAST(:query_vector AS vector)) as similarity_score
                 FROM embedding e
                 WHERE {where_clause_str}
-                ORDER BY e.vector <=> '{vector_str}'::vector
+                ORDER BY e.vector <=> CAST(:query_vector AS vector)
                 LIMIT :limit
             """)
-            
-            params = {
-                'user_id': user_id,
-                'source_id': source_id,
-                'threshold': similarity_threshold,
-                'limit': limit
-            }
             
             result = await session.execute(stmt, params)
             

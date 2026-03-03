@@ -64,8 +64,8 @@ class DocumentResponse(BaseModel):
     content: Optional[str] = None
     document_metadata: Optional[Dict[str, Any]] = None
     ai_is_about: Optional[str] = None
-    ai_bullet_points: Optional[List[str]] = None
-    
+    ai_markdown_content: Optional[str] = None
+
     model_config = ConfigDict(from_attributes=True)
 
 

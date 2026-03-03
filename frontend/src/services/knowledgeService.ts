@@ -63,6 +63,23 @@ export interface ActionResponse {
   actions?: Array<{ id: string; label: string }>;
 }
 
+export interface EntityRef {
+  id: number;
+  name: string;
+  type: string;
+}
+
+export interface EntityRelationshipItem {
+  from_entity: EntityRef;
+  relationship_type: string;
+  to_entity: EntityRef;
+}
+
+export interface EntityRelationshipsResponse {
+  entity: EntityRef & { description?: string };
+  relationships: EntityRelationshipItem[];
+}
+
 export const knowledgeService = {
   getFilterTree(): Promise<{ data: FilterTreeData }> {
     return apiClient.get('/api/v1/knowledge/filter-tree');
@@ -85,6 +102,10 @@ export const knowledgeService = {
       entity_id: entityId || null,
       document_id: documentId || null,
     });
+  },
+
+  getEntityRelationships(entityId: number): Promise<{ data: EntityRelationshipsResponse }> {
+    return apiClient.get(`/api/v1/knowledge/entity/${entityId}/relationships`);
   },
 };
 

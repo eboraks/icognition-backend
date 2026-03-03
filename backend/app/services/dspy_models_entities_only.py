@@ -33,3 +33,24 @@ class EntityExtractionResult(BaseModel):
         description="A list of 10-15 key organizations, people, topics, and other entities mentioned in the content."
     )
 
+
+# --- Relationship Models ---
+class EntityRelationship(BaseModel):
+    """A directed relationship between two entities."""
+    from_entity: str = Field(description="Name of the source entity (must match an extracted entity name).")
+    to_entity: str = Field(description="Name of the target entity (must match an extracted entity name).")
+    relationship_type: str = Field(
+        description=(
+            "Short snake_case label for the relationship. "
+            "Examples: works_for, founded, authored, mentions, opposes, located_in, part_of, acquired, "
+            "collaborated_with, invested_in, regulated_by, responded_to."
+        )
+    )
+
+
+class EntityRelationshipResult(BaseModel):
+    """Response model for relationship extraction."""
+    relationships: List[EntityRelationship] = Field(
+        description="List of directed relationships between the extracted entities."
+    )
+

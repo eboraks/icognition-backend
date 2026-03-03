@@ -20,12 +20,12 @@
           >
             My Library
           </router-link>
-          <router-link 
-            to="/learning-qa" 
+          <router-link
+            to="/chats"
             class="layout-topbar-menu-item"
-            :class="{ 'active': $route.name === 'learning-qa' }"
+            :class="{ 'active': $route.name === 'chats' }"
           >
-            Learning Q&A
+            Chat
           </router-link>
           <router-link 
             to="/knowledge-explorer" 

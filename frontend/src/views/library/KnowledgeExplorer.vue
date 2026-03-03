@@ -1,127 +1,157 @@
 <template>
-  <div class="knowledge-explorer-view">
-    <div class="tab-header">
-      <div class="tab-buttons">
-        <button
-          v-for="tab in knowledgeStore.chatTabs"
-          :key="tab.id"
-          :class="['tab-button', { active: tab.id === knowledgeStore.activeChatTabId }]"
-          type="button"
-          @click="knowledgeStore.setActiveChatTab(tab.id)"
-        >
-          <i class="pi pi-comments" />
-          <span>{{ tab.title }}</span>
-        </button>
+  <div class="knowledge-explorer-view flex flex-column h-full p-3 gap-3">
+
+    <!-- Entity detail panel (single entity selected) -->
+    <div v-if="singleEntity" class="entity-detail surface-card border-round border-1 border-200 p-4">
+      <div class="flex align-items-center gap-2 mb-3">
+        <i class="pi pi-tag text-primary text-xl"></i>
+        <span class="font-semibold text-lg">{{ singleEntity.name }}</span>
+        <Tag :value="singleEntity.type" severity="secondary" class="text-xs" />
       </div>
-      <button class="tab-add-button" type="button" @click="handleAddTab">
-        <i class="pi pi-plus" />
-      </button>
+      <p v-if="singleEntity.description" class="text-600 text-sm mb-3">{{ singleEntity.description }}</p>
+
+      <!-- Relationships -->
+      <div v-if="loadingRels" class="flex align-items-center gap-2 text-500 text-sm">
+        <i class="pi pi-spin pi-spinner"></i> Loading relationships…
+      </div>
+      <div v-else-if="relationships.length > 0">
+        <p class="text-xs font-semibold text-500 uppercase mb-2">Relationships</p>
+        <ul class="list-none p-0 m-0 flex flex-column gap-2">
+          <li
+            v-for="(rel, i) in relationships"
+            :key="i"
+            class="flex align-items-center gap-2 text-sm flex-wrap"
+          >
+            <span class="font-medium">{{ rel.from_entity.name }}</span>
+            <Tag :value="rel.relationship_type.replace(/_/g, ' ')" severity="info" class="text-xs" />
+            <span class="font-medium">{{ rel.to_entity.name }}</span>
+          </li>
+        </ul>
+      </div>
+      <p v-else class="text-500 text-sm">No relationships found for this entity.</p>
+
+      <Button
+        label="Explore in Chat"
+        icon="pi pi-comments"
+        class="mt-4 w-full"
+        @click="exploreInChat"
+        :loading="creating"
+      />
     </div>
-    <div class="workspace">
-          <ChatPanel
-            :key="knowledgeStore.activeChatTabId"
-            :selected-entity-id="knowledgeStore.activeEntityId.length > 0 ? knowledgeStore.activeEntityId[0] : null"
-            :selected-document-id="knowledgeStore.activeDocumentId.length > 0 ? knowledgeStore.activeDocumentId[0] : null"
-            :chat-session-id="knowledgeStore.activeChatTabId"
-          />
+
+    <!-- Multi-selection summary -->
+    <div v-else-if="hasSelection" class="selection-summary text-center surface-card border-round border-1 border-200 p-4">
+      <i class="pi pi-tags text-4xl text-primary mb-3 block"></i>
+      <p class="text-lg font-semibold mb-1">{{ selectionLabel }}</p>
+      <p class="text-600 text-sm mb-4">{{ selectionSubtitle }}</p>
+      <Button
+        label="Explore in Chat"
+        icon="pi pi-comments"
+        @click="exploreInChat"
+        :loading="creating"
+      />
     </div>
+
+    <!-- Empty state -->
+    <div v-else class="empty-state text-center p-4 flex flex-column align-items-center justify-content-center flex-1">
+      <i class="pi pi-sitemap text-4xl text-400 mb-3 block"></i>
+      <p class="text-lg text-600 mb-1">Select topics to explore</p>
+      <p class="text-500 text-sm">Use the sidebar to browse and select entities or documents</p>
+    </div>
+
   </div>
 </template>
 
 <script setup lang="ts">
-import ChatPanel from '@/components/knowledge_explorer/ChatPanel.vue';
+import { computed, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
+import Button from 'primevue/button';
+import Tag from 'primevue/tag';
 import { useKnowledgeExplorerStore } from '@/stores/knowledgeExplorerStore';
+import { useChatStore } from '@/stores/chat_store';
+import { knowledgeService, type EntityRelationshipItem } from '@/services/knowledgeService';
 
+const router = useRouter();
 const knowledgeStore = useKnowledgeExplorerStore();
-knowledgeStore.ensureActiveChatTab();
+const chatStore = useChatStore();
+const creating = ref(false);
 
-const handleAddTab = () => {
-  knowledgeStore.addChatTab();
-};
+const singleEntity = ref<{ id: number; name: string; type: string; description?: string } | null>(null);
+const relationships = ref<EntityRelationshipItem[]>([]);
+const loadingRels = ref(false);
+
+const hasSelection = computed(() =>
+  knowledgeStore.activeEntityId.length > 0 || knowledgeStore.activeDocumentId.length > 0
+);
+
+const selectionLabel = computed(() => {
+  const entityCount = knowledgeStore.activeEntityId.length;
+  const docCount = knowledgeStore.activeDocumentId.length;
+  const parts: string[] = [];
+  if (entityCount > 0) parts.push(`${entityCount} ${entityCount === 1 ? 'entity' : 'entities'}`);
+  if (docCount > 0) parts.push(`${docCount} ${docCount === 1 ? 'document' : 'documents'}`);
+  return parts.join(' and ') + ' selected';
+});
+
+const selectionSubtitle = computed(() => {
+  const first = knowledgeStore.selectedEntities[0] ?? knowledgeStore.selectedDocuments[0];
+  return first?.name ? `Starting with: ${first.name}` : 'Open a scoped chat to explore these topics';
+});
+
+// When exactly one entity is selected, load its detail + relationships
+watch(
+  () => knowledgeStore.activeEntityId,
+  async (ids) => {
+    if (ids.length !== 1) {
+      singleEntity.value = null;
+      relationships.value = [];
+      return;
+    }
+    const entity = knowledgeStore.selectedEntities[0];
+    singleEntity.value = entity
+      ? { id: entity.id!, name: entity.name!, type: entity.type! }
+      : null;
+
+    loadingRels.value = true;
+    relationships.value = [];
+    try {
+      const resp = await knowledgeService.getEntityRelationships(ids[0]);
+      if (singleEntity.value) {
+        singleEntity.value.description = resp.data.entity.description;
+      }
+      relationships.value = resp.data.relationships;
+    } catch (e) {
+      console.error('[KnowledgeExplorer] Failed to load relationships', e);
+    } finally {
+      loadingRels.value = false;
+    }
+  },
+  { immediate: true }
+);
+
+async function exploreInChat() {
+  creating.value = true;
+  try {
+    const entityId = knowledgeStore.activeEntityId[0] ?? null;
+    const docId = knowledgeStore.activeDocumentId[0] ?? null;
+    const scopeType = entityId ? 'entity' : docId ? 'document' : 'all_library';
+    const scopeId = entityId ?? docId ?? null;
+
+    const firstName = knowledgeStore.selectedEntities[0]?.name
+      ?? knowledgeStore.selectedDocuments[0]?.name
+      ?? 'Knowledge Exploration';
+
+    await chatStore.createSession(firstName, scopeType, scopeId);
+    router.push({ name: 'chats', params: { id: chatStore.activeSession?.id } });
+  } finally {
+    creating.value = false;
+  }
+}
 </script>
 
 <style scoped>
 .knowledge-explorer-view {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-}
-
-.workspace {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.tab-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1rem 1.5rem;
-  background: var(--p-surface-0);
-  border-bottom: 1px solid var(--p-content-border-color);
-  flex-shrink: 0;
-}
-
-.tab-buttons {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.tab-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.75rem 1.5rem;
-  border-radius: 0.85rem;
-  background: var(--p-surface-100);
-  border: 1px solid transparent;
-  font-weight: 600;
-  color: var(--p-text-muted-color);
-  box-shadow: inset 0 -2px 0 rgba(15, 23, 42, 0.08);
-  transition: all 0.2s ease;
-  cursor: pointer;
-}
-
-.tab-button i {
-  font-size: 1rem;
-}
-
-.tab-button:hover {
-  background: var(--p-surface-200);
-  color: var(--p-text-color);
-}
-
-.tab-button.active {
-  background: var(--p-primary-50);
-  border-color: var(--p-primary-200);
-  color: var(--p-primary-700);
-  box-shadow: inset 0 -2px 0 var(--p-primary-300);
-}
-
-.tab-add-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  border-radius: 0.75rem;
-  border: 1px dashed var(--p-content-border-color);
-  background: var(--p-surface-0);
-  color: var(--p-text-muted-color);
-  transition: all 0.2s ease;
-  cursor: pointer;
-}
-
-.tab-add-button:hover {
-  border-color: var(--p-primary-400);
-  color: var(--p-primary-500);
-  background: var(--p-primary-50);
-  box-shadow: 0 4px 12px rgba(45, 122, 138, 0.15);
+  height: calc(100vh - 70px);
+  overflow-y: auto;
 }
 </style>
-

@@ -22,114 +22,108 @@ from app.api.models.document_models import (
 from app.api.errors import NotFoundError, ValidationError
 from app.utils.logging import get_logger
 from app.models import Document
-from app.api.routes.bookmarks import _process_document_content, _process_document_entities
+from app.api.routes.bookmarks import (
+    _process_document_content,
+    _process_document_entities,
+    _process_document_content_and_entities,
+    _process_document_embeddings,
+    _fetch_url_and_process_document,
+)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 logger = get_logger(__name__)
 
 
-@router.post("/", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=DocumentResponse, status_code=status.HTTP_202_ACCEPTED)
 async def create_document(
     request: DocumentCreateRequest,
+    background_tasks: BackgroundTasks,
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
 ):
     """
-    Create a new document bookmark from URL or direct content.
-    
-    This endpoint supports three ways to create documents:
-    
-    1. **URL-based**: Provide a URL to fetch content from the web
-    2. **HTML content**: Provide raw HTML content directly
-    3. **Text content**: Provide plain text content directly
-    
-    **Request Body:**
-    - `url` (optional): URL of the web page to bookmark
-    - `title` (optional): Title of the document
-    - `content` (optional): Direct content (HTML or text) from the user
-    - `content_type` (default: "url"): Content source type - "url", "html", or "text"
-    - `raw_html` (optional, deprecated): Legacy field for raw HTML content
-    
-    **Validation Rules:**
-    - Either `url` or `content` must be provided
-    - If `content_type` is not "url", then `content` is required
-    - `content_type` must be one of: "url", "html", "text"
-    
-    **Examples:**
-    
-    URL-based document:
-    ```json
-    {
-        "url": "https://example.com/article",
-        "title": "My Article"
-    }
-    ```
-    
-    HTML content:
-    ```json
-    {
-        "content": "<html><body><h1>Title</h1><p>Content here</p></body></html>",
-        "content_type": "html",
-        "title": "My Document"
-    }
-    ```
-    
-    Text content:
-    ```json
-    {
-        "content": "This is plain text content",
-        "content_type": "text",
-        "title": "My Text Document"
-    }
-    ```
-    
-    **Response:**
-    Returns the created document with processing status and metadata.
+    Create a new document from URL or direct content.
+
+    Returns **202 Accepted** immediately. AI extraction (summary, entities,
+    embeddings) always runs in the background. Poll
+    `GET /documents/{id}/status` or subscribe to WebSocket notifications
+    to know when processing is complete.
+
+    Content types:
+    - **URL**: stub document created instantly; content fetched + processed in background.
+    - **HTML / Text**: document with content created instantly; AI extraction runs in background.
     """
-    
     try:
         document_service = DocumentService(session)
-        
-        # Handle direct content submission
+
         if request.content and request.content_type in ['html', 'text']:
+            # Content provided — create document immediately, schedule AI extraction
             document = await document_service.create_document_from_content(
                 user_id=user_context.user_id,
                 content=request.content,
                 content_type=request.content_type,
                 title=request.title,
-                url=str(request.url) if request.url else None
+                url=str(request.url) if request.url else None,
             )
-        # Handle legacy raw_html field (for backward compatibility)
+            background_tasks.add_task(
+                _process_document_content_and_entities,
+                document.id,
+                document.title,
+                document.url,
+                user_context.user_id,
+            )
+            background_tasks.add_task(_process_document_embeddings, document.id)
+
         elif request.raw_html:
+            # Legacy raw_html field — same as HTML path
             document = await document_service.create_document(
                 user_id=user_context.user_id,
                 url=str(request.url) if request.url else None,
                 title=request.title or "Untitled",
                 raw_html=request.raw_html,
-                content_source="html"
+                content_source="html",
             )
-        # Handle URL-based document creation
+            background_tasks.add_task(
+                _process_document_content_and_entities,
+                document.id,
+                document.title,
+                document.url,
+                user_context.user_id,
+            )
+            background_tasks.add_task(_process_document_embeddings, document.id)
+
         elif request.url:
-            document = await document_service.create_document_from_url(
+            # URL only — create stub immediately, fetch + process in background
+            document = await document_service.create_document_from_content(
                 user_id=user_context.user_id,
+                content="",
+                content_type="url",
+                title=request.title or "Processing…",
                 url=str(request.url),
-                title=request.title
             )
+            background_tasks.add_task(
+                _fetch_url_and_process_document,
+                document.id,
+                document.title,
+                str(request.url),
+                user_context.user_id,
+            )
+
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Either URL or content must be provided"
+                detail="Either URL or content must be provided",
             )
-        
+
         return DocumentResponse.model_validate(document)
-        
+
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create document: {str(e)}"
+            detail=f"Failed to create document: {str(e)}",
         )
 
 
@@ -289,6 +283,52 @@ async def get_document(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve document: {str(e)}"
+        )
+
+
+@router.get("/{document_id}/status", response_model=DocumentProcessingStatusResponse)
+async def get_document_status(
+    document_id: int,
+    user_context: UserContext = Depends(get_active_user_context),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Lightweight polling endpoint for document processing state.
+
+    Returns one of:
+    - `"processing"` — AI extraction is still running (ai_markdown_content not yet populated)
+    - `"ready"` — AI extraction complete (ai_markdown_content and ai_is_about populated)
+    - `"failed"` — URL fetch or processing failed (check document_metadata for details)
+    """
+    try:
+        document_service = DocumentService(session)
+        document = await document_service.get_document_by_id(
+            user_id=user_context.user_id,
+            document_id=document_id,
+        )
+        if not document:
+            raise NotFoundError(f"Document {document_id} not found")
+
+        if document.document_metadata and document.document_metadata.get("fetch_error"):
+            derived_status = "failed"
+        elif document.ai_markdown_content and document.ai_markdown_content.strip():
+            derived_status = "ready"
+        else:
+            derived_status = "processing"
+
+        return DocumentProcessingStatusResponse(
+            id=document.id,
+            status=derived_status,
+            updated_at=document.updated_at,
+            document_metadata=document.document_metadata,
+        )
+
+    except NotFoundError:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve document status: {str(e)}",
         )
 
 

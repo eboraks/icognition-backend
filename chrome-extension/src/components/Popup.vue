@@ -272,6 +272,17 @@ import RadioButton from 'primevue/radiobutton';
 
 const { handleSignOut, handleSignIn } = useAuth()
 
+// ---------------------------------------------------------------------------
+// Operation token — cancel guard for async tab operations.
+// Increment whenever a real tab change starts; capture at the top of every
+// async function so it can bail out if the user has moved to another tab
+// before the async operation completes.
+// ---------------------------------------------------------------------------
+let _opToken = 0
+const advanceToken = () => ++_opToken
+const captureToken = () => _opToken
+const isCurrentToken = (t) => t === _opToken
+
 const AppStatusEnum = {
     INITIALIZING: {
         state: 'initializing',
@@ -519,10 +530,16 @@ onMounted(async () => {
         }
     });
     
-    chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    // Only trigger handleTabChange for the tab that is actually active.
+    // Without this guard, loading any background tab (e.g. prefetch, link preload)
+    // would reset the UI state for the tab the user is currently looking at.
+    chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         console.log('Tab updated event fired:', { tabId, changeInfo, url: tab.url });
         if (changeInfo.status === 'complete' && tab.url) {
-            handleTabChange(tab);
+            const activeTabs = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (activeTabs[0]?.id === tabId) {
+                handleTabChange(tab);
+            }
         }
     });
     
@@ -594,19 +611,23 @@ onUnmounted(() => {
 
 // Add the handleTabChange function
 const handleTabChange = (tab) => {
-    // Prevent duplicate processing if the URL hasn't changed
-    if (active_tab.value?.url === tab.url) {
-        console.log('Tab URL unchanged, skipping processing');
+    // Prevent duplicate processing if the cleaned URL hasn't changed.
+    // Compare cleaned URLs so query-string-only changes (e.g. ?mod=...) are ignored.
+    if (cleanUrl(active_tab.value?.url || '') === cleanUrl(tab.url || '')) {
+        console.log('Tab URL unchanged (after cleaning), skipping processing');
         return;
     }
 
     console.log('handleTabChange called with tab:', tab);
-    
+
     if (!tab || !tab.url) {
         console.log('handleTabChange: Invalid tab or missing URL');
         return;
     }
-    
+
+    // Advance token so any in-flight async ops from the previous tab know to bail out.
+    advanceToken();
+
     console.log('Current status before tab change:', status.value.state);
     console.log('Current active_tab:', active_tab.value?.url);
     
@@ -705,13 +726,17 @@ watch(user, (after, before) => {
 
 const searchBookmarksByUrl = async (url) => {
     console.log('searchBookmarksByUrl called with URL:', url);
-    
+    // Capture current operation token.  If the user navigates to another tab
+    // before any await resolves, isCurrentToken(myToken) will be false and we
+    // return early instead of overwriting state for the new tab.
+    const myToken = captureToken();
+
     if (!url) {
         console.log('searchBookmarksByUrl -> url is null')
         isSearchingBookmark.value = false;
         return;
     }
-    
+
     if (!user.value) {
         console.log('searchBookmarksByUrl -> user not authenticated')
         isSearchingBookmark.value = false;
@@ -721,7 +746,7 @@ const searchBookmarksByUrl = async (url) => {
 
     const cleanedUrl = cleanUrl(url);
     console.log('searchBookmarksByUrl cleaned URL:', cleanedUrl);
-    
+
     try {
         // Check if we already have a summary for this URL in memory
         if (summariesByUrl.value[cleanedUrl]) {
@@ -736,6 +761,7 @@ const searchBookmarksByUrl = async (url) => {
 
         // Check local storage first
         const value = await chrome.storage.local.get(["bookmarks"]);
+        if (!isCurrentToken(myToken)) { isSearchingBookmark.value = false; return; }
         console.log('Got bookmarks from storage:', value.bookmarks ? value.bookmarks.length : 0);
 
         if (value.bookmarks) {
@@ -759,7 +785,8 @@ const searchBookmarksByUrl = async (url) => {
                             name: 'fetch-bookmark-document',
                             bookmarkId: found.id
                         });
-                        
+                        if (!isCurrentToken(myToken)) { isSearchingBookmark.value = false; return; }
+
                         if (response && response.success && response.document) {
                         console.log('Got document from server:', response.document);
                         document_summary.value = {
@@ -856,7 +883,8 @@ const searchBookmarksByUrl = async (url) => {
                 setTimeout(() => reject(new Error('check-for-bookmarks timed out')), 5000);
             });
             const response = await Promise.race([fetchPromise, timeoutPromise]);
-            
+            if (!isCurrentToken(myToken)) { isSearchingBookmark.value = false; return; }
+
             if (response && response.bookmark) {
                 console.log('Found bookmark on server:', response.bookmark);
                 bookmark.value = response.bookmark;
@@ -870,7 +898,8 @@ const searchBookmarksByUrl = async (url) => {
                         name: 'fetch-bookmark-document',
                         bookmarkId: response.bookmark.id
                     });
-                
+                    if (!isCurrentToken(myToken)) { isSearchingBookmark.value = false; return; }
+
                 if (docResponse && docResponse.success && docResponse.document) {
                     console.log('Got document from server:', docResponse.document);
                     document_summary.value = {
@@ -1000,14 +1029,15 @@ const handleRetryConnection = async () => {
 // Initialize chat session
 const initializeChatSession = async (url, docId) => {
     if (!docId) return;
-    
-    // Check cache first
+    const myToken = captureToken();
+
+    // Check cache first (synchronous — no guard needed)
     if (chatSessionsByUrl.value[url]) {
         console.log('Using cached chat session:', chatSessionsByUrl.value[url]);
         currentChatSessionId.value = chatSessionsByUrl.value[url];
         return;
     }
-    
+
     isCreatingChatSession.value = true;
     try {
         console.log('Creating new chat session for doc:', docId);
@@ -1019,7 +1049,8 @@ const initializeChatSession = async (url, docId) => {
                 scope_id: docId
             }
         });
-        
+        if (!isCurrentToken(myToken)) { isCreatingChatSession.value = false; return; }
+
         if (response && response.success) {
             console.log('Chat session created:', response.data);
             chatSessionsByUrl.value[url] = response.data.id;
@@ -1269,6 +1300,11 @@ const confirmProceedWithBookmark = () => {
 
 const createBookmark = async () => {
     progressPercent.value = 5;
+    // Capture the target URL NOW, before any async call, so that cache writes
+    // later in the .then() always use the URL we actually bookmarked — not
+    // whatever tab happens to be active when the response eventually arrives.
+    const targetUrl = active_tab.value?.url ? cleanUrl(active_tab.value.url) : null;
+
     // Only set to processing if we aren't already ready (shouldn't happen here usually but good practice)
     if (status.value.state !== AppStatusEnum.DOCUMENT_READY.state) {
         status.value = AppStatusEnum.PROCESSING
@@ -1291,10 +1327,11 @@ const createBookmark = async () => {
                 cleanedBookmark.url = cleanUrl(cleanedBookmark.url);
             }
             bookmark.value = cleanedBookmark;
-            
-            // Save bookmark for current URL
-            if (active_tab.value && active_tab.value.url) {
-                bookmarksByUrl.value[cleanUrl(active_tab.value.url)] = {...bookmark.value};
+
+            // Save bookmark under the URL that was active when the user clicked
+            // "Analyze" — NOT whatever tab is active now (could have changed).
+            if (targetUrl) {
+                bookmarksByUrl.value[targetUrl] = {...bookmark.value};
             }
 
             // Check if we already received the document via SSE (Race condition fix)
@@ -1345,18 +1382,25 @@ const createBookmark = async () => {
 const handleBookmark = async () => {
     // Reset proceed flag
     proceedWithBookmark.value = false;
-    
-    // Check if we have an active tab with URL
-    if (!active_tab.value || !active_tab.value.url) {
+
+    // Query the active tab fresh at click time.
+    // Relying on the stored active_tab state can be stale when the user has multiple
+    // Chrome windows open and switches between them without changing tabs — window-focus
+    // changes do not fire tabs.onActivated, so active_tab may point to the wrong window.
+    const freshTabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const freshTab = freshTabs?.[0];
+    if (!freshTab?.url) {
         handleError('No active tab URL found');
         return;
     }
-    
+    // Sync stored state so the rest of the flow (createBookmark, cache writes) is consistent.
+    active_tab.value = freshTab;
+
     // Check if we can inject content (extension can get HTML from the page)
     // For most pages, we can inject, so assume hasContent = true
     // Only show warning if it's a critical issue that can't be resolved with content injection
     const hasContent = true; // Extension injects content script to get HTML
-    
+
     // Detect page type and potential issues
     const pageDetection = detectPageType(active_tab.value.url, hasContent);
     
@@ -1446,16 +1490,50 @@ const stopPolling = () => {
 
 const handleNewDoc = (request) => {
     console.log('NEW_DOC handler called:', request.data);
-    doc.value = request.data
-    document_summary.value = {
+
+    // Parse document ID
+    const documentId = request.data.id ? parseInt(request.data.id) : request.data.id;
+
+    // Determine which URL this document belongs to.
+    // Prefer the document's own URL so we always cache under the correct key
+    // even if the user has navigated to a different tab since processing started.
+    const docUrl = request.data.url ? cleanUrl(request.data.url) : null;
+    const activeUrl = active_tab.value?.url ? cleanUrl(active_tab.value.url) : null;
+    const targetUrl = docUrl || activeUrl;
+
+    // Build the summary object
+    const newSummary = {
         title: isSocialMedia.value ? '' : request.data.title,
         summary: request.data.ai_is_about,
         markdown_content: request.data.ai_markdown_content
+    };
+
+    // Always persist to URL-keyed caches so the data is available when the
+    // user switches back to the original tab.
+    if (targetUrl) {
+        documentIdsByUrl.value[targetUrl] = documentId;
+        summariesByUrl.value[targetUrl] = { ...newSummary };
+        if (bookmark.value && bookmark.value.id) {
+            bookmark.value.document_id = documentId;
+            bookmark.value.is_processed = true;
+            bookmark.value.processing_status = 'completed';
+            bookmarksByUrl.value[targetUrl] = { ...bookmark.value };
+        }
     }
-    
+
+    // Only update the live display state if this document is for the current tab.
+    const isForCurrentTab = !docUrl || docUrl === activeUrl;
+    if (!isForCurrentTab) {
+        console.log('NEW_DOC received for a different tab, cached but not displayed:', docUrl);
+        return;
+    }
+
+    doc.value = request.data;
+    document_summary.value = newSummary;
+
     // Check if the document truly has rendered content (LLM is finished)
     const isFinished = !!request.data.ai_markdown_content;
-    
+
     if (!isFinished) {
         console.log('Document received but missing markdown_content. Staying in PROCESSING state.');
         status.value = AppStatusEnum.PROCESSING;
@@ -1466,28 +1544,9 @@ const handleNewDoc = (request) => {
         status.value = AppStatusEnum.DOCUMENT_READY;
         console.log('New document processed fully, status:', status.value.state);
         stopPolling();
-    }
-    
-    // Parse document ID
-    const documentId = request.data.id ? parseInt(request.data.id) : request.data.id;
-    
-    // Save document ID and summary for current URL
-    if (active_tab.value && active_tab.value.url) {
-        const cleanedUrl = cleanUrl(active_tab.value.url);
-        documentIdsByUrl.value[cleanedUrl] = documentId;
-        summariesByUrl.value[cleanedUrl] = {...document_summary.value};
-        
-        // Auto-start chat session ONLY if finished
-        if (isFinished) {
-            initializeChatSession(cleanedUrl, documentId);
-        }
-        
-        // Update bookmark
-        if (bookmark.value && bookmark.value.id) {
-            bookmark.value.document_id = documentId;
-            bookmark.value.is_processed = true;
-            bookmark.value.processing_status = 'completed';
-            bookmarksByUrl.value[cleanedUrl] = {...bookmark.value};
+        // Auto-start chat session ONLY if finished and for current tab
+        if (targetUrl) {
+            initializeChatSession(targetUrl, documentId);
         }
     }
 }

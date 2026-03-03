@@ -2,7 +2,7 @@ from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
 
-from app.models import Entity, EntityDocument
+from app.models import Entity, EntityDocument, EntityRelationship
 from app.services.user_service import UserService
 from app.services.embedding_service import get_embedding_service
 from app.services.wikidata_service import get_wikidata_service
@@ -229,6 +229,67 @@ class DspyEntityAdapter:
             logger.error(f"Error enriching entity {entity.id} with Wikidata: {e}")
             return False
     
+    async def process_document_relationships(
+        self,
+        document_id: int,
+        relationships: List[Dict[str, Any]],
+        entity_names: List[str],
+    ) -> int:
+        """
+        Store entity relationships extracted by DSPy.
+
+        Args:
+            document_id: Source document ID.
+            relationships: List of dicts with from_entity, to_entity, relationship_type.
+            entity_names: List of all entity names stored for this document (used for lookup).
+
+        Returns:
+            Number of relationships stored.
+        """
+        if not relationships:
+            return 0
+
+        # Build a name→id map for entities linked to this document
+        result = await self.session.execute(
+            select(Entity.id, Entity.name)
+            .join(EntityDocument, EntityDocument.entity_id == Entity.id)
+            .where(EntityDocument.document_id == document_id)
+        )
+        name_to_id: Dict[str, int] = {row.name: row.id for row in result}
+
+        stored = 0
+        for rel in relationships:
+            from_id = name_to_id.get(rel["from_entity"])
+            to_id = name_to_id.get(rel["to_entity"])
+            if not from_id or not to_id or from_id == to_id:
+                continue  # Skip if either entity wasn't stored or self-referential
+
+            # Upsert: skip if this exact relationship already exists for this document
+            existing = await self.session.execute(
+                select(EntityRelationship).where(
+                    and_(
+                        EntityRelationship.from_entity_id == from_id,
+                        EntityRelationship.to_entity_id == to_id,
+                        EntityRelationship.relationship_type == rel["relationship_type"],
+                        EntityRelationship.source_document_id == document_id,
+                    )
+                )
+            )
+            if existing.scalar_one_or_none():
+                continue
+
+            self.session.add(EntityRelationship(
+                from_entity_id=from_id,
+                to_entity_id=to_id,
+                relationship_type=rel["relationship_type"],
+                source_document_id=document_id,
+            ))
+            stored += 1
+
+        await self.session.flush()
+        logger.info(f"Stored {stored} entity relationships for document {document_id}")
+        return stored
+
     async def _create_entity_document_relationship(
         self,
         entity_id: int,

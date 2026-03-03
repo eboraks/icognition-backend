@@ -12,5 +12,4 @@ export class AskQuestionAnswerModel {
     source_collection_id?: string;
     documents_used?: [string];
     citations?: Citation[];
-    llm_service_meta?: Object;
 }

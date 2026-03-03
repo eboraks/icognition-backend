@@ -99,8 +99,6 @@ class BackendSyncService {
             savedAt: article.savedAt ?? Date(),
             backendBookmarkId: article.backendBookmarkId,
             backendDocumentId: article.backendDocumentId,
-            aiSummary: article.aiSummary,
-            aiBulletPoints: article.aiBulletPoints as? [String],
             htmlFilePath: article.htmlFilePath,
             hasLocalHTML: article.hasLocalHTML
         )

@@ -1,3 +1,5 @@
+import asyncio
+
 from app.utils.logging import get_logger
 from app.core.config import settings
 from app.utils.langsmith_tracing import enable_langsmith_tracing
@@ -7,19 +9,16 @@ from bs4 import BeautifulSoup
 from contextlib import AbstractAsyncContextManager
 
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langgraph.prebuilt import create_react_agent
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain_core.tools import tool, Tool
-from langchain_google_community import GoogleSearchAPIWrapper
 from sqlalchemy.ext.asyncio import AsyncSession
 from tenacity import RetryError
-from app.chat_workflows.research_graph import build_research_graph
+from app.chat_workflows.research_graph import build_research_graph, fetch_graph_prompts
 
 from app.db.database import get_session, get_database_url
 from app.services.chat_session_service import ChatSessionService
 from app.services.document_service import DocumentService
-from app.services.document_service import DocumentService
 from app.services.prompt_service import PromptService
+from app.services.prompt_utils import PromptType
 from app.utils.langfuse_worker import get_langfuse_handler
 
 logger = get_logger(__name__)
@@ -73,7 +72,7 @@ async def get_checkpointer() -> AsyncPostgresSaver:
     return _checkpointer
 
 
-from app.chat_workflows.tools import create_retrieve_documents_tool, strip_html_and_clean
+from app.chat_workflows.tools import create_retrieve_documents_tool, create_knowledge_graph_tool, strip_html_and_clean
 
 def extract_text_from_content(content) -> str:
     """
@@ -129,96 +128,79 @@ class ChatAgentService:
         if not current_text or len(current_text) < 3:
             return ""
 
-        # Get database session for this request
-        async_gen = get_session()
-        db_session = await async_gen.__anext__()
-        
-        try:
-            chat_session_service = ChatSessionService(db_session)
-            # Use get_session_messages which already validates ownership
-            messages = await chat_session_service.get_session_messages(session_id, user_id)
-            
-            # Format history for the model
-            history_parts = []
-            # Take last 5 messages for context
-            for msg in messages[-5:]:
-                role = "User" if msg.role == "user" else "Assistant"
-                # Strip HTML for cleaner context
-                content = strip_html_and_clean(msg.content)
-                history_parts.append(f"{role}: {content}")
-            
-            history = "\n".join(history_parts)
+        # Use async for so Python guarantees aclose() is called on the generator
+        # when the function exits (return or exception), properly releasing the connection.
+        async for db_session in get_session():
+            try:
+                chat_session_service = ChatSessionService(db_session)
+                messages = await chat_session_service.get_session_messages(session_id, user_id)
 
-            llm = ChatGoogleGenerativeAI(
-                model=settings.GEMINI_FLASH_LITE_MODEL,
-                google_api_key=settings.GOOGLE_API_KEY,
-                temperature=0.0,
-                max_tokens=20
-            )
+                # Format last 5 messages as history context
+                history_parts = []
+                for msg in messages[-5:]:
+                    role = "User" if msg.role == "user" else "Assistant"
+                    history_parts.append(f"{role}: {strip_html_and_clean(msg.content)}")
+                history = "\n".join(history_parts)
 
-            # Try to get prompt from database
-            from app.services.prompt_utils import PromptType
-            prompt_service = PromptService(db_session)
-            db_prompt = await prompt_service.get_latest_prompt(PromptType.CHAT_AGENT_TYPE_AHEAD.value)
-            
-            if db_prompt:
-                system_prompt = db_prompt.system_prompt or "You are an AI writing assistant."
-                user_template = db_prompt.user_prompt
-                # The DB prompt might use different placeholders or just be the text
-                try:
-                    user_prompt = user_template.format(
-                        history=history,
-                        context=context or "None",
-                        current_text=current_text
-                    )
-                except (KeyError, ValueError):
-                    # Fallback if format fails
-                    user_prompt = f"{user_template}\n\nHistory: {history}\nContext: {context}\nTyping: {current_text}"
-                
-                prompt = f"{system_prompt}\n\n{user_prompt}"
-            else:
-                prompt_parts = [
-                    "You are an AI writing assistant. Continue the user's thought following the provided conversation history.",
-                    f"\nConversation History:\n{history}" if history else "",
-                ]
-                
-                if context:
-                    prompt_parts.append(f"\nAdditional Context: {context}")
-                
-                prompt_parts.append(f"\nUser is currently typing: '{current_text}'")
-                prompt_parts.append(
-                    "\nProvide ONLY the characters or words that complete the current thought from where it left off. "
-                    "Do NOT repeat any part of the input text. Do NOT explain yourself. "
-                    "The completion should feel natural and continue the specific sentence or phrase the user is currently typing. "
-                    "If no good completion is found, return nothing."
+                llm = ChatGoogleGenerativeAI(
+                    model=settings.GEMINI_FLASH_LITE_MODEL,
+                    google_api_key=settings.GOOGLE_API_KEY,
+                    temperature=0.0,
+                    max_tokens=20
                 )
-                prompt = "\n".join(filter(None, prompt_parts))
 
-            # Add Langfuse tracing
-            lf_handler = get_langfuse_handler()
-            callbacks = [lf_handler] if lf_handler else []
+                prompt_service = PromptService(db_session)
+                db_prompt = await prompt_service.get_latest_prompt(PromptType.CHAT_AGENT_TYPE_AHEAD.value)
 
-            response = await llm.ainvoke(
-                prompt,
-                config={
-                    "callbacks": callbacks,
-                    "run_name": PromptType.CHAT_AGENT_TYPE_AHEAD.value
-                }
-            )
-            prediction = extract_text_from_content(response.content).strip()
-            
-            # Simple cleanup: remove quotes if the model wrapped the response
-            if prediction.startswith('"') and prediction.endswith('"'):
-                prediction = prediction[1:-1]
-            if prediction.startswith("'") and prediction.endswith("'"):
-                prediction = prediction[1:-1]
-            
-            return prediction
-        except Exception as e:
-            logger.error(f"Error getting suggestion for session {session_id}: {e}", exc_info=True)
-            return ""
-        finally:
-            await db_session.close()
+                if db_prompt:
+                    system_prompt = db_prompt.system_prompt or "You are an AI writing assistant."
+                    user_template = db_prompt.user_prompt
+                    try:
+                        user_prompt = user_template.format(
+                            history=history,
+                            context=context or "None",
+                            current_text=current_text
+                        )
+                    except (KeyError, ValueError):
+                        user_prompt = f"{user_template}\n\nHistory: {history}\nContext: {context}\nTyping: {current_text}"
+                    prompt = f"{system_prompt}\n\n{user_prompt}"
+                else:
+                    prompt_parts = [
+                        "You are an AI writing assistant. Continue the user's thought following the provided conversation history.",
+                        f"\nConversation History:\n{history}" if history else "",
+                    ]
+                    if context:
+                        prompt_parts.append(f"\nAdditional Context: {context}")
+                    prompt_parts.append(f"\nUser is currently typing: '{current_text}'")
+                    prompt_parts.append(
+                        "\nProvide ONLY the characters or words that complete the current thought from where it left off. "
+                        "Do NOT repeat any part of the input text. Do NOT explain yourself. "
+                        "The completion should feel natural and continue the specific sentence or phrase the user is currently typing. "
+                        "If no good completion is found, return nothing."
+                    )
+                    prompt = "\n".join(filter(None, prompt_parts))
+
+                lf_handler = get_langfuse_handler()
+                callbacks = [lf_handler] if lf_handler else []
+
+                response = await llm.ainvoke(
+                    prompt,
+                    config={
+                        "callbacks": callbacks,
+                        "run_name": PromptType.CHAT_AGENT_TYPE_AHEAD.value
+                    }
+                )
+                prediction = extract_text_from_content(response.content).strip()
+
+                if prediction.startswith('"') and prediction.endswith('"'):
+                    prediction = prediction[1:-1]
+                if prediction.startswith("'") and prediction.endswith("'"):
+                    prediction = prediction[1:-1]
+
+                return prediction
+            except Exception as e:
+                logger.error(f"Error getting suggestion for session {session_id}: {e}", exc_info=True)
+                return ""
 
     async def get_stream(self, session_id: int, message: str, user_id: str):
         """
@@ -260,6 +242,7 @@ class ChatAgentService:
                 scope_id=chat_session.scope_id,
                 db_session=db_session
             )
+            kg_tool = create_knowledge_graph_tool(user_id=user_id, db_session=db_session)
             
             # Initialize LLM
             try:
@@ -273,7 +256,6 @@ class ChatAgentService:
             # Create LangGraph ReAct agent with checkpointer for memory
             try:
                 # Try to get system prompt from database, fallback to hardcoded
-                from app.services.prompt_utils import PromptType
                 prompt_service = PromptService(db_session)
                 db_prompt = await prompt_service.get_latest_prompt(PromptType.CHAT_AGENT_SYSTEM.value)
                 
@@ -312,13 +294,17 @@ class ChatAgentService:
                                 "CURRENT CONTEXT (The user is specifically asking about this document):",
                                 f"Title: {doc.title or 'Untitled'}",
                             ]
-                            
+
                             if doc.url:
                                 context_parts.append(f"URL: {doc.url}")
-                            
+
                             # Add AI analysis summary if available
                             if doc.ai_is_about:
                                 context_parts.append(f"Summary: {doc.ai_is_about}")
+
+                            # Add full document content so the agent can reference specific details
+                            if doc.ai_markdown_content:
+                                context_parts.append(f"\nDocument Content:\n{doc.ai_markdown_content}")
                             
                             # Prepend to system prompt
                             context_header = "\n".join(context_parts)
@@ -329,56 +315,21 @@ class ChatAgentService:
                     except Exception as prime_err:
                         logger.error(f"[Session {session_id}] Error priming agent with document context: {prime_err}", exc_info=True)
                 
-                # Initialize Google Search tool if configured
-                tools = [retrieve_tool]
-                if settings.GOOGLE_SEARCH_API and settings.GOOGLE_CSE_ID:
-                    try:
-                        search = GoogleSearchAPIWrapper(
-                            google_api_key=settings.GOOGLE_SEARCH_API,
-                            google_cse_id=settings.GOOGLE_CSE_ID,
-                            k=5 # Limit to top 5 results
-                        )
-                        def search_with_metadata(query: str) -> str:
-                            """Wrapper to include titles and links in search results."""
-                            # DEBUG BREAKPOINT: Put a breakpoint on the line below to see raw results
-                            results = search.results(query, num_results=5)
-                            if not results:
-                                return f"No Google search results found for: {query}"
-                            
-                            formatted = []
-                            for i, r in enumerate(results, 1):
-                                title = r.get("title", "No Title")
-                                link = r.get("link", "No Link")
-                                snippet = r.get("snippet", "No Snippet")
-                                formatted.append(f"[{i}] {title}\nURL: {link}\nSnippet: {snippet}\n")
-                            
-                            logger.info(f"Google Search returned {len(results)} results for query: {query}")
-                            return "\n---\n".join(formatted)
+                # Note: tools (retrieve, fetch_social_post, google_search) are assembled
+                # inside build_research_graph — no need to build them here.
 
-                        google_search_tool = Tool(
-                            name="google_search_tool",
-                            description="Searches Google for recent results to validate or augment document context.",
-                            func=search_with_metadata,
-                        )
-                        tools.append(google_search_tool)
-                        logger.info(f"[Session {session_id}] Google Search tool added to agent")
-                    except Exception as e:
-                        logger.error(f"Failed to initialize Google Search tool: {e}")
-                else:
-                    logger.warning(f"[Session {session_id}] Google Search tool NOT added (missing API key or CSE ID)")
+                logger.info(f"[Session {session_id}] Getting checkpointer and pre-fetching graph prompts...")
+                checkpointer, graph_prompts = await asyncio.gather(
+                    get_checkpointer(),
+                    fetch_graph_prompts(db_session),
+                )
+                logger.info(f"[Session {session_id}] Checkpointer and prompts ready, creating Research Graph agent...")
 
-                logger.info(f"[Session {session_id}] Getting checkpointer...")
-                checkpointer = await get_checkpointer()
-                logger.info(f"[Session {session_id}] Checkpointer obtained, creating Research Graph agent...")
-                
-                # Use the new Research Graph instead of generic ReAct
-                # Note: System prompt is now handled inside the graph nodes based on intent/context
-                # We can pass the base system prompt to the builder if we want to support it, 
-                # but for now we'll rely on the logic in research_graph.py
                 agent = build_research_graph(
                     checkpointer=checkpointer,
                     retrieve_tool=retrieve_tool,
-                    db_session=db_session
+                    kg_tool=kg_tool,
+                    prompts=graph_prompts,
                 )
                 logger.info(f"[Session {session_id}] Created Research Graph agent with tools and checkpointer")
             except Exception as e:

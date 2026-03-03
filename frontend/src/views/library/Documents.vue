@@ -153,7 +153,7 @@
                     </Column>
                     <Column field="Added to Library" header="Added to Library" headerStyle="min-width: 12rem;" sortable >
                         <template #body="slotProps">
-                            {{ moment(slotProps.data.updateAt).format('YYYY-MM-DD') }}
+                            {{ moment(slotProps.data.updated_at).format('YYYY-MM-DD') }}
                         </template>
                     </Column>
                     <Column field="site_name" header="Source" sortable >
@@ -170,16 +170,6 @@
                                         <div class="mb-2">
                                             <span class="font-semibold text-xs">Summary:</span>
                                             <p class="m-0 p-2 text-xs line-height-2 font-mono" v-html="formatUrlsAsLinks(slotProps.data.ai_is_about || '')"></p>
-                                        </div>
-                                        <div class="mb-2">
-                                            <span class="font-semibold text-xs">Key Points:</span>
-                                            <ul class="list-none p-0 m-0 font-mono">
-                                                <li v-for="(point, index) in slotProps.data.ai_bullet_points" :key="index" 
-                                                    class="flex align-items-center mb-1 text-xs line-height-2">
-                                                    <i class="pi pi-circle-fill mr-2" style="font-size: 0.3rem"></i>
-                                                    <span v-html="formatUrlsAsLinks(point || '')"></span>
-                                                </li>
-                                            </ul>
                                         </div>
                                     </div>
                                 </div>

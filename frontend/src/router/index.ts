@@ -73,9 +73,14 @@ const routes: Array<RouteRecordRaw> = [
     component: () => import("../views/DocumentContainer.vue")
   },
   {
-    path: '/learning-qa',
-    name: 'learning-qa',
+    path: '/chats/:id?',
+    name: 'chats',
     component: () => import("../views/library/LearningQA.vue")
+  },
+  // Redirect legacy URL
+  {
+    path: '/learning-qa',
+    redirect: { name: 'chats' }
   },
   {
     path: '/knowledge-explorer',

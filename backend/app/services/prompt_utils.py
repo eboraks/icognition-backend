@@ -25,6 +25,7 @@ class PromptType(Enum):
     CHAT_AGENT_TYPE_AHEAD = "Chat Agent: Type-ahead Prompt"
     CHAT_INTENT_CLASSIFICATION = "Chat Agent: Intent Classification"
     CHAT_REFLECTION = "Chat Agent: Reflection"
+    CHAT_SOCIAL_WRITER = "Chat Agent: Social Writer"
     EXTRACT_NEWS = "Doc Extract: News"
     EXTRACT_BLOG = "Doc Extract: Blog"
     EXTRACT_SOCIAL = "Doc Extract: Social"

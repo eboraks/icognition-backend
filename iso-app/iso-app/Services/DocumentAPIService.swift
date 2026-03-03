@@ -34,16 +34,10 @@ class DocumentAPIService {
                 logger.info("✅ DocumentAPIService: Document fetched successfully")
                 
                 // Log AI content status
-                if let summary = documentData.aiIsAbout, !summary.isEmpty {
-                    logger.info("📝 DocumentAPIService: AI Summary available (\(summary.count) chars)")
+                if let markdown = documentData.aiMarkdownContent, !markdown.isEmpty {
+                    logger.info("📝 DocumentAPIService: AI Markdown content available (\(markdown.count) chars)")
                 } else {
-                    logger.info("⚠️ DocumentAPIService: No AI Summary available")
-                }
-                
-                if let bulletPoints = documentData.aiBulletPoints, !bulletPoints.isEmpty {
-                    logger.info("📋 DocumentAPIService: AI Bullet Points available (\(bulletPoints.count) points)")
-                } else {
-                    logger.info("⚠️ DocumentAPIService: No AI Bullet Points available")
+                    logger.info("⚠️ DocumentAPIService: No AI Markdown content available")
                 }
                 
                 return documentData
@@ -63,16 +57,12 @@ class DocumentAPIService {
     
     /// Checks if document has AI content available
     /// - Parameter documentId: The document ID
-    /// - Returns: True if document has both summary and bullet points
+    /// - Returns: True if document has ai_markdown_content
     func hasAIContent(documentId: String) async -> Bool {
         guard let document = await fetchDocument(documentId: documentId) else {
             return false
         }
-        
-        let hasSummary = document.aiIsAbout != nil && !document.aiIsAbout!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasBullets = document.aiBulletPoints != nil && !document.aiBulletPoints!.isEmpty
-        
-        return hasSummary && hasBullets
+        return document.aiMarkdownContent != nil && !document.aiMarkdownContent!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 

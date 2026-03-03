@@ -73,12 +73,12 @@ export const useLibraryStore = defineStore('library', () => {
       documents.value = documentStore.docs.map(doc => ({
         id: doc.id || 0,
         title: doc.title || 'Untitled',
-        updatedAt: doc.updateAt ? doc.updateAt.format('YYYY-MM-DD') : new Date().toISOString(),
+        updatedAt: doc.updatedAt ? doc.updatedAt.format('YYYY-MM-DD') : new Date().toISOString(),
         url: doc.url || '',
         sourceUrl: doc.url || '',
         sourceHost: doc.url ? new URL(doc.url).hostname : undefined,
         summary: doc.is_about,
-        keyPoints: doc.tldr || "",
+        keyPoints: doc.aiMarkdownContent || "",
         type: 'web'
       }));
 

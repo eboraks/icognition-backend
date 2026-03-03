@@ -1,6 +1,5 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import { useChatStore } from '@/stores/chat_store';
 
 interface SelectedNode {
   id: number | null;
@@ -9,34 +8,13 @@ interface SelectedNode {
   children: Array<{ id: number; name: string | null; type: string | null }>;
 }
 
-interface ChatTab {
-  id: number;
-  title: string;
-  createdAt: number;
-  sessionId: number | null;
-}
-
 export const useKnowledgeExplorerStore = defineStore('knowledgeExplorer', () => {
   // Selected nodes from checkbox selections
   const selectedNodes = ref<Map<string, SelectedNode>>(new Map());
-  
+
   // Currently active selections for chat context (arrays of IDs)
   const activeEntityId = ref<number[]>([]);
   const activeDocumentId = ref<number[]>([]);
-
-  // Chat tabs state
-  const chatTabs = ref<ChatTab[]>([
-    {
-      id: 1,
-      title: 'Knowledge Exploration',
-      createdAt: Date.now(),
-      sessionId: null,
-    },
-  ]);
-  const activeChatTabId = ref<number>(1);
-  const nextChatTabIndex = ref(2);
-
-  const chatStore = useChatStore();
 
   // Computed: Get all selected node IDs
   const selectedNodeIds = computed(() => {
@@ -76,24 +54,16 @@ export const useKnowledgeExplorerStore = defineStore('knowledgeExplorer', () => 
     return documents;
   });
 
-  const activeChatTab = computed(() => {
-    return chatTabs.value.find((tab) => tab.id === activeChatTabId.value) ?? chatTabs.value[0] ?? null;
-  });
-
   // Actions
   function setNodeSelected(nodeKey: string, node: SelectedNode) {
     selectedNodes.value.set(nodeKey, node);
     console.log('[KnowledgeExplorerStore] Node selected:', { nodeKey, node });
-    
-    // Update active selections arrays
     updateActiveSelections();
   }
 
   function setNodeUnselected(nodeKey: string) {
     selectedNodes.value.delete(nodeKey);
     console.log('[KnowledgeExplorerStore] Node unselected:', nodeKey);
-    
-    // Update active selections arrays
     updateActiveSelections();
   }
 
@@ -105,7 +75,6 @@ export const useKnowledgeExplorerStore = defineStore('knowledgeExplorer', () => 
   }
 
   function updateActiveSelections() {
-    // Collect all selected entity IDs (including from children)
     const entityIds: number[] = [];
     const documentIds: number[] = [];
 
@@ -116,7 +85,6 @@ export const useKnowledgeExplorerStore = defineStore('knowledgeExplorer', () => 
         documentIds.push(node.id);
       }
 
-      // Also collect IDs from children
       node.children.forEach((child) => {
         if (child.id !== null) {
           if (child.type === 'entity') {
@@ -128,54 +96,13 @@ export const useKnowledgeExplorerStore = defineStore('knowledgeExplorer', () => 
       });
     });
 
-    // Remove duplicates and update arrays
     activeEntityId.value = [...new Set(entityIds)];
     activeDocumentId.value = [...new Set(documentIds)];
-    
+
     console.log('[KnowledgeExplorerStore] Updated active selections:', {
       entityIds: activeEntityId.value,
       documentIds: activeDocumentId.value
     });
-  }
-
-  async function ensureActiveChatTab() {
-    if (!chatTabs.value.length) {
-      await addChatTab('New Chat');
-      return;
-    }
-    const exists = chatTabs.value.some((tab) => tab.id === activeChatTabId.value);
-    if (!exists) {
-      activeChatTabId.value = chatTabs.value[chatTabs.value.length - 1].id;
-    }
-  }
-
-  async function addChatTab(title?: string) {
-    const nextIndex = nextChatTabIndex.value++;
-    const newSession = await chatStore.createSession(
-      title || `Chat ${nextIndex}`,
-      'all_library',
-      null // scopeId
-    );
-
-    if (!newSession) {
-      console.error('Failed to create new chat session.');
-      return;
-    }
-
-    const newTab: ChatTab = {
-      id: Date.now() + nextIndex,
-      title: newSession.title,
-      createdAt: Date.now(),
-      sessionId: newSession.id,
-    };
-    chatTabs.value.push(newTab);
-    activeChatTabId.value = newTab.id;
-  }
-
-  function setActiveChatTab(tabId: number) {
-    if (chatTabs.value.some((tab) => tab.id === tabId)) {
-      activeChatTabId.value = tabId;
-    }
   }
 
   return {
@@ -183,20 +110,13 @@ export const useKnowledgeExplorerStore = defineStore('knowledgeExplorer', () => 
     selectedNodes,
     activeEntityId,
     activeDocumentId,
-    chatTabs,
-    activeChatTabId,
     // Computed
     selectedNodeIds,
     selectedEntities,
     selectedDocuments,
-    activeChatTab,
     // Actions
     setNodeSelected,
     setNodeUnselected,
     clearSelection,
-    addChatTab,
-    setActiveChatTab,
-    ensureActiveChatTab,
   };
 });
-

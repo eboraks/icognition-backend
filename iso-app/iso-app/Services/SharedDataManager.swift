@@ -90,13 +90,11 @@ class SharedDataManager: ObservableObject {
             savedAt: article.savedAt ?? Date(),
             backendBookmarkId: article.backendBookmarkId,
             backendDocumentId: article.backendDocumentId,
-            aiSummary: article.aiSummary,
-            aiBulletPoints: article.aiBulletPoints as? [String],
             htmlFilePath: article.htmlFilePath,
             hasLocalHTML: article.hasLocalHTML
         )
     }
-    
+
     /// Update Core Data Article with ArticleData
     private func updateArticle(_ article: Article, with articleData: ArticleData) {
         article.url = articleData.url
@@ -106,8 +104,6 @@ class SharedDataManager: ObservableObject {
         article.savedAt = articleData.savedAt
         article.backendBookmarkId = articleData.backendBookmarkId
         article.backendDocumentId = articleData.backendDocumentId
-        article.aiSummary = articleData.aiSummary
-        article.aiBulletPoints = articleData.aiBulletPoints
         article.htmlFilePath = articleData.htmlFilePath
         article.hasLocalHTML = articleData.hasLocalHTML
         

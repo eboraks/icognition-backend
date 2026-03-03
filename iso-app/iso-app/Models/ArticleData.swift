@@ -22,15 +22,14 @@ struct ArticleData: Codable, Identifiable {
     let backendBookmarkId: String?
     let backendDocumentId: String?
     
-    // AI content fields (from backend)
-    let aiSummary: String?
-    let aiBulletPoints: [String]?
-    
+    // AI content field (from backend)
+    let aiMarkdownContent: String?
+
     // HTML file storage fields
     let htmlFilePath: String?
     let hasLocalHTML: Bool
-    
-    init(url: String, title: String, domain: String, content: String? = nil, metadata: ArticleMetadata? = nil, savedAt: Date = Date(), backendBookmarkId: String? = nil, backendDocumentId: String? = nil, aiSummary: String? = nil, aiBulletPoints: [String]? = nil, htmlFilePath: String? = nil, hasLocalHTML: Bool = false) {
+
+    init(url: String, title: String, domain: String, content: String? = nil, metadata: ArticleMetadata? = nil, savedAt: Date = Date(), backendBookmarkId: String? = nil, backendDocumentId: String? = nil, aiMarkdownContent: String? = nil, htmlFilePath: String? = nil, hasLocalHTML: Bool = false) {
         self.url = url
         self.title = title
         self.domain = domain
@@ -39,8 +38,7 @@ struct ArticleData: Codable, Identifiable {
         self.savedAt = savedAt
         self.backendBookmarkId = backendBookmarkId
         self.backendDocumentId = backendDocumentId
-        self.aiSummary = aiSummary
-        self.aiBulletPoints = aiBulletPoints
+        self.aiMarkdownContent = aiMarkdownContent
         self.htmlFilePath = htmlFilePath
         self.hasLocalHTML = hasLocalHTML
     }
@@ -66,19 +64,18 @@ struct ArticleData: Codable, Identifiable {
         self.backendBookmarkId = try container.decodeIfPresent(String.self, forKey: .backendBookmarkId)
         self.backendDocumentId = try container.decodeIfPresent(String.self, forKey: .backendDocumentId)
         
-        // Handle AI content fields
-        self.aiSummary = try container.decodeIfPresent(String.self, forKey: .aiSummary)
-        self.aiBulletPoints = try container.decodeIfPresent([String].self, forKey: .aiBulletPoints)
-        
+        // Handle AI content
+        self.aiMarkdownContent = try container.decodeIfPresent(String.self, forKey: .aiMarkdownContent)
+
         // Handle HTML file storage fields
         self.htmlFilePath = try container.decodeIfPresent(String.self, forKey: .htmlFilePath)
         self.hasLocalHTML = try container.decodeIfPresent(Bool.self, forKey: .hasLocalHTML) ?? false
     }
-    
+
     private enum CodingKeys: String, CodingKey {
         case url, title, domain, content, metadata, savedAt
         case backendBookmarkId, backendDocumentId
-        case aiSummary, aiBulletPoints
+        case aiMarkdownContent
         case htmlFilePath, hasLocalHTML
     }
 }
@@ -178,7 +175,7 @@ struct DocumentData: Codable {
     let url: String?
     let content: String?
     let aiIsAbout: String?
-    let aiBulletPoints: [String]?
+    let aiMarkdownContent: String?
     let updatedAt: String?
     let userId: String?
     let contentSource: String?
@@ -186,14 +183,14 @@ struct DocumentData: Codable {
     let publicationDate: String?
     let description: String?
     let keywords: String?
-    
+
     enum CodingKeys: String, CodingKey {
         case id
         case title
         case url
         case content
         case aiIsAbout = "ai_is_about"
-        case aiBulletPoints = "ai_bullet_points"
+        case aiMarkdownContent = "ai_markdown_content"
         case updatedAt = "updated_at"
         case userId = "user_id"
         case contentSource = "content_source"

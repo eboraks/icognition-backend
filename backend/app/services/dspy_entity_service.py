@@ -10,7 +10,7 @@ from datetime import datetime
 
 from app.core.config import settings
 from app.utils.logging import get_logger
-from app.services.dspy_models_entities_only import EntityExtractionResult, Entity
+from app.services.dspy_models_entities_only import EntityExtractionResult, Entity, EntityRelationshipResult
 from app.models import Document
 from app.utils.text_utils import extract_text_from_html
 from app.services.prompt_service import PromptService
@@ -63,6 +63,33 @@ Return a valid JSON object with a list of entities.
     )
 
 
+# --- DSPy Signature for Relationship Extraction ---
+class ExtractEntityRelationships(dspy.Signature):
+    """
+You are an expert knowledge graph builder. Given a list of entities already extracted from a document
+and the original document text, identify meaningful directed relationships between those entities.
+
+### Rules:
+1. Only use entity names from the provided list — do not invent new entities.
+2. Each relationship must be grounded in the document text.
+3. Use short snake_case labels (e.g. works_for, founded, authored, acquired, opposes, located_in,
+   collaborated_with, part_of, invested_in, regulated_by, responded_to).
+4. Extract up to 20 relationships. Prefer high-confidence, clearly-stated relationships.
+5. Avoid trivial or overly generic relationships (e.g. "mentions" should only be used when no
+   stronger relationship applies).
+"""
+
+    entity_names: str = dspy.InputField(
+        desc="Comma-separated list of entity names extracted from the document."
+    )
+    content_text: str = dspy.InputField(
+        desc="The document text from which relationships should be extracted."
+    )
+    extracted_relationships: EntityRelationshipResult = dspy.OutputField(
+        desc="Directed relationships between the provided entities."
+    )
+
+
 # --- DSPy Program ---
 class EntityExtractorProgram(dspy.Module):
     """DSPy program for entity extraction"""
@@ -91,11 +118,14 @@ class DspyEntityService:
         self.api_key = api_key or settings.GOOGLE_API_KEY
         if not self.api_key:
             raise ValueError("Google API key is required for DSPy entity extraction")
-        
-        # Store LM configuration but don't configure globally yet
+
         gemini_model_name = settings.GEMINI_FLASH_LITE_MODEL.replace("models/", "")
         self.model_name = f'gemini/{gemini_model_name}'
-        
+
+        # Create the LM client once at init — reused across all extraction calls.
+        # max_tokens=8192: DSPy defaults to 4000 which truncates large entity lists.
+        self.lm = dspy.LM(self.model_name, api_key=self.api_key, max_tokens=8192)
+
         logger.info("DspyEntityService initialized successfully with Flash Lite model")
     
     async def extract_entities_from_content(
@@ -141,12 +171,10 @@ class DspyEntityService:
         logger.info(f"Starting DSPy entity extraction for document {document_id or 'unknown'}")
         
         try:
-            # Use anyio.to_thread.run_sync to offload synchronous DSPy calls
-            # This prevents blocking the event loop during LLM processing
-            lm = dspy.LM(self.model_name, api_key=self.api_key)
-            
+            # Use anyio.to_thread.run_sync to offload synchronous DSPy calls.
+            # self.lm is created once at init — no repeated instantiation cost.
             def run_extraction():
-                with dspy.context(lm=lm):
+                with dspy.context(lm=self.lm):
                     # Use custom instructions if available, otherwise use hardcoded ones in the signature
                     signature = ExtractEntities
                     if custom_instructions:
@@ -179,6 +207,59 @@ class DspyEntityService:
             
         except Exception as e:
             logger.error(f"Error extracting entities from document {document_id}: {str(e)}")
+            return []
+
+
+    async def extract_relationships_from_entities(
+        self,
+        entity_names: List[str],
+        content: str,
+        document_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Extract relationships between already-extracted entities using DSPy.
+
+        Args:
+            entity_names: List of entity names extracted from the document.
+            content: The original document text.
+            document_id: Optional document ID for logging.
+
+        Returns:
+            List of dicts with keys: from_entity, to_entity, relationship_type
+        """
+        if len(entity_names) < 2:
+            logger.info(f"Not enough entities ({len(entity_names)}) to extract relationships for doc {document_id}")
+            return []
+
+        text = extract_text_from_html(content)
+        if not text:
+            return []
+
+        names_str = ", ".join(entity_names)
+        logger.info(f"Extracting relationships for {len(entity_names)} entities in doc {document_id}")
+
+        try:
+            def run_extraction():
+                with dspy.context(lm=self.lm):
+                    predictor = dspy.Predict(ExtractEntityRelationships)
+                    result = predictor(entity_names=names_str, content_text=text)
+                    return result.extracted_relationships
+
+            extracted = await anyio.to_thread.run_sync(run_extraction)
+
+            relationships = [
+                {
+                    "from_entity": r.from_entity,
+                    "to_entity": r.to_entity,
+                    "relationship_type": r.relationship_type,
+                }
+                for r in extracted.relationships
+            ]
+            logger.info(f"Extracted {len(relationships)} relationships for doc {document_id}")
+            return relationships
+
+        except Exception as e:
+            logger.error(f"Error extracting relationships for doc {document_id}: {e}")
             return []
 
 

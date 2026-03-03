@@ -50,13 +50,8 @@
 
     <template #expansion="{ data }">
       <div class="p-4 bg-white border-round">
-        <div class="text-sm text-600 mb-2 font-semibold">Summary</div>
-        <div class="mb-4 text-700" v-html="formatUrlsAsLinks(data.summary || 'No summary available.')"></div>
-        <div class="text-sm text-600 mb-2 font-semibold">Key Points</div>
-        <div class="pl-3 text-700">
-          <div v-if="data.keyPoints" class="mb-1" v-html="renderMarkdown(data.keyPoints)"></div>
-          <div v-else class="text-600">No key points available.</div>
-        </div>
+        <div v-if="data.keyPoints" class="text-700" v-html="renderMarkdown(data.keyPoints)"></div>
+        <div v-else class="text-600 text-sm">No AI content available.</div>
       </div>
     </template>
   </DataTable>

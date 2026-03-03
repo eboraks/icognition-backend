@@ -109,45 +109,6 @@ class Entity_User_Link(SQLModel, table=True):
 
 
 
-# Removed old Entity model - using NewEntity as Entity instead
-
-    def to_node(self):
-        return TreeNode(
-            key=(self.name + self.type).replace(" ", "").lower(),
-            label=f"{self.name} ({len(self.documents)})",
-            data=self.description,
-            doc_count=len(self.documents),
-            doc_ids=[str(doc.id) for doc in self.documents],
-            children=[],
-        )
-
-    
-    def to_embeddings(self) -> list["Embedding"]:
-        """
-        Converts the model instance to a list of Embeddings objects.
-
-        Returns:
-            A list of Embeddings objects representing the model instance.
-        """
-        results = []
-
-        if self.description and self.name:
-
-            _text = f"{self.name} - {self.description}"
-
-            results.append(
-                Embedding(
-                    source_type="entity",
-                    source_id=self.id,
-                    version=self.version,
-                    field="entity_name_description",
-                    text=_text,
-                )
-            )
-
-        return results
-
-
 class Document(SQLModel, table=True):
     """
     Consolidated Document model with AI analysis capabilities and user isolation.
@@ -186,26 +147,20 @@ class Document(SQLModel, table=True):
     image_url: str = Field(default=None, nullable=True)
     site_name: str = Field(default=None, nullable=True)
     
-    # Content storage (consolidated from both models)
-    source_text_in_html: str = Field(default=None, nullable=True)  # Legacy field
-    raw_html: Optional[str] = Field(default=None, sa_column=Column(Text))  # New field
-    content: Optional[str] = Field(default=None, sa_column=Column(Text))  # New field
-    # content_vector removed - embeddings now stored in centralized Embedding table
-    
+    # Content storage
+    raw_html: Optional[str] = Field(default=None, sa_column=Column(Text))
+    content: Optional[str] = Field(default=None, sa_column=Column(Text))
+
     # AI analysis fields
     ai_is_about: str = Field(default=None, nullable=True)
     ai_markdown_content: str = Field(default="", sa_column=Column(Text))
     ai_citations: List[Dict] = Field(default=[], sa_column=Column(JSON))
-    
+
     # Publication and processing
     publication_date: datetime = Field(default=None, nullable=True)
-    update_at: datetime = Field(default_factory=datetime.now, nullable=True)  # Legacy field
-    
+
     # Advanced metadata
-    llm_service_meta: Optional[Dict] = Field(default={}, sa_column=Column(JSONB))
-    types_and_concepts: Optional[List[Dict]] = Field(default=[], sa_column=Column(JSONB))
-    cosine_similarity: float = Field(default=0.0, nullable=True)
-    document_metadata: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))  # New field
+    document_metadata: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
     
     # Content extraction results
     extracted_content: Optional[Dict[str, Any]] = Field(
@@ -214,12 +169,8 @@ class Document(SQLModel, table=True):
         description="LLM-extracted content with page type, confidence, and structured data"
     )
     
-    # Remove original_text, html_elements, and raw_answer as they're stored elsewhere
-    # These fields will be migrated out later
-
-    # Removed entities relationship to avoid conflicts with Entity model
     qans: list["Question_Answer"] = Relationship(back_populates="document")
-    
+
     def to_display(self) -> dict:
         return {
             "id": str(self.id),
@@ -230,129 +181,12 @@ class Document(SQLModel, table=True):
             "authors": self.authors,
             "publication_date": self.publication_date,
             "site_name": self.site_name,
-            "cosine_similarity": self.cosine_similarity,
             "ai_is_about": self.ai_is_about,
             "ai_markdown_content": self.ai_markdown_content,
-            
         }
     
     
 
-    def to_embeddings(self) -> list["Embedding"]:
-        """
-        Converts the model instance to a list of Embeddings objects.
-
-        Returns:
-            A list of Embeddings objects representing the model instance.
-        """
-        results = []
-
-        if self.ai_is_about:
-            results.append(
-                Embedding(
-                    source_type="document",
-                    source_id=self.id,
-                    field="is_about",
-                    text=self.ai_is_about,
-                )
-            )
-
-        if self.metadata_keywords:
-            results.append(
-                Embedding(
-                    source_type="document",
-                    source_id=self.id,
-                    field="ai_short_summary",
-                    text=self.ai_short_summary,
-                )
-            )
-
-        if self.ai_bullet_points:
-            for bullet_point in self.ai_bullet_points:
-                results.append(
-                    Embedding(
-                        source_type="document",
-                        source_id=self.id,
-                        field="summary_bullet_points",
-                        text=bullet_point,
-                    )
-                )
-        if self.title:
-            results.append(
-                Embedding(
-                    source_type="document",
-                    source_id=self.id,
-                    field="title",
-                    text=self.title,
-                )
-            )
-
-        return results
-
-    def get_source_text_as_string(self) -> str:
-        """
-        Converts the source_text_in_html dictionary into a formatted string.
-        Each element is processed according to its type (h1-h6, p, etc.) and
-        formatted appropriately.
-
-        Returns:
-            str: A formatted string representation of the HTML content
-        """
-        if not self.source_text_in_html:
-            return ""
-            
-        try:
-            # Parse the JSON string if it's a string
-            elements = json.loads(self.source_text_in_html) if isinstance(self.source_text_in_html, str) else self.source_text_in_html
-            
-            result = []
-            for element in elements:
-                if not isinstance(element, dict) or 'element' not in element or 'text' not in element:
-                    continue
-                    
-                element_type = element['element'].lower()
-                text = element['text'].strip()
-                
-                if not text:
-                    continue
-                    
-                # Format based on element type
-                if element_type.startswith('h') and len(element_type) == 2 and element_type[1] in '123456':
-                    # Headers get a newline before and after
-                    result.append(f"\n{text}\n")
-                elif element_type == 'p':
-                    # Paragraphs get a newline after
-                    result.append(f"{text}\n")
-                else:
-                    # Other elements just get added as is
-                    result.append(text)
-                    
-            return ' '.join(result).strip()
-            
-        except (json.JSONDecodeError, TypeError) as e:
-            logging.error(f"Error processing source_text_in_html for document {self.id}: {e}")
-            return ""
-
-    async def generate_vector(self, geminiClient=None):
-
-        try:
-            if self.ai_is_about and self.ai_bullet_points:
-                text = f"{self.ai_is_about} \n"
-                for bullet_point in self.ai_bullet_points:
-                    text += f"{bullet_point} \n"
-                self.ai_summary_vector = await geminiClient.generate_embedding(
-                    content=text, title=self.title
-                )
-                return self.ai_summary_vector
-
-            else:
-                return None
-        except Exception as e:
-            # Handle the exception here
-            logging.error(
-                f"An error occurred while generating summary vector for document_id: {self.id}. Error: {e}"
-            )
-            return None
 
 
 ## Models to be used in the Gemini API responses
@@ -380,7 +214,6 @@ class RagAnswerPublic(BaseModel):
     answer_in_html: Optional[bool] = False
     documents_used: Optional[List[str]] = None
     citations: Optional[list[DocumentCitation]] = None
-    llm_service_meta: Optional[dict] = None
     created_at: Optional[str] = None
 
 
@@ -651,8 +484,6 @@ class Embedding(SQLModel, table=True):
     source_type: str = Field(default=None, nullable=False)
     source_id: int = Field(default=None, nullable=False)
     vector: List[float] = Field(sa_column=Column(Vector(1536)))
-    update_at: datetime = Field(default_factory=datetime.now, nullable=True)
-    
 
     def get_documnet_id(self):
         if self.source_type == "document":
@@ -1025,6 +856,32 @@ class EntityDocument(SQLModel, table=True):
     created_at: Optional[datetime] = Field(
         default_factory=datetime.utcnow,
         sa_column=Column(DateTime(timezone=True), server_default=func.now())
+    )
+
+
+class EntityRelationship(SQLModel, table=True):
+    """Directed relationship between two entities, sourced from a document."""
+
+    __tablename__ = "entity_relationships"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    from_entity_id: int = Field(foreign_key="entities.id", index=True)
+    to_entity_id: int = Field(foreign_key="entities.id", index=True)
+    # Relationship type examples: works_for, authored, mentions, opposes, located_in, part_of, acquired
+    relationship_type: str = Field(max_length=100, index=True)
+    source_document_id: Optional[int] = Field(default=None, foreign_key="document.id", index=True)
+    created_at: Optional[datetime] = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), server_default=func.now())
+    )
+
+    __table_args__ = (
+        # Unique constraint: one relationship type per entity pair per document
+        Index(
+            "ix_entity_rel_unique",
+            "from_entity_id", "to_entity_id", "relationship_type", "source_document_id",
+            unique=True
+        ),
     )
 
 

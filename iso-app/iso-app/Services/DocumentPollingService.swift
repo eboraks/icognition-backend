@@ -84,10 +84,9 @@ class DocumentPollingService {
                 if let documentData = await documentAPIService.fetchDocument(documentId: documentId) {
                     
                     // Check if AI content is available
-                    let hasSummary = documentData.aiIsAbout != nil && !documentData.aiIsAbout!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    let hasBullets = documentData.aiBulletPoints != nil && !documentData.aiBulletPoints!.isEmpty
-                    
-                    if hasSummary && hasBullets {
+                    let hasMarkdown = documentData.aiMarkdownContent != nil && !documentData.aiMarkdownContent!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+                    if hasMarkdown {
                         AppLogger.ai("✅ AI content available for document \(documentId)", level: .info)
                         
                         // Cache the AI content

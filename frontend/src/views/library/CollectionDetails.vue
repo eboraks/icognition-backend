@@ -277,7 +277,7 @@
                                     <div class="flex-column my-1 h-full surface-100">
                                         <div class="overflow-y-auto px-2 py-2" style="height: calc(100% - 63.59px);">
                                             <div v-for="doc in studyCollection.related_docs">
-                                                <div>{{doc.title}} - {{ doc.cosine_similarity }}</div>
+                                                <div>{{doc.title}}</div>
                                             </div>
                                         </div>
                                         <div class="flex p-2 pr-0 bg-white">
@@ -370,7 +370,7 @@
                                                 <p>Key Points:</p>
                                             </div>
                                             <div class="col-11 font-mono" style="max-width: 60%;">
-                                                <div v-if="slotProps.data.tldr" v-html="renderMarkdown(slotProps.data.tldr)"></div>
+                                                <div v-if="slotProps.data.aiMarkdownContent" v-html="renderMarkdown(slotProps.data.aiMarkdownContent)"></div>
                                                 <div v-else>No key points available.</div>
                                             </div>  
                                         </div>

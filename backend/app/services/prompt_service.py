@@ -2,7 +2,9 @@
 Service for managing prompts with versioning
 """
 
-from typing import Optional, List
+import time
+from types import SimpleNamespace
+from typing import Dict, Optional, List, Tuple, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from sqlalchemy.orm import selectinload
@@ -12,6 +14,33 @@ from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# ---------------------------------------------------------------------------
+# Module-level prompt cache
+# Keys are prompt_type strings; values are (field_dict, monotonic_timestamp).
+# Using SimpleNamespace so callers can do db_prompt.system_prompt etc. without
+# holding a live SQLAlchemy session reference.
+# ---------------------------------------------------------------------------
+_prompt_cache: Dict[str, Tuple[Any, float]] = {}
+_CACHE_TTL: float = 300.0  # seconds
+
+
+def _cache_key(prompt_type: str) -> str:
+    return prompt_type
+
+
+def invalidate_prompt_cache(prompt_type: Optional[str] = None) -> None:
+    """
+    Invalidate cached prompt(s).
+    Call with no arguments to flush the entire cache,
+    or pass a prompt_type to invalidate only that entry.
+    """
+    if prompt_type is None:
+        _prompt_cache.clear()
+        logger.info("Prompt cache fully invalidated")
+    else:
+        _prompt_cache.pop(_cache_key(prompt_type), None)
+        logger.info(f"Prompt cache invalidated for type: {prompt_type}")
+
 
 class PromptService:
     """Service for managing prompts with versioning"""
@@ -19,16 +48,25 @@ class PromptService:
     def __init__(self, session: AsyncSession):
         self.session = session
     
-    async def get_latest_prompt(self, prompt_type: str) -> Optional[Prompt]:
+    async def get_latest_prompt(self, prompt_type: str) -> Optional[SimpleNamespace]:
         """
-        Get the latest active prompt for a given prompt type
-        
-        Args:
-            prompt_type: The type of prompt to retrieve
-            
-        Returns:
-            The latest active Prompt, or None if not found
+        Get the latest active prompt for a given prompt type.
+
+        Returns a SimpleNamespace with the same attributes as a Prompt model row
+        so all callers (db_prompt.system_prompt, .user_prompt, .version) work
+        transparently whether the result came from cache or the database.
+
+        Results are cached in-process for _CACHE_TTL seconds (default 5 min).
+        The cache is invalidated automatically when a new prompt version is saved.
         """
+        key = _cache_key(prompt_type)
+        cached = _prompt_cache.get(key)
+        if cached is not None:
+            data, fetched_at = cached
+            if time.monotonic() - fetched_at < _CACHE_TTL:
+                logger.debug(f"Prompt cache hit for type: {prompt_type}")
+                return SimpleNamespace(**data)
+
         try:
             stmt = (
                 select(Prompt)
@@ -42,7 +80,21 @@ class PromptService:
                 .limit(1)
             )
             result = await self.session.execute(stmt)
-            return result.scalar_one_or_none()
+            prompt = result.scalar_one_or_none()
+
+            if prompt is not None:
+                data = {
+                    'prompt_type': prompt.prompt_type,
+                    'system_prompt': prompt.system_prompt,
+                    'user_prompt': prompt.user_prompt,
+                    'version': prompt.version,
+                    'is_active': prompt.is_active,
+                }
+                _prompt_cache[key] = (data, time.monotonic())
+                logger.debug(f"Prompt cache populated for type: {prompt_type} (v{prompt.version})")
+                return SimpleNamespace(**data)
+
+            return None
         except Exception as e:
             logger.error(f"Error getting latest prompt for type {prompt_type}: {e}")
             return None
@@ -172,7 +224,10 @@ class PromptService:
             self.session.add(new_prompt)
             await self.session.commit()
             await self.session.refresh(new_prompt)
-            
+
+            # Invalidate cache so next read picks up the new version immediately.
+            invalidate_prompt_cache(prompt_type)
+
             logger.info(f"Created new prompt version {next_version} for type {prompt_type}")
             return new_prompt
         except Exception as e:

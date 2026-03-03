@@ -61,7 +61,7 @@
     });
 
     const formate_date = computed(() => {
-        return moment(props.doc.updateAt).locale();
+        return moment(props.doc.updatedAt).locale();
     });
 
     const handleRemoveClick = async () => {

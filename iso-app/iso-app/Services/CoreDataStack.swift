@@ -32,7 +32,9 @@ class CoreDataStack {
         let description = NSPersistentStoreDescription(url: storeURL)
         description.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
         description.setOption(true as NSNumber, forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)
-        
+        description.setOption(true as NSNumber, forKey: NSMigratePersistentStoresAutomaticallyOption)
+        description.setOption(true as NSNumber, forKey: NSInferMappingModelAutomaticallyOption)
+
         container.persistentStoreDescriptions = [description]
         
         // Load persistent stores

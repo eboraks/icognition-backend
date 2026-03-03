@@ -15,6 +15,26 @@
             <div v-if="message.pending" class="message-spinner">
               <ProgressSpinner strokeWidth="4" style="width: 32px; height: 32px" />
             </div>
+            <template v-else-if="message.commentOptions">
+              <div class="comment-options">
+                <div v-for="option in message.commentOptions" :key="option.label" class="comment-card">
+                  <div class="comment-card-header">
+                    <span class="comment-option-label">{{ option.label }}</span>
+                    <Button
+                      icon="pi pi-copy"
+                      text
+                      rounded
+                      size="small"
+                      severity="secondary"
+                      class="copy-btn"
+                      :class="{ copied: copiedLabel === option.label }"
+                      @click="copyToClipboard(option.text, option.label)"
+                    />
+                  </div>
+                  <p class="comment-card-text">{{ option.text }}</p>
+                </div>
+              </div>
+            </template>
             <div v-else class="message-text" v-html="message.content"></div>
             <!-- Status text -->
             <div v-if="message.pending && message.statusText" class="message-status">
@@ -53,21 +73,35 @@
       </div>
     </ScrollPanel>
     <div class="chat-input-container">
-      <TypedChatInput
-        v-model="inputMessage"
-        placeholder="Ask a follow-up question..."
-        :is-extension="false"
-        :session-id="chatSessionId"
-        :disabled="loading"
-        @send="sendMessage"
-        class="flex-1"
-      />
-      <Button
-        icon="pi pi-send"
-        rounded
-        @click="sendMessage"
-        :disabled="!inputMessage.trim() || loading"
-      />
+      <div class="quick-actions-row">
+        <Button
+          label="Write Comment"
+          icon="pi pi-pencil"
+          outlined
+          severity="secondary"
+          size="small"
+          class="quick-action-btn"
+          :disabled="loading"
+          @click="writeComment"
+        />
+      </div>
+      <div class="input-row">
+        <TypedChatInput
+          v-model="inputMessage"
+          placeholder="Ask a follow-up question..."
+          :is-extension="false"
+          :session-id="chatSessionId"
+          :disabled="loading"
+          @send="sendMessage"
+          class="flex-1"
+        />
+        <Button
+          icon="pi pi-send"
+          rounded
+          @click="sendMessage"
+          :disabled="!inputMessage.trim() || loading"
+        />
+      </div>
     </div>
   </div>
 </template>
@@ -82,6 +116,11 @@ import { knowledgeService, type ContextualMessageResponse, type ActionResponse }
 import { useChatStore, type ChatMessage as ChatStoreMessage } from '@/stores/chat_store.js';
 import { useAuthStore } from '@/stores/auth_store.js';
 
+interface CommentOption {
+  label: string;
+  text: string;
+}
+
 interface ChatMessage {
   type: 'system' | 'user' | 'filter';
   content: string;
@@ -89,6 +128,40 @@ interface ChatMessage {
   resources?: Array<{ id: number; title: string }>;
   pending?: boolean;
   statusText?: string;
+  commentOptions?: CommentOption[] | null;
+}
+
+function parseCommentOptions(content: string): CommentOption[] | null {
+  const stripped = content.replace(/<[^>]*>/g, ' ');
+  if (!/Option A/i.test(stripped) || !/Option B/i.test(stripped) || !/Option C/i.test(stripped)) {
+    return null;
+  }
+
+  // HTML mode: detect <strong>Option X...</strong> headers
+  const htmlHeaders = [...content.matchAll(/<strong>(Option [ABC][^<]*)<\/strong>/gi)];
+  if (htmlHeaders.length === 3) {
+    const parts = content.split(/<strong>Option [ABC][^<]*<\/strong>/gi);
+    return htmlHeaders.map((h, i) => ({
+      label: h[1].trim(),
+      text: parts[i + 1]
+        .replace(/^[:\s–\-]+/, '')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim(),
+    }));
+  }
+
+  // Markdown mode: split on **Option X...** markers
+  const mdParts = content.split(/\*{1,2}(Option [ABC][^*]*)\*{1,2}/i);
+  if (mdParts.length >= 7) {
+    return [
+      { label: mdParts[1].trim(), text: mdParts[2].trim() },
+      { label: mdParts[3].trim(), text: mdParts[4].trim() },
+      { label: mdParts[5].trim(), text: mdParts[6].trim() },
+    ];
+  }
+
+  return null;
 }
 
 const props = defineProps<{
@@ -116,6 +189,25 @@ const loading = ref(false);
 const isLoadingInitialMessage = ref(false); // Prevent duplicate calls
 const suggestions = ref<string[]>([]);
 const allVocabulary = ref<string[]>([]);
+const copiedLabel = ref<string | null>(null);
+
+const copyToClipboard = async (text: string, label: string) => {
+  try {
+    await navigator.clipboard.writeText(text);
+    copiedLabel.value = label;
+    setTimeout(() => { copiedLabel.value = null; }, 2000);
+  } catch {
+    // Fallback for environments without clipboard API
+    const el = document.createElement('textarea');
+    el.value = text;
+    document.body.appendChild(el);
+    el.select();
+    document.execCommand('copy');
+    document.body.removeChild(el);
+    copiedLabel.value = label;
+    setTimeout(() => { copiedLabel.value = null; }, 2000);
+  }
+};
 
 const scrollToBottom = () => {
   nextTick(() => {
@@ -208,104 +300,62 @@ const loadInitialMessage = async () => {
 
     // After switching, populate local messages from the active session's messages
     if (chatStore.activeSession) {
-      messages.value = chatStore.activeSession.messages.map(msg => ({
-        type: msg.senderId === authStore.currentUser?.uid ? 'user' : 'system',
-        content: msg.content,
-        actions: (msg as any).actions,
-        resources: (msg as any).resources,
-        pending: (msg as any).pending ?? false,
-      }));
+      messages.value = chatStore.activeSession.messages.map(msg => {
+        const isPending = (msg as any).pending ?? false;
+        return {
+          type: msg.senderId === authStore.currentUser?.uid ? 'user' : 'system',
+          content: msg.content,
+          actions: (msg as any).actions,
+          resources: (msg as any).resources,
+          pending: isPending,
+          commentOptions: !isPending ? parseCommentOptions(msg.content) : null,
+        };
+      });
     } else {
       messages.value = [];
     }
 
-    // Check if we already have a contextual message in the loaded messages
-    // (to avoid adding duplicate opening messages)
-    const hasContextualMessage = messages.value.some(
-      msg => msg.type === 'system' && 
-      msg.content && 
-      !msg.content.includes('Please log in') &&
-      (msg.content.includes('recently bookmarked') || 
-       msg.content.includes('Hello! I\'m your knowledge exploration assistant'))
-    );
+    // Only show an opening message if this session has no messages yet
+    if (messages.value.length === 0) {
+      if (props.selectedEntityId || props.selectedDocumentId) {
+        // Scoped session: show a context-aware greeting
+        let scopeType = 'all_library';
+        let scopeId: number | null = null;
+        let filterMessage = '';
 
-    // Add specific contextual message if no messages yet or selection changed
-    // AND we don't already have a contextual message
-    if (!hasContextualMessage && 
-        (messages.value.length === 0 || chatStore.activeSession?.scope_id !== (props.selectedEntityId || props.selectedDocumentId))) {
-      try {
-        loading.value = true;
-        const response = await knowledgeService.getContextualMessage(
-          props.selectedEntityId || undefined,
-          props.selectedDocumentId || undefined
-        );
-        
-        const contextualData: ContextualMessageResponse = response.data;
-        
-        if (props.selectedEntityId || props.selectedDocumentId) {
-          let filterMessage = '';
-          let scopeType = 'all_library';
-          let scopeId: number | null = null;
-
-          if (props.selectedEntityId) {
-            filterMessage = `You filtered by ${contextualData.entity?.name || 'an entity'}`;
-            scopeType = 'entity';
-            scopeId = props.selectedEntityId;
-          } else if (props.selectedDocumentId) {
-            filterMessage = `You filtered by ${contextualData.document?.title || 'a document'}`;
-            scopeType = 'document';
-            scopeId = props.selectedDocumentId;
-          }
-          
-          // Sync with backend session scope
-          if (chatStore.activeSession && 
-              (chatStore.activeSession.scope_type !== scopeType || chatStore.activeSession.scope_id !== scopeId)) {
-            console.log(`Syncing session ${props.chatSessionId} scope to ${scopeType}:${scopeId}`);
-            await chatStore.updateSessionScope(props.chatSessionId, scopeType, scopeId);
-          }
-
-          if (filterMessage) {
-            messages.value.push({
-              type: 'filter',
-              content: toParagraphHtml(filterMessage),
-            });
-          }
-        } else {
-          // Reset to all_library if no selection
-          if (chatStore.activeSession && chatStore.activeSession.scope_type !== 'all_library') {
-            console.log(`Syncing session ${props.chatSessionId} scope back to all_library`);
-            await chatStore.updateSessionScope(props.chatSessionId, 'all_library', null);
-          }
-        }
-        
-        // Only add if we don't already have a similar message
-        const messageExists = messages.value.some(
-          msg => msg.type === 'system' && 
-          msg.content === contextualData.message
-        );
-        
-        if (!messageExists) {
-          messages.value.push({
-            type: 'system',
-            content: contextualData.message,
-            actions: contextualData.actions,
-          });
+        if (props.selectedEntityId) {
+          scopeType = 'entity';
+          scopeId = props.selectedEntityId;
+          filterMessage = 'Entity context active. How can I help you explore this topic?';
+        } else if (props.selectedDocumentId) {
+          scopeType = 'document';
+          scopeId = props.selectedDocumentId;
+          filterMessage = 'Document context active. How can I help you explore this document?';
         }
 
-        // Extract vocabulary for autocomplete
-        extractVocabulary(contextualData);
-      } catch (error) {
-        console.error('Failed to load contextual message:', error);
-        // Only add fallback if we don't already have a message
-        if (messages.value.length === 0) {
-          messages.value.push({
-            type: 'system',
-            content: toParagraphHtml('Hello! I\'m your knowledge exploration assistant. Use the filters on the left to navigate your knowledge graph, or ask me a question directly.'),
-            actions: [],
-          });
+        // Sync backend session scope
+        if (chatStore.activeSession &&
+            (chatStore.activeSession.scope_type !== scopeType || chatStore.activeSession.scope_id !== scopeId)) {
+          await chatStore.updateSessionScope(props.chatSessionId, scopeType, scopeId);
         }
-      } finally {
-        loading.value = false;
+
+        messages.value.push({
+          type: 'system',
+          content: toParagraphHtml(filterMessage),
+          actions: [],
+        });
+      } else {
+        // Reset to all_library scope if no selection
+        if (chatStore.activeSession && chatStore.activeSession.scope_type !== 'all_library') {
+          await chatStore.updateSessionScope(props.chatSessionId, 'all_library', null);
+        }
+
+        // Simple greeting — no external API call
+        messages.value.push({
+          type: 'system',
+          content: toParagraphHtml('How can I help you today?'),
+          actions: [],
+        });
       }
     }
   } finally {
@@ -313,6 +363,10 @@ const loadInitialMessage = async () => {
   }
   
   scrollToBottom();
+};
+
+const writeComment = () => {
+  inputMessage.value = 'Write a comment on this post: ';
 };
 
 const handleActionClick = async (action: { id: string; label: string }) => {
@@ -424,14 +478,18 @@ watch(
     // Only sync if we're on the active session that matches our prop
     if (chatStore.activeSession.id === props.chatSessionId) {
       // Convert chatStore messages to ChatPanel's local ChatMessage format
-      const newMessagesFormatted: ChatMessage[] = newMessages.map(msg => ({
-        type: (msg.senderId === authStore.currentUser?.uid ? 'user' : 'system') as 'user' | 'system',
-        content: msg.content,
-        actions: (msg as any).actions,
-        resources: (msg as any).resources,
-        pending: (msg as any).pending ?? false,
-        statusText: (msg as any).statusText,
-      }));
+      const newMessagesFormatted: ChatMessage[] = newMessages.map(msg => {
+        const isPending = (msg as any).pending ?? false;
+        return {
+          type: (msg.senderId === authStore.currentUser?.uid ? 'user' : 'system') as 'user' | 'system',
+          content: msg.content,
+          actions: (msg as any).actions,
+          resources: (msg as any).resources,
+          pending: isPending,
+          statusText: (msg as any).statusText,
+          commentOptions: !isPending ? parseCommentOptions(msg.content) : null,
+        };
+      });
       
       // Only update if the length changed or content differs (to avoid unnecessary updates)
       if (messages.value.length !== newMessagesFormatted.length ||
@@ -696,11 +754,30 @@ watch(
 
 .chat-input-container {
   display: flex;
+  flex-direction: column;
   padding: 1.1rem 1.4rem;
   border-top: 1px solid var(--p-content-border-color);
+  gap: 0.5rem;
+  background: var(--p-surface-card);
+}
+
+.quick-actions-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.quick-action-btn {
+  border-radius: 999px;
+  padding-inline: 1rem;
+  padding-block: 0.35rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
+.input-row {
+  display: flex;
   gap: 0.75rem;
   align-items: center;
-  background: var(--p-surface-card);
 }
 
 :deep(.chat-input-container .p-autocomplete) {
@@ -721,6 +798,70 @@ watch(
 :deep(.chat-input-container .p-autocomplete-input::placeholder) {
   color: var(--p-text-muted-color);
   font-family: 'Roboto Mono', monospace;
+}
+
+/* Comment option cards (Phase 6.2) */
+.message:has(.comment-options) {
+  max-width: min(700px, 88%);
+}
+
+.comment-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  width: 100%;
+}
+
+.comment-card {
+  background: var(--p-surface-0);
+  border: 1px solid var(--p-content-border-color);
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  transition: box-shadow 0.15s;
+}
+
+.comment-card:hover {
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.1);
+}
+
+.comment-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.comment-option-label {
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: var(--p-primary-600);
+}
+
+.copy-btn {
+  flex-shrink: 0;
+  opacity: 0.6;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.copy-btn:hover {
+  opacity: 1;
+}
+
+:deep(.copy-btn.copied .p-button-icon) {
+  color: var(--p-green-500) !important;
+}
+
+.copy-btn.copied {
+  opacity: 1;
+}
+
+.comment-card-text {
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: var(--p-text-color);
+  margin: 0;
+  font-family: 'Roboto Mono', monospace;
+  white-space: pre-wrap;
 }
 </style>
 

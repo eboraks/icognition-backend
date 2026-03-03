@@ -9,7 +9,7 @@ from sqlalchemy import select
 from datetime import datetime
 from pydantic import BaseModel, Field
 from sqlmodel import select
-from asyncio import create_task
+from asyncio import create_task, gather
 from app.db.database import get_session, async_session
 from app.core.config import settings
 from app.core.user_context import UserContext, get_authenticated_user_context, get_active_user_context
@@ -327,11 +327,27 @@ async def _process_document_entities(
                 document_id=doc_id,
                 entities=entities
             )
-            
-            # Commit changes
+
+            # Commit entity changes before relationship extraction
             await session.commit()
-            
+
             logger.info(f"DSPy entity extraction completed for document {doc_id}: {result.get('entities_processed', 0)} entities processed")
+
+            # Extract and store entity relationships
+            if entities and len(entities) >= 2:
+                entity_names = [e['name'] for e in entities]
+                relationships = await dspy_entity_service.extract_relationships_from_entities(
+                    entity_names=entity_names,
+                    content=document.content,
+                    document_id=doc_id,
+                )
+                rel_count = await adapter.process_document_relationships(
+                    document_id=doc_id,
+                    relationships=relationships,
+                    entity_names=entity_names,
+                )
+                await session.commit()
+                logger.info(f"Stored {rel_count} entity relationships for document {doc_id}")
             
     except Exception as e:
         logger.error(f"Error in DSPy entity extraction for document {document_id}: {str(e)}")
@@ -589,6 +605,58 @@ async def _process_document_embeddings(
         # Don't re-raise to avoid breaking the background task
 
 
+async def _process_document_content_and_entities(
+    document_id: int,
+    title: str,
+    url: str,
+    user_id: str,
+    image_urls=None,
+):
+    """Run content extraction and entity extraction concurrently."""
+    await gather(
+        _process_document_content(document_id, title, url, user_id, image_urls),
+        _process_document_entities(document_id, user_id),
+        return_exceptions=True,
+    )
+
+
+async def _fetch_url_and_process_document(
+    document_id: int,
+    title: Optional[str],
+    url: str,
+    user_id: str,
+):
+    """
+    Background task: fetch URL content, update the document, then run
+    AI extraction + entity extraction + embeddings sequentially.
+    Used by POST /documents/ when only a URL is provided.
+    """
+    try:
+        async with async_session() as session:
+            document_service = DocumentService(session)
+            updated = await document_service.fetch_and_update_document(
+                user_id=user_id,
+                document_id=str(document_id),
+            )
+            if updated is None:
+                logger.warning(
+                    f"_fetch_url_and_process_document: document {document_id} not found or fetch failed"
+                )
+                return
+            logger.info(
+                f"_fetch_url_and_process_document: URL fetched for document {document_id}"
+            )
+    except Exception as e:
+        logger.error(
+            f"_fetch_url_and_process_document: fetch failed for document {document_id}: {e}"
+        )
+        return
+
+    # Content extraction + entity extraction (concurrent), then embeddings
+    await _process_document_content_and_entities(document_id, title, url, user_id)
+    await _process_document_embeddings(document_id)
+
+
 async def _process_document_entities_batch(
     document_ids: List[str],
     user_id: str
@@ -761,19 +829,12 @@ async def re_analyze_bookmark(
             bm_image_urls = bookmark.bookmark_metadata.get("image_urls", None)
         
         background_tasks.add_task(
-            _process_document_content,
+            _process_document_content_and_entities,
             bookmark.document_id,
             bookmark.title,
             bookmark.url,
             user_context.user.id,
             bm_image_urls
-        )
-        
-        # Add entity extraction as separate background task
-        background_tasks.add_task(
-            _process_document_entities,
-            bookmark.document_id,
-            user_context.user.id
         )
         
         return {
@@ -955,7 +1016,7 @@ async def create_bookmark(
                         bm_image_urls = bookmark_data.metadata.get("image_urls", None)
                     
                     background_tasks.add_task(
-                        _process_document_content,
+                        _process_document_content_and_entities,
                         existing_document.id,
                         existing_bookmark.title,
                         existing_bookmark.url,
@@ -963,19 +1024,14 @@ async def create_bookmark(
                         bm_image_urls
                     )
                     background_tasks.add_task(
-                        _process_document_entities,
-                        existing_document.id,
-                        user_context.user.id
-                    )
-                    background_tasks.add_task(
                         _process_document_embeddings,
                         existing_document.id
                     )
                 elif existing_document.ai_is_about and existing_document.ai_markdown_content:
                     await _send_document_ready_message(
-                        existing_document, 
-                        user_context.user.id, 
-                        existing_bookmark.title, 
+                        existing_document,
+                        user_context.user.id,
+                        existing_bookmark.title,
                         existing_bookmark.url
                     )
                 
@@ -1030,17 +1086,12 @@ async def create_bookmark(
                     bm_image_urls = bookmark_data.metadata.get("image_urls", None)
                 
                 background_tasks.add_task(
-                    _process_document_content,
+                    _process_document_content_and_entities,
                     existing_document.id,
                     existing_bookmark.title,
                     existing_bookmark.url,
                     user_context.user.id,
                     bm_image_urls
-                )
-                background_tasks.add_task(
-                    _process_document_entities,
-                    existing_document.id,
-                    user_context.user.id
                 )
                 background_tasks.add_task(
                     _process_document_embeddings,
@@ -1091,17 +1142,12 @@ async def create_bookmark(
                     bm_image_urls = bookmark_data.metadata.get("image_urls", None)
                 
                 background_tasks.add_task(
-                    _process_document_content,
+                    _process_document_content_and_entities,
                     existing_document.id,
                     bookmark.title,
                     bookmark.url,
                     user_context.user.id,
                     bm_image_urls
-                )
-                background_tasks.add_task(
-                    _process_document_entities,
-                    existing_document.id,
-                    user_context.user.id
                 )
                 background_tasks.add_task(
                     _process_document_embeddings,
@@ -1146,20 +1192,13 @@ async def create_bookmark(
                     bm_image_urls = bookmark_data.metadata.get("image_urls", None)
                 
                 background_tasks.add_task(
-                    _process_document_content,
+                    _process_document_content_and_entities,
                     document.id,
                     existing_bookmark.title,
                     existing_bookmark.url,
                     user_context.user.id,
                     bm_image_urls
                 )
-                # Add entity extraction as separate background task
-                background_tasks.add_task(
-                    _process_document_entities,
-                    document.id,
-                    user_context.user.id
-                )
-                # Add embedding generation as separate background task
                 background_tasks.add_task(
                     _process_document_embeddings,
                     document.id
@@ -1191,17 +1230,12 @@ async def create_bookmark(
                         bm_image_urls = bookmark_data.metadata.get("image_urls", None)
                     
                     background_tasks.add_task(
-                        _process_document_content,
+                        _process_document_content_and_entities,
                         document.id,
                         existing_bookmark.title,
                         existing_bookmark.url,
                         user_context.user.id,
                         bm_image_urls
-                    )
-                    background_tasks.add_task(
-                        _process_document_entities,
-                        document.id,
-                        user_context.user.id
                     )
                     background_tasks.add_task(
                         _process_document_embeddings,
@@ -1353,63 +1387,32 @@ async def create_bookmark(
                 document_id=bookmark.document_id  # Will be None initially, updated in background task
             )
         else:
-            # No content provided (iPhone app case) - fetch content from URL
-            logger.info(f"No content provided for URL: {bookmark_data.url}, fetching HTML content")
+            # No content provided (iPhone app case) — return immediately, fetch URL in background
+            logger.info(
+                f"No content provided for URL: {bookmark_data.url}, "
+                "creating stub document and scheduling background fetch"
+            )
             document_service = DocumentService(session)
-            
-            # Check if document already exists for this URL
+
+            # Reuse an existing document for this URL if one already exists
             if existing_document:
-                logger.info(f"Document already exists for URL: {bookmark_data.url}, reusing existing document {existing_document.id}")
+                logger.info(
+                    f"Document already exists for URL: {bookmark_data.url}, "
+                    f"reusing existing document {existing_document.id}"
+                )
                 _doc = existing_document
             else:
-                try:
-                    _doc = await document_service.create_document_from_url(
-                        user_id=user_context.user.id,
-                        url=bookmark_data.url,
-                        title=bookmark_data.title
-                    )
-                    logger.info(f"Document created from URL fetch: {_doc.id if _doc else 'None'}")
-                    
-                    # Log content availability status if available
-                    if _doc and _doc.document_metadata and _doc.document_metadata.get('content_availability'):
-                        content_status = _doc.document_metadata['content_availability']
-                        logger.info(
-                            f"Document {_doc.id} content status: {content_status.get('content_status')} "
-                            f"(available: {content_status.get('content_available')}, "
-                            f"issues: {content_status.get('issues')})"
-                        )
-                except Exception as e:
-                    logger.warning(f"Failed to create document from URL {bookmark_data.url}: {e}")
-                    # Don't raise exception - create document without content instead
-                    # This allows the bookmark to be created even if fetch fails
-                    try:
-                        _doc = await document_service.create_document_from_content(
-                            user_id=user_context.user.id,
-                            content="",  # Empty content
-                            content_type="fetch_failed",
-                            title=bookmark_data.title,
-                            url=bookmark_data.url
-                        )
-                        if _doc and _doc.document_metadata is None:
-                            _doc.document_metadata = {}
-                        _doc.document_metadata.update({
-                            'fetch_error': str(e),
-                            'content_availability': {
-                                'status': 'unavailable',
-                                'content_available': False,
-                                'content_status': 'unavailable',
-                                'issues': ['fetch_failed'],
-                            }
-                        })
-                        await session.commit()
-                        await session.refresh(_doc)
-                        logger.info(f"Created document {_doc.id} without content due to fetch failure")
-                    except Exception as create_error:
-                        logger.error(f"Failed to create document after fetch failure: {create_error}")
-                        raise HTTPException(
-                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail="Unable to process the provided URL"
-                        )
+                # Create stub document immediately — content will arrive in background
+                _doc = await document_service.create_document_from_content(
+                    user_id=user_context.user.id,
+                    content="",
+                    content_type="url",
+                    title=bookmark_data.title or "Processing…",
+                    url=bookmark_data.url,
+                )
+                logger.info(
+                    f"Stub document {_doc.id if _doc else 'None'} created for URL: {bookmark_data.url}"
+                )
         
         logger.info(f"Final document status: {_doc.id if _doc else 'None'}")
         
@@ -1429,56 +1432,58 @@ async def create_bookmark(
         await session.commit()
         await session.refresh(bookmark)
         
-        # Skip AI processing for NOT_AVAILABLE content or unavailable content
+        # Schedule background processing
         if bookmark_data.content == "NOT_AVAILABLE":
-            logger.info(f"Skipping AI processing for NOT_AVAILABLE content - bookmark {bookmark.id} created with document {_doc.id if _doc else 'None'}")
+            logger.info(
+                f"Skipping AI processing for NOT_AVAILABLE content - "
+                f"bookmark {bookmark.id} created with document {_doc.id if _doc else 'None'}"
+            )
         elif _doc is not None:
-            # Check if content is available before triggering background tasks
-            content_available = True
-            if _doc.document_metadata and _doc.document_metadata.get('content_availability'):
-                content_status = _doc.document_metadata['content_availability']
-                content_available = content_status.get('content_available', True)
-                content_status_value = content_status.get('content_status', 'unknown')
-                
-                if not content_available or content_status_value == 'unavailable':
-                    logger.info(
-                        f"Skipping AI processing for document {_doc.id} - "
-                        f"content status: {content_status_value}, "
-                        f"available: {content_available}"
-                    )
-                    content_available = False
-            
-            # Also check if document has actual content
-            if content_available and (not _doc.content or not _doc.content.strip()):
-                logger.info(f"Skipping AI processing for document {_doc.id} - no content available")
-                content_available = False
-            
-            # Only trigger background tasks if content is available
-            if content_available and (_doc.ai_is_about is None or not _doc.ai_markdown_content):
-                # Extract image URLs from bookmark metadata for X posts
-                bm_image_urls = None
-                if bookmark.bookmark_metadata and isinstance(bookmark.bookmark_metadata, dict):
-                    bm_image_urls = bookmark.bookmark_metadata.get("image_urls", None)
-                
-                # Start background processing tasks
+            # URL-only stub: content will be fetched in background
+            needs_url_fetch = (
+                not bookmark_data.content  # no content provided by client
+                and not (_doc.content and _doc.content.strip())  # stub has no content yet
+                and _doc.url
+                and not (_doc.document_metadata and _doc.document_metadata.get("fetch_error"))
+            )
+            if needs_url_fetch:
                 background_tasks.add_task(
-                    _process_document_content,
+                    _fetch_url_and_process_document,
                     _doc.id,
                     bookmark.title,
-                    bookmark.url,
+                    _doc.url,
                     user_context.user.id,
-                    bm_image_urls
                 )
-                
-                # Add entity extraction as separate background task
-                background_tasks.add_task(
-                    _process_document_entities,
-                    _doc.id,
-                    user_context.user.id
-                )
-            
-            # Find documents without embeddings
-            # Legacy embedding handler call removed - using modern services instead
+            else:
+                # Content already available — check if AI extraction is still needed
+                content_available = True
+                if _doc.document_metadata and _doc.document_metadata.get('content_availability'):
+                    cs = _doc.document_metadata['content_availability']
+                    if not cs.get('content_available', True) or cs.get('content_status') == 'unavailable':
+                        logger.info(
+                            f"Skipping AI processing for document {_doc.id} - "
+                            f"content status: {cs.get('content_status')}"
+                        )
+                        content_available = False
+
+                if content_available and (not _doc.content or not _doc.content.strip()):
+                    logger.info(
+                        f"Skipping AI processing for document {_doc.id} - no content available"
+                    )
+                    content_available = False
+
+                if content_available and (_doc.ai_is_about is None or not _doc.ai_markdown_content):
+                    bm_image_urls = None
+                    if bookmark.bookmark_metadata and isinstance(bookmark.bookmark_metadata, dict):
+                        bm_image_urls = bookmark.bookmark_metadata.get("image_urls", None)
+                    background_tasks.add_task(
+                        _process_document_content_and_entities,
+                        _doc.id,
+                        bookmark.title,
+                        bookmark.url,
+                        user_context.user.id,
+                        bm_image_urls,
+                    )
         
         # Return bookmark response
         processing_status = "not_available" if bookmark_data.content == "NOT_AVAILABLE" else ("pending" if _doc else "not_processed")

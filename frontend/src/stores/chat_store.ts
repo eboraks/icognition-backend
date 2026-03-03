@@ -147,6 +147,12 @@ export const useChatStore = defineStore('chat', () => {
       return;
     }
 
+    // Auto-name session from the first user message (matching backend behavior)
+    const hasNoUserMessages = !activeSession.value.messages.some(m => m.senderId === authStore.currentUser!.uid);
+    if (hasNoUserMessages) {
+      activeSession.value.title = messageContent.trim().substring(0, 60) || activeSession.value.title;
+    }
+
     const now = new Date();
     const formattedContent = toParagraphHtml(messageContent);
     const message: ChatMessage = {

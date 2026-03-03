@@ -368,9 +368,9 @@
                     <div class="overflow-y-auto px-2 py-3" style="height: calc(100% - 49.6px);">
                       <h4 class="pb-2">Summary</h4>
                       <p class="line-height-2 summary-content" v-if="doc != null && doc.is_about != null">{{ doc.is_about }}</p>
-                      <div v-if="doc != null && doc.tldr != null">
+                      <div v-if="doc != null && doc.aiMarkdownContent">
                         <h4 class="pt-3">Key Points:</h4>
-                        <div class="key-points-content" v-html="renderMarkdown(doc.tldr)"></div>
+                        <div class="key-points-content" v-html="renderMarkdown(doc.aiMarkdownContent)"></div>
                       </div>
                       <div v-if="doc != null && qa_store.config.list.size > 0">
                         <h4 class="pt-3">Questions answered by this document</h4>

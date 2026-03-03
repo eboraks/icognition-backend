@@ -94,8 +94,6 @@ class CoreDataMigrationService {
         article.savedAt = articleData.savedAt
         article.backendBookmarkId = articleData.backendBookmarkId
         article.backendDocumentId = articleData.backendDocumentId
-        article.aiSummary = articleData.aiSummary
-        article.aiBulletPoints = articleData.aiBulletPoints
         article.htmlFilePath = articleData.htmlFilePath
         article.hasLocalHTML = articleData.hasLocalHTML
         article.lastSyncedAt = nil // Will be set when synced with backend

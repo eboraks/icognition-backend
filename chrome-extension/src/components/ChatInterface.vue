@@ -12,16 +12,60 @@
             <img src="/icons/icog_action_icon_32x32.png" alt="AI Icon" style="width: 2.25rem; height: 2.25rem; object-fit: contain;" />
           </div>
           <div class="message-content">
-            <div v-if="message.pending" class="message-spinner">
+            <!-- Spinner: only while waiting before any content arrives -->
+            <div v-if="message.pending && !message.content" class="message-spinner">
               <ProgressSpinner strokeWidth="4" style="width: 32px; height: 32px" />
             </div>
-            <div v-else class="message-text" v-html="message.content"></div>
-            <!-- Status text for agent actions -->
-            <div v-if="message.streaming && message.statusText" class="message-status">
+            <!-- Content: shown once we have any text (even mid-stream) -->
+            <template v-if="!message.pending || message.content">
+              <div v-if="message.commentOptions && !message.pending" class="comment-options">
+                <div v-for="option in message.commentOptions" :key="option.label" class="comment-card">
+                  <div class="comment-card-header">
+                    <span class="comment-option-label">{{ option.label }}</span>
+                    <Button
+                      icon="pi pi-copy"
+                      text
+                      rounded
+                      size="small"
+                      severity="secondary"
+                      class="copy-btn"
+                      :class="{ copied: copiedLabel === option.label }"
+                      @click="copyToClipboard(option.text, option.label)"
+                    />
+                  </div>
+                  <p class="comment-card-text" :style="{ fontSize: fontSize }">{{ option.text }}</p>
+                </div>
+              </div>
+              <div v-else class="message-text" v-html="message.content"></div>
+            </template>
+            <!-- Status text: shown while pending (matches web app ChatPanel behaviour) -->
+            <div v-if="message.pending && message.statusText" class="message-status">
                 <i class="pi pi-spin pi-spinner" style="font-size: 0.8rem; margin-right: 0.5rem"></i>
                 {{ message.statusText }}
             </div>
-            <!-- Actions and Resources removed for MVP simplicity in extension, can be added later -->
+            <!-- Action suggestion buttons -->
+            <div v-if="message.actions && message.actions.length > 0" class="action-buttons">
+              <Button
+                v-for="action in message.actions"
+                :key="action.id"
+                :label="action.label"
+                outlined
+                severity="secondary"
+                class="action-button"
+                @click="handleActionClick(action)"
+              />
+            </div>
+            <!-- Referenced resources (collapsed by default) -->
+            <div v-if="message.resources && message.resources.length > 0" class="resources-section">
+              <details>
+                <summary>Resources</summary>
+                <ul>
+                  <li v-for="resource in message.resources" :key="resource.id">
+                    {{ resource.title }}
+                  </li>
+                </ul>
+              </details>
+            </div>
           </div>
         </div>
         <div v-else-if="message.type === 'user'" class="message user-message">
@@ -30,20 +74,34 @@
       </div>
     </ScrollPanel>
     <div class="chat-input-container" v-if="sessionId">
-      <TypedChatInput
-        v-model="inputMessage"
-        placeholder="Ask a follow-up question..."
-        :is-extension="true"
-        :session-id="sessionId"
-        :disabled="loading"
-        @send="sendMessage"
-      />
-      <Button
-        icon="pi pi-send"
-        rounded
-        @click="sendMessage"
-        :disabled="!inputMessage || !inputMessage.trim() || loading"
-      />
+      <div class="quick-actions-row">
+        <Button
+          label="Write Comment"
+          icon="pi pi-pencil"
+          outlined
+          severity="secondary"
+          size="small"
+          class="quick-action-btn"
+          :disabled="loading"
+          @click="writeComment"
+        />
+      </div>
+      <div class="input-row">
+        <TypedChatInput
+          v-model="inputMessage"
+          placeholder="Ask a follow-up question..."
+          :is-extension="true"
+          :session-id="sessionId"
+          :disabled="loading"
+          @send="sendMessage"
+        />
+        <Button
+          icon="pi pi-send"
+          rounded
+          @click="sendMessage"
+          :disabled="!inputMessage || !inputMessage.trim() || loading"
+        />
+      </div>
     </div>
   </div>
 </template>
@@ -77,6 +135,54 @@ const messagesContainer = ref(null);
 const loading = ref(false);
 const suggestions = ref([]);
 const allVocabulary = ref([]);
+const copiedLabel = ref(null);
+
+const parseCommentOptions = (content) => {
+  const stripped = content.replace(/<[^>]*>/g, ' ');
+  if (!/Option A/i.test(stripped) || !/Option B/i.test(stripped) || !/Option C/i.test(stripped)) {
+    return null;
+  }
+  // HTML mode: detect <strong>Option X...</strong> headers
+  const htmlHeaders = [...content.matchAll(/<strong>(Option [ABC][^<]*)<\/strong>/gi)];
+  if (htmlHeaders.length === 3) {
+    const parts = content.split(/<strong>Option [ABC][^<]*<\/strong>/gi);
+    return htmlHeaders.map((h, i) => ({
+      label: h[1].trim(),
+      text: parts[i + 1]
+        .replace(/^[:\s–\-]+/, '')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim(),
+    }));
+  }
+  // Markdown mode: split on **Option X...** markers
+  const mdParts = content.split(/\*{1,2}(Option [ABC][^*]*)\*{1,2}/i);
+  if (mdParts.length >= 7) {
+    return [
+      { label: mdParts[1].trim(), text: mdParts[2].trim() },
+      { label: mdParts[3].trim(), text: mdParts[4].trim() },
+      { label: mdParts[5].trim(), text: mdParts[6].trim() },
+    ];
+  }
+  return null;
+};
+
+const copyToClipboard = async (text, label) => {
+  try {
+    await navigator.clipboard.writeText(text);
+    copiedLabel.value = label;
+    setTimeout(() => { copiedLabel.value = null; }, 2000);
+  } catch {
+    const el = document.createElement('textarea');
+    el.value = text;
+    document.body.appendChild(el);
+    el.select();
+    document.execCommand('copy');
+    document.body.removeChild(el);
+    copiedLabel.value = label;
+    setTimeout(() => { copiedLabel.value = null; }, 2000);
+  }
+};
 
 const extractVocabulary = () => {
     if (!props.initialSummary) return;
@@ -221,7 +327,7 @@ const loadMessages = async () => {
                 content: msg.content,
                 type: msg.role === 'user' ? 'user' : 'system',
                 statusText: '',
-                // Assuming backend format, we might need adjustments
+                commentOptions: msg.role !== 'user' ? parseCommentOptions(msg.content) : null,
             }));
             
             messages.value = fetchedMessages;
@@ -286,38 +392,35 @@ const handleBackgroundMessage = (request, sender, sendResponse) => {
 
 const handleStreamChunk = (data) => {
     const { type, content, message_id } = data;
-    
-    // Find message with this ID or create placeholder if it's the first chunk
+
+    // Find message with this ID or fall back to the last pending system message
     let message = messages.value.find(m => m.id === message_id);
-    
+
     if (type === 'stream_chunk') {
         if (!message) {
-             // It might be the placeholder we created with a temporary ID?
-             // Actually, for simplicity, let's just append chunks to the last system message if it is pending
-             const lastMessage = messages.value[messages.value.length - 1];
-             if (lastMessage && lastMessage.type === 'system' && lastMessage.pending) {
-                 message = lastMessage;
-                 message.id = message_id; // Update ID
-                 message.content = ''; // Clear spinner/placeholder empty content
-                 message.pending = false; // It's no longer just "pending start", it's streaming
-                 message.streaming = true;
-             }
+            const lastMessage = messages.value[messages.value.length - 1];
+            if (lastMessage && lastMessage.type === 'system' && lastMessage.pending) {
+                message = lastMessage;
+                message.id = message_id;
+                message.content = '';
+                // Keep pending=true while streaming so status text keeps showing
+                // (matches the web app ChatPanel where pending covers the whole wait)
+            }
         }
-        
         if (message) {
             message.content += content || '';
             scrollToBottom();
         }
     } else if (type === 'end_stream') {
-        // Handled by chat-stream-end event usually, but sometimes data packet has type end_stream
         if (message) {
-            message.streaming = false;
+            message.pending = false;
+            message.commentOptions = parseCommentOptions(message.content);
         }
         loading.value = false;
     } else if (type === 'error') {
         if (message) {
             message.content += `\n[Error: ${content}]`;
-            message.streaming = false;
+            message.pending = false;
         }
         loading.value = false;
     } else if (type === 'agent_status') {
@@ -329,11 +432,9 @@ const handleStreamChunk = (data) => {
 
 const handleStreamEnd = (data) => {
     loading.value = false;
-    // Ensure last message is not pending
     const lastMessage = messages.value[messages.value.length - 1];
     if (lastMessage) {
         lastMessage.pending = false;
-        lastMessage.streaming = false;
     }
 };
 
@@ -345,6 +446,16 @@ const handleStreamError = (data) => {
         lastMessage.pending = false;
         lastMessage.content += `<p class="text-red-500">Error: ${data.error}</p>`;
     }
+};
+
+const handleActionClick = (action) => {
+    if (!action.label || loading.value) return;
+    inputMessage.value = action.label;
+    sendMessage();
+};
+
+const writeComment = () => {
+    inputMessage.value = 'Write a comment on this post: ';
 };
 
 const sendMessage = async () => {
@@ -553,13 +664,74 @@ const sendMessage = async () => {
 }
 
 
+.action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+
+:deep(.action-button) {
+  border-radius: 999px;
+  padding-inline: 0.9rem;
+  padding-block: 0.3rem;
+  font-size: 0.8rem;
+}
+
+.resources-section {
+  margin-top: 0.6rem;
+  font-size: 0.8rem;
+  background: var(--surface-100, var(--surface-ground));
+  border: 1px dashed var(--surface-border);
+  border-radius: 0.6rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.resources-section details {
+  cursor: pointer;
+}
+
+.resources-section summary {
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.resources-section ul {
+  list-style: none;
+  padding-left: 0;
+  margin: 0.4rem 0 0 0;
+}
+
+.resources-section li {
+  padding: 0.2rem 0;
+  color: var(--text-color-secondary);
+}
+
 .chat-input-container {
   display: flex;
+  flex-direction: column;
   padding: 0.75rem;
   border-top: 1px solid var(--surface-border);
+  gap: 0.4rem;
+  background: var(--surface-card);
+}
+
+.quick-actions-row {
+  display: flex;
+  gap: 0.4rem;
+}
+
+:deep(.quick-action-btn) {
+  border-radius: 999px;
+  padding-inline: 0.75rem;
+  padding-block: 0.25rem;
+  font-size: 0.78rem;
+}
+
+.input-row {
+  display: flex;
   gap: 0.5rem;
   align-items: center;
-  background: var(--surface-card);
 }
 
 :deep(.chat-input-container .p-autocomplete) {
@@ -572,5 +744,64 @@ const sendMessage = async () => {
   padding-left: 1rem;
   font-size: 0.95rem;
   font-family: 'Roboto Mono', monospace;
+}
+
+/* Comment option cards (Phase 6.2) */
+.comment-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.comment-card {
+  background: var(--surface-0);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  transition: box-shadow 0.15s;
+}
+
+.comment-card:hover {
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.1);
+}
+
+.comment-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.35rem;
+}
+
+.comment-option-label {
+  font-weight: 600;
+  font-size: 0.82rem;
+  color: var(--primary-600, var(--primary-color));
+}
+
+.copy-btn {
+  flex-shrink: 0;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+
+.copy-btn:hover {
+  opacity: 1;
+}
+
+.copy-btn.copied {
+  opacity: 1;
+}
+
+:deep(.copy-btn.copied .p-button-icon) {
+  color: #22c55e !important;
+}
+
+.comment-card-text {
+  line-height: 1.5;
+  color: var(--text-color);
+  margin: 0;
+  font-family: 'Roboto Mono', monospace;
+  white-space: pre-wrap;
 }
 </style>

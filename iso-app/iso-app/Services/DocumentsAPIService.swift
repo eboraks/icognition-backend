@@ -120,9 +120,8 @@ class DocumentsAPIService {
             metadata: metadata,
             savedAt: savedAt,
             backendBookmarkId: nil, // We'll map this from bookmarks if needed
-            backendDocumentId: String(document.id),  // Convert Int to String
-            aiSummary: document.aiIsAbout,  // Include AI summary
-            aiBulletPoints: document.aiBulletPoints  // Include AI bullet points
+            backendDocumentId: String(document.id),
+            aiMarkdownContent: document.aiMarkdownContent
         )
     }
 }

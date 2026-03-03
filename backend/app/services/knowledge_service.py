@@ -4,13 +4,13 @@ Knowledge exploration service for managing filter trees and contextual chat inte
 
 from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, or_
 from sqlalchemy.orm import selectinload
 import logging
 import json
 import re
 
-from app.models import Entity, Document, EntityDocument
+from app.models import Entity, Document, EntityDocument, EntityRelationship
 from app.services.document_service import DocumentService
 from app.services.prompt_service import PromptService
 from app.services.gemini_service import get_gemini_service, GeminiModel, GeminiConfig
@@ -863,4 +863,63 @@ class KnowledgeService:
         except Exception as e:
             logger.error(f"Error handling action {action_id}: {e}", exc_info=True)
             raise
+
+    async def get_entity_relationships(self, entity_id: int) -> Dict[str, Any]:
+        """
+        Return an entity and all its directed relationships (as from or to).
+        """
+        entity_result = await self.session.execute(
+            select(Entity).where(Entity.id == entity_id)
+        )
+        entity = entity_result.scalar_one_or_none()
+        if not entity:
+            raise ValueError(f"Entity {entity_id} not found")
+
+        rel_result = await self.session.execute(
+            select(EntityRelationship)
+            .where(
+                or_(
+                    EntityRelationship.from_entity_id == entity_id,
+                    EntityRelationship.to_entity_id == entity_id,
+                )
+            )
+            .limit(50)
+        )
+        relationships = rel_result.scalars().all()
+
+        # Fetch all referenced entities in one query
+        related_ids: set[int] = set()
+        for r in relationships:
+            related_ids.add(r.from_entity_id)
+            related_ids.add(r.to_entity_id)
+        related_ids.discard(entity_id)
+
+        entity_map: Dict[int, Entity] = {entity.id: entity}
+        if related_ids:
+            extra_result = await self.session.execute(
+                select(Entity).where(Entity.id.in_(related_ids))
+            )
+            for e in extra_result.scalars().all():
+                entity_map[e.id] = e
+
+        formatted = []
+        for r in relationships:
+            from_e = entity_map.get(r.from_entity_id)
+            to_e = entity_map.get(r.to_entity_id)
+            if from_e and to_e:
+                formatted.append({
+                    "from_entity": {"id": from_e.id, "name": from_e.name, "type": from_e.type},
+                    "relationship_type": r.relationship_type,
+                    "to_entity": {"id": to_e.id, "name": to_e.name, "type": to_e.type},
+                })
+
+        return {
+            "entity": {
+                "id": entity.id,
+                "name": entity.name,
+                "type": entity.type,
+                "description": entity.description,
+            },
+            "relationships": formatted,
+        }
 

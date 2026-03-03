@@ -204,7 +204,7 @@
                                                         <p>Key Points:</p>
                                                     </div>
                                                     <div class="col-11" style="max-width: 60%;">
-                                                        <div v-if="slotProps.data.tldr" v-html="renderMarkdown(slotProps.data.tldr)"></div>
+                                                        <div v-if="slotProps.data.aiMarkdownContent" v-html="renderMarkdown(slotProps.data.aiMarkdownContent)"></div>
                                                         <div v-else>No key points available.</div>
                                                     </div>  
                                                 </div>

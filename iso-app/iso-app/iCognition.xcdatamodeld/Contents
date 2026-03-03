@@ -4,13 +4,13 @@
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>NSManagedObjectModel_CurrentVersionName</key>
-	<string>iCognition</string>
+	<string>iCognition 2</string>
 	<key>NSManagedObjectModel_VersionHashes</key>
 	<dict>
 		<key>Article</key>
 		<dict>
 			<key>entityVersion</key>
-			<string>1</string>
+			<string>2</string>
 			<key>hashModifier</key>
 			<string></string>
 		</dict>
@@ -19,4 +19,3 @@
 	<integer>3</integer>
 </dict>
 </plist>
-

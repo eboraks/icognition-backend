@@ -22,8 +22,7 @@ class AIContentCacheService {
     /// Cached AI content structure
     struct CachedAIContent: Codable {
         let documentId: String
-        let summary: String?
-        let bulletPoints: [String]?
+        let markdownContent: String?
         let cachedAt: Date
         let expiresAt: Date
     }
@@ -45,8 +44,7 @@ class AIContentCacheService {
         if let documentData = await DocumentAPIService.shared.fetchDocument(documentId: documentId) {
             let content = CachedAIContent(
                 documentId: documentId,
-                summary: documentData.aiIsAbout,
-                bulletPoints: documentData.aiBulletPoints,
+                markdownContent: documentData.aiMarkdownContent,
                 cachedAt: Date(),
                 expiresAt: Date().addingTimeInterval(7 * 24 * 60 * 60) // 7 days
             )

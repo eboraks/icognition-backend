@@ -1011,6 +1011,12 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
             return;
         }
         if (tab && tab.url) {
+            // Only call badgeToggle if tab is already loaded.
+            // If it's still loading, onUpdated(complete) will handle it — prevents double calls.
+            if (tab.status !== 'complete') {
+                console.log('tabs.onActivated -> tab still loading, skipping badgeToggle');
+                return;
+            }
             console.log('tabs.onActivated -> get tab -> url: ', tab.url)
             badgeToggle(tab)
         }
@@ -1020,20 +1026,22 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
 
 chrome.tabs.onUpdated.addListener(function (tabId, info) {
     if (info.status === 'complete') {
-        // Store the active tab ID in session storage
-        chrome.storage.session.set({ active_tab_id: tabId });
-        console.log('Stored active tab ID in session storage (onUpdated):', tabId);
-
-        chrome.tabs.get(tabId, async (tab) => {
-            if (chrome.runtime.lastError) {
-                console.log('tabs.onUpdated -> get tab error: ', chrome.runtime.lastError.message);
+        // Only handle the currently active tab — background tabs loading should not trigger badge checks.
+        // This prevents double calls when onActivated + onUpdated both fire for the same navigation.
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            if (!tabs || !tabs[0] || tabs[0].id !== tabId) {
+                console.log('tabs.onUpdated -> not active tab, skipping');
                 return;
             }
-            if (tab && tab.url) {
+            const tab = tabs[0];
+            // Store the active tab ID in session storage
+            chrome.storage.session.set({ active_tab_id: tabId });
+            console.log('Stored active tab ID in session storage (onUpdated):', tabId);
+            if (tab.url) {
                 console.log('tabs.onUpdated -> get tab -> url: ', tab.url)
                 badgeToggle(tab)
             }
-        })
+        });
     }
 });
 

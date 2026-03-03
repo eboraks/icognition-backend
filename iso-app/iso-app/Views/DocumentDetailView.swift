@@ -32,8 +32,7 @@ struct DocumentDetailView: View {
     @State private var activeChatSession: ICChatSession?
     
     // AI content from backend
-    @State private var aiSummary: String?
-    @State private var aiBulletPoints: [String]?
+    @State private var aiMarkdownContent: String?
     
     // Tab selection
     @State private var selectedTab: DocumentTab = .keyPoints
@@ -188,18 +187,18 @@ struct DocumentDetailView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    // Summary section
-                    if let summary = aiSummary, !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    // AI analysis section
+                    if let markdown = aiMarkdownContent, !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
                                 Image(systemName: "text.alignleft")
                                     .foregroundColor(.blue)
-                                Text("Summary")
+                                Text("AI Analysis")
                                     .font(.headline)
                                     .foregroundColor(.blue)
                             }
-                            
-                            Text(summary)
+
+                            Text(LocalizedStringKey(markdown))
                                 .font(.body)
                                 .multilineTextAlignment(.leading)
                                 .padding()
@@ -207,42 +206,9 @@ struct DocumentDetailView: View {
                                 .cornerRadius(12)
                         }
                     }
-                    
-                    // Key Points section
-                    if let bulletPoints = aiBulletPoints, !bulletPoints.isEmpty {
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Image(systemName: "list.bullet")
-                                    .foregroundColor(.blue)
-                                Text("Key Points")
-                                    .font(.headline)
-                                    .foregroundColor(.blue)
-                            }
-                            
-                            VStack(alignment: .leading, spacing: 8) {
-                                ForEach(Array(bulletPoints.enumerated()), id: \.offset) { index, point in
-                                    HStack(alignment: .top, spacing: 12) {
-                                        Image(systemName: "circle.fill")
-                                            .font(.system(size: 6))
-                                            .foregroundColor(.blue)
-                                            .padding(.top, 8)
-                                        
-                                        Text(point)
-                                            .font(.body)
-                                            .multilineTextAlignment(.leading)
-                                    }
-                                    .padding(.vertical, 4)
-                                }
-                            }
-                            .padding()
-                            .background(Color.blue.opacity(0.1))
-                            .cornerRadius(12)
-                        }
-                    }
-                    
+
                     // Empty state if no AI content
-                    if (aiSummary == nil || aiSummary!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) &&
-                       (aiBulletPoints == nil || aiBulletPoints!.isEmpty) {
+                    if aiMarkdownContent == nil || aiMarkdownContent!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         VStack(spacing: 16) {
                             Image(systemName: "brain.head.profile")
                                 .font(.system(size: 48))
@@ -382,11 +348,8 @@ struct DocumentDetailView: View {
             
             if let documentData = await DocumentAPIService.shared.fetchDocument(documentId: documentId) {
                 // Update AI content
-                await updateArticleWithAIContent(
-                    summary: documentData.aiIsAbout,
-                    bulletPoints: documentData.aiBulletPoints
-                )
-                
+                await updateArticleWithAIContent(markdownContent: documentData.aiMarkdownContent)
+
                 // Update content
                 if let content = documentData.content, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     await MainActor.run {
@@ -425,10 +388,7 @@ struct DocumentDetailView: View {
                 AppLogger.ui("Successfully fetched document from backend", level: .info)
                 
                 // Update AI content from backend
-                await updateArticleWithAIContent(
-                    summary: documentData.aiIsAbout,
-                    bulletPoints: documentData.aiBulletPoints
-                )
+                await updateArticleWithAIContent(markdownContent: documentData.aiMarkdownContent)
                 
                 // Use content from backend document (source of truth)
                 if let backendContent = documentData.content, !backendContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -467,12 +427,9 @@ struct DocumentDetailView: View {
             AppLogger.ui("No backend document ID found, using article data", level: .warning)
             
             // Fallback: Use AI content from article if available
-            if let summary = article.aiSummary, let bulletPoints = article.aiBulletPoints {
+            if let markdown = article.aiMarkdownContent, !markdown.isEmpty {
                 AppLogger.ui("Using AI content from article data", level: .info)
-                await updateArticleWithAIContent(
-                    summary: summary,
-                    bulletPoints: bulletPoints
-                )
+                await updateArticleWithAIContent(markdownContent: markdown)
             }
             
             // Use content from article
@@ -491,15 +448,12 @@ struct DocumentDetailView: View {
     }
     
     /// Updates the article with AI content
-    private func updateArticleWithAIContent(summary: String?, bulletPoints: [String]?) async {
+    private func updateArticleWithAIContent(markdownContent: String?) async {
         AppLogger.ui("Updating article with AI content...", level: .info)
-        
+
         await MainActor.run {
-            self.aiSummary = summary
-            self.aiBulletPoints = bulletPoints
-            
-            AppLogger.ui("AI Summary set: \(summary != nil)", level: .debug)
-            AppLogger.ui("AI Bullet Points set: \(bulletPoints?.count ?? 0)", level: .debug)
+            self.aiMarkdownContent = markdownContent
+            AppLogger.ui("AI Markdown content set: \(markdownContent != nil)", level: .debug)
         }
     }
     

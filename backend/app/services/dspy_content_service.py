@@ -99,11 +99,15 @@ class DspyContentService:
         self.api_key = api_key or settings.GOOGLE_API_KEY
         if not self.api_key:
             raise ValueError("Google API key is required for DSPy content extraction")
-        
-        # Store LM configuration but don't configure globally yet
+
         gemini_model_name = settings.GEMINI_FLASH_LITE_MODEL.replace("models/", "")
         self.model_name = f'gemini/{gemini_model_name}'
-        
+
+        # Create the LM client once at init — reused across all extraction calls.
+        # max_tokens=8192: Gemini Flash Lite supports 8192 output tokens; DSPy defaults to 4000
+        # which causes truncation on long articles, breaking the JSON output.
+        self.lm = dspy.LM(self.model_name, api_key=self.api_key, max_tokens=8192)
+
         logger.info("DspyContentService initialized successfully with Flash Lite model")
     
     async def _get_db_instructions(self) -> Optional[str]:
@@ -218,11 +222,9 @@ class DspyContentService:
                     filtered_html = content
 
             # Use anyio.to_thread.run_sync to offload synchronous DSPy calls
-            # This prevents blocking the event loop during LLM processing
-            lm = dspy.LM(self.model_name, api_key=self.api_key)
-            
+            # self.lm is created once at init — no repeated instantiation cost.
             def run_extraction():
-                with dspy.context(lm=lm):
+                with dspy.context(lm=self.lm):
                     program = ContentExtractorProgram(instructions=instructions)
                     return program(text=filtered_html)
             
@@ -276,10 +278,8 @@ class DspyContentService:
         try:
             logger.info(f"Starting DSPy content extraction")
             
-            # Use dspy.context for async task execution
-            lm = dspy.LM(self.model_name, api_key=self.api_key)
-            
-            with dspy.context(lm=lm):
+            # self.lm is created once at init — no repeated instantiation cost.
+            with dspy.context(lm=self.lm):
                 program = ContentExtractorProgram()
                 extracted_content = program(text=text)
             
