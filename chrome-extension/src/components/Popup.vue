@@ -1,5 +1,13 @@
 <template>
-    <div class="side-panel-container" tabindex="-1">        
+    <div class="side-panel-container" tabindex="-1">
+        <!-- Toast notification -->
+        <Transition name="toast">
+            <div v-if="toastVisible" class="toast-error">
+                <i class="pi pi-exclamation-circle"></i>
+                <span>{{ toastMessage }}</span>
+            </div>
+        </Transition>
+
         <div class="header w-full h-14" tabindex="-1">
             <div class="flex justify-content-between align-items-center" tabindex="-1">
                 <a tabindex="6" :href="library_url" target="_blank">
@@ -337,6 +345,9 @@ const library_url = ref(import.meta.env.VITE_ICOGNITION_APP_URL || 'https://app.
 const progressPercent = ref(5)
 const user = ref(null)
 const connectionErrorMessage = ref('Unable to connect to server. Please try again.')
+const toastMessage = ref('')
+const toastVisible = ref(false)
+let toastTimer = null
 const isRetryingConnection = ref(false)
 const connectionRetryCount = ref(0)
 const suggestedQuestions = ref( [])
@@ -1370,7 +1381,7 @@ const createBookmark = async () => {
             //If the status is not server down, that is the reason for the error
             if (status.value.state !== AppStatusEnum.SERVER_DOWN.state) {
                 const errorMessage = response.content?.detail || 'Error creating bookmark';
-                handleError(errorMessage);
+                showToast(errorMessage);
             }
         }
     }).catch((error) => {
@@ -1818,7 +1829,7 @@ const clearCurrentChat = async () => {
                     });
                 } else {
                     console.log('[ERROR]', 'Failed to delete bookmark:', response.error);
-                    handleError('Failed to delete bookmark');
+                    showToast('Failed to delete bookmark');
                 }
             } catch (error) {
                 console.log('[ERROR]', 'Error deleting bookmark:', error);
@@ -1844,6 +1855,13 @@ const clearCurrentChat = async () => {
             });
         }
     }
+}
+
+function showToast(message, durationMs = 4000) {
+  toastMessage.value = message;
+  toastVisible.value = true;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toastVisible.value = false; }, durationMs);
 }
 
 function handleError(errorMessage) {
@@ -2507,6 +2525,27 @@ const focusQuestionInput = () => {
 </script>
 
 <style scoped>
+.toast-error {
+    position: fixed;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #c62828;
+    color: #fff;
+    padding: 10px 16px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    z-index: 9999;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    white-space: nowrap;
+}
+
+.toast-enter-active, .toast-leave-active { transition: opacity 0.3s, transform 0.3s; }
+.toast-enter-from, .toast-leave-to { opacity: 0; transform: translateX(-50%) translateY(8px); }
+
 .side-panel-container {
     display: flex;
     flex-direction: column;

@@ -43,7 +43,7 @@ class PromptResponse(BaseModel):
     prompt_type: str
     version: int
     system_prompt: Optional[str]
-    user_prompt: str
+    user_prompt: Optional[str]
     description: Optional[str]
     is_active: bool
     created_by: Optional[str]

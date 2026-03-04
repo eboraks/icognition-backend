@@ -54,7 +54,11 @@ class ContentExtractNoEntities(BaseModel):
         description="The type of source."
     )
     markdown_content: str = Field(
-        description="Detailed extracted content in Markdown format, such as paragraphs, bullet points, or tables depending on the source."
+        description="A concise, structured summary of the content in Markdown format. Use headings, bullet points, or short paragraphs to capture the key points, arguments, and conclusions. Do NOT reproduce the full article text — aim for 20-30% of the original length."
+    )
+    image_urls: List[str] = Field(
+        default=[],
+        description="URLs of content-relevant images found within the article (exclude ads, icons, logos, and tracking pixels)."
     )
     analysis: ContentAnalysis = Field(
         description="Analysis metadata including objectivity, tone, and intent."

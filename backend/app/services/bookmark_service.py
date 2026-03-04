@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 import logging
 
 from app.services.user_service import UserService
-from app.models import Bookmark, User, Document, ChatSession, ChatMessage, EntityDocument
+from app.models import Bookmark, User, Document, ChatSession, ChatMessage, EntityDocument, EntityRelationship
 from app.services.base_service import UserIsolatedService, DataIsolationValidator
 from app.utils.logging import get_logger
 
@@ -209,8 +209,13 @@ class BookmarkService(UserIsolatedService[Bookmark]):
                     await session.execute(
                         delete(EntityDocument).where(EntityDocument.document_id == document_id)
                     )
-                    
-                    # C. Delete the Document itself
+
+                    # C. Delete EntityRelationship rows sourced from this document
+                    await session.execute(
+                        delete(EntityRelationship).where(EntityRelationship.source_document_id == document_id)
+                    )
+
+                    # D. Delete the Document itself
                     await session.execute(
                         delete(Document).where(Document.id == document_id)
                     )

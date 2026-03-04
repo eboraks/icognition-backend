@@ -33,9 +33,9 @@ of the JSON.
 
 1.  **Focus on Quality:**
     - Extract accurate title
-    - Generate a neutral, informative summary (one paragraph)
-    - Provide a detailed extraction of the content formatted exclusively as markdown (`markdown_content`). This can include headings, bullet point lists, or multiple paragraphs depending on what best represents the source material.
+    - Create a concise, structured summary in markdown (`markdown_content`) that captures the key points, arguments, and conclusions. Aim for 20-30% of the original length. Use headings, bullet points, or short paragraphs as appropriate — do NOT reproduce the full article text verbatim.
     - Analyze objectivity, tone, and intent
+    - Identify URLs of content-relevant images (exclude ads, icons, tracking pixels)
 
 2.  **Links and URLs:**
     - **IMPORTANT**: When the content contains links or URLs (especially in social media posts), 
@@ -168,14 +168,14 @@ class DspyContentService:
             # Try to parse HTML to extract and describe images
             image_descriptions_map = {}
             filtered_html = content
-            
+            valid_urls = []
+
             if "<img" in content.lower():
                 try:
                     soup = BeautifulSoup(content, 'html.parser')
                     img_tags = soup.find_all('img')
                     
                     # Filter images by heuristics
-                    valid_urls = []
                     for img in img_tags:
                         src = img.get('src')
                         if not src or src.startswith('data:'):
@@ -235,11 +235,13 @@ class DspyContentService:
             result = {
                 'summary': None,
                 'markdown_content': extracted.markdown_content,
+                'image_urls': valid_urls,
                 'extracted_content': {
                     'title': extracted.title,
                     'source_type': extracted.source_type,
                     'summary': None,
                     'markdown_content': extracted.markdown_content,
+                    'image_urls': valid_urls,
                     'analysis': {
                         'objectivity': extracted.analysis.objectivity,
                         'tone': extracted.analysis.tone,
