@@ -184,8 +184,8 @@
                             <template #item="{ item, props }">
                                 <router-link v-slot="{ href, navigate }" :to="item.route" custom>
                                     <a :href="href" v-bind="props.action" @click="navigate">
-                                        <span :class="[item.icon, 'text-400 text-sm']"></span>
-                                        <span class="text-400 text-sm">{{ item.label }}</span>
+                                        <span :class="[item.icon, 'text-color-secondary text-sm']"></span>
+                                        <span class="text-color-secondary text-sm">{{ item.label }}</span>
                                     </a>
                                 </router-link>
                             </template>

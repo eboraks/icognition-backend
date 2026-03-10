@@ -52,6 +52,7 @@ class ChatSessionService:
     async def get_session_messages(self, session_id: int, user_id: str) -> List[ChatMessage]:
         """
         Get all messages for a chat session.
+        Raises ValueError if the session doesn't exist or doesn't belong to the user.
         """
         session = await self.get_session_by_id(session_id, user_id)
         if not session:
@@ -60,7 +61,7 @@ class ChatSessionService:
                 user_id,
                 session_id,
             )
-            return []
+            raise ValueError(f"Chat session {session_id} not found or not owned by user")
 
         stmt = (
             select(ChatMessage)
@@ -85,14 +86,15 @@ class ChatSessionService:
     async def get_session_by_scope(self, user_id: str, scope_type: str, scope_id: int) -> Optional[ChatSession]:
         """
         Find an existing chat session for a specific scope.
+        Always filters by user_id to prevent returning another user's session
+        (even when DISABLE_AUTH is true, the user_id is consistent as test_user_12345).
         """
         stmt = select(ChatSession).where(
             ChatSession.scope_type == scope_type,
-            ChatSession.scope_id == scope_id
+            ChatSession.scope_id == scope_id,
+            ChatSession.user_id == user_id,
         )
-        if not settings.DISABLE_AUTH:
-            stmt = stmt.where(ChatSession.user_id == user_id)
-        
+
         # Order by updated_at to get the most recent one if multiple exist (though ideally there's only one)
         stmt = stmt.order_by(ChatSession.updated_at.desc())
         result = await self.session.execute(stmt)

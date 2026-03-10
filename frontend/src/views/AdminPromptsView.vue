@@ -3,7 +3,7 @@
     <Toast />
     <div class="admin-header mb-4">
       <h1 class="text-900 m-0 mb-2">Prompt Management</h1>
-      <p class="text-600 m-0">Manage and version all application prompts</p>
+      <p class="text-color-secondary m-0">Manage and version all application prompts</p>
     </div>
 
     <div class="admin-content pb-6">

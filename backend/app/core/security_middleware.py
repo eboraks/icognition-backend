@@ -27,7 +27,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
     def __init__(
         self,
         app: ASGIApp,
-        rate_limit_per_minute: int = 60,
+        rate_limit_per_minute: int = 300,
         max_failed_attempts: int = 5,
         lockout_duration_minutes: int = 15,
         enable_cors_security: bool = True,

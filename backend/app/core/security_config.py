@@ -27,8 +27,8 @@ class SecurityConfig(BaseSettings):
     """Security configuration settings"""
     
     # Rate limiting
-    rate_limit_per_minute: int = 60
-    rate_limit_burst: int = 10
+    rate_limit_per_minute: int = 300
+    rate_limit_burst: int = 30
     
     # Authentication
     max_failed_attempts: int = 5

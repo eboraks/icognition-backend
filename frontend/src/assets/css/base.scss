@@ -69,6 +69,20 @@
   --vt-c-text-dark-2: rgba(235, 235, 235, 0.64);
 }
 
+/* PrimeFlex → PrimeVue 4 compatibility bridge.
+   PrimeFlex utility classes (text-color, surface-border, etc.) reference
+   the old --text-color / --surface-* CSS variables from PrimeVue 3.
+   PrimeVue 4 Aura uses the --p- prefix. We provide hardcoded fallbacks
+   matching Aura light theme (slate palette) in case --p-* aren't loaded yet. */
+:root {
+  --text-color: var(--p-text-color, #334155);
+  --text-color-secondary: var(--p-text-muted-color, #64748b);
+  --surface-ground: var(--p-surface-ground, #f8fafc);
+  --surface-card: var(--p-surface-0, #ffffff);
+  --surface-border: var(--p-content-border-color, #e2e8f0);
+  --surface-hover: var(--p-surface-100, #f1f5f9);
+}
+
 /* semantic color variables for this project */
 :root {
   --color-background: var(--vt-c-white);

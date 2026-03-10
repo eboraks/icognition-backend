@@ -10,7 +10,7 @@ import logging
 import html
 from datetime import datetime, timezone
 
-from app.models import Document, User, ContentExtraction, PageType, Entity, EntityDocument
+from app.models import Document, User, ContentExtraction, PageType, Entity, EntityDocument, EntityRelationship
 from app.services.base_service import UserIsolatedService
 from app.services.web_fetcher import WebPageFetcher, fetch_web_page
 from app.services.html_content_service import HtmlContentService
@@ -593,15 +593,69 @@ class DocumentService(UserIsolatedService[Document]):
         user_id: str,
         document_id: str  # Changed from int to str for UUID
     ) -> bool:
-        """Delete a document"""
-        
+        """Delete a document and clean up orphaned entities/relationships."""
+
         document = await self.get_document_by_id(user_id, document_id)
         if not document:
             return False
-        
+
+        doc_int_id = document.id
+
+        # 1. Delete relationships sourced from this document
+        await self.session.execute(
+            select(EntityRelationship)
+            .where(EntityRelationship.source_document_id == doc_int_id)
+        )
+        from sqlalchemy import delete as sql_delete
+        await self.session.execute(
+            sql_delete(EntityRelationship)
+            .where(EntityRelationship.source_document_id == doc_int_id)
+        )
+
+        # 2. Find entities linked ONLY to this document (orphans after removal)
+        entity_ids_for_doc = select(EntityDocument.entity_id).where(
+            EntityDocument.document_id == doc_int_id
+        )
+        # Entities that also appear in other documents should be kept
+        entities_in_other_docs = (
+            select(EntityDocument.entity_id)
+            .where(
+                EntityDocument.document_id != doc_int_id,
+                EntityDocument.entity_id.in_(entity_ids_for_doc),
+            )
+        )
+        orphan_entity_ids_result = await self.session.execute(
+            select(EntityDocument.entity_id)
+            .where(
+                EntityDocument.document_id == doc_int_id,
+                EntityDocument.entity_id.notin_(entities_in_other_docs),
+            )
+        )
+        orphan_entity_ids = [row[0] for row in orphan_entity_ids_result.all()]
+
+        # 3. Delete entity_documents links for this document
+        await self.session.execute(
+            sql_delete(EntityDocument).where(EntityDocument.document_id == doc_int_id)
+        )
+
+        # 4. Delete orphaned entities and their remaining relationships
+        if orphan_entity_ids:
+            # Delete any relationships where orphan entities are endpoints
+            await self.session.execute(
+                sql_delete(EntityRelationship).where(
+                    (EntityRelationship.from_entity_id.in_(orphan_entity_ids))
+                    | (EntityRelationship.to_entity_id.in_(orphan_entity_ids))
+                )
+            )
+            await self.session.execute(
+                sql_delete(Entity).where(Entity.id.in_(orphan_entity_ids))
+            )
+            logger.info(f"Cleaned up {len(orphan_entity_ids)} orphaned entities for document {document_id}")
+
+        # 5. Delete the document itself
         await self.session.delete(document)
         await self.session.commit()
-        
+
         logger.info(f"Deleted document {document_id} for user")
         return True
 

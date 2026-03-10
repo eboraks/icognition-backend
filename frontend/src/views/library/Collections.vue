@@ -262,11 +262,11 @@
                 <div class="grid">
                     <div class="col-12 pr-3">
                         <div class="flex flex-column mb-2">
-                            <label for="collectionname" class="pl-2 text-600 text-sm w-full">Collection Name *</label>
+                            <label for="collectionname" class="pl-2 text-color-secondary text-sm w-full">Collection Name *</label>
                             <InputText v-model.trim.lazy="new_study_collection_name" class="flex-auto" autocomplete="off" />
                         </div>
                         <div class="flex flex-column mb-1 mt-3">
-                            <label for="collectiondescription" class="pl-2 text-600 text-sm w-full">Description</label>
+                            <label for="collectiondescription" class="pl-2 text-color-secondary text-sm w-full">Description</label>
                             <Textarea v-model.trim.lazy="new_study_collection_description" rows="5" cols="30" placeholder="Ex: &quot;I am looking to examine contributory factors to muscle retention in a group of elderly people..&quot;" />
                         </div>
                     </div>

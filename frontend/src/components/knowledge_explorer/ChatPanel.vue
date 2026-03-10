@@ -553,7 +553,7 @@ watch(
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  background: var(--p-surface-0);
+  background: #ffffff;
 }
 
 .chat-messages {
@@ -596,8 +596,8 @@ watch(
   width: fit-content;
   padding: 0.9rem 1.1rem;
   border-radius: 14px;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-content-border-color);
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
   box-shadow: 0 8px 16px rgba(15, 23, 42, 0.08);
   word-break: break-word;
   overflow-wrap: anywhere;
@@ -607,6 +607,7 @@ watch(
   white-space: pre-wrap;
   line-height: 1.5;
   font-family: 'Roboto Mono', monospace;
+  color: #334155;
 }
 
 .message-text p {
@@ -655,12 +656,12 @@ watch(
 .message-content p {
   margin: 0 0 0.75rem 0;
   line-height: 1.6;
-  color: var(--p-text-color);
+  color: #334155;
   font-size: 0.95rem;
 }
 
 .system-message .message-content p {
-  color: var(--p-text-color);
+  color: #334155;
 }
 
 .message-content p:last-child {
@@ -676,7 +677,7 @@ watch(
 
 .message-status {
     font-size: 0.8rem;
-    color: var(--p-text-muted-color);
+    color: #64748b;
     margin-top: 0.5rem;
     display: flex;
     align-items: center;
@@ -684,9 +685,9 @@ watch(
 }
 
 .filter-message {
-  background: var(--p-primary-50);
-  border: 1px solid var(--p-primary-200);
-  color: var(--p-primary-700);
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  color: #047857;
   text-align: center;
   margin: 0 auto;
   font-size: 0.85rem;
@@ -697,15 +698,15 @@ watch(
 }
 
 .user-message {
-  background: var(--p-primary-500);
-  color: var(--p-primary-contrast-color);
+  background: #10b981;
+  color: #ffffff;
   border: none;
   box-shadow: 0 8px 16px rgba(45, 122, 138, 0.25);
 }
 
 .user-message p {
   margin: 0;
-  color: var(--p-primary-contrast-color);
+  color: #ffffff;
 }
 
 .action-buttons {
@@ -725,8 +726,8 @@ watch(
 .resources-section {
   margin-top: 0.75rem;
   font-size: 0.9rem;
-  background: var(--p-surface-100);
-  border: 1px dashed var(--p-content-border-color);
+  background: #f1f5f9;
+  border: 1px dashed #e2e8f0;
   border-radius: 0.9rem;
   padding: 0.7rem 1rem;
 }
@@ -738,7 +739,7 @@ watch(
 .resources-section summary {
   font-weight: 600;
   margin-bottom: 0.5rem;
-  color: var(--p-text-color);
+  color: #334155;
 }
 
 .resources-section ul {
@@ -749,16 +750,16 @@ watch(
 
 .resources-section li {
   padding: 0.3rem 0;
-  color: var(--p-text-muted-color);
+  color: #64748b;
 }
 
 .chat-input-container {
   display: flex;
   flex-direction: column;
   padding: 1.1rem 1.4rem;
-  border-top: 1px solid var(--p-content-border-color);
+  border-top: 1px solid #e2e8f0;
   gap: 0.5rem;
-  background: var(--p-surface-card);
+  background: #ffffff;
 }
 
 .quick-actions-row {
@@ -788,15 +789,15 @@ watch(
   width: 100%;
   border-radius: 0.8rem;
   padding-block: 0.8rem;
-  background: var(--p-surface-0);
-  border: 1px solid var(--p-content-border-color);
-  color: var(--p-text-muted-color);
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  color: #64748b;
   padding-left: 1rem;
   font-family: 'Roboto Mono', monospace;
 }
 
 :deep(.chat-input-container .p-autocomplete-input::placeholder) {
-  color: var(--p-text-muted-color);
+  color: #64748b;
   font-family: 'Roboto Mono', monospace;
 }
 
@@ -813,8 +814,8 @@ watch(
 }
 
 .comment-card {
-  background: var(--p-surface-0);
-  border: 1px solid var(--p-content-border-color);
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
   border-radius: 10px;
   padding: 0.75rem 1rem;
   transition: box-shadow 0.15s;
@@ -834,7 +835,7 @@ watch(
 .comment-option-label {
   font-weight: 600;
   font-size: 0.88rem;
-  color: var(--p-primary-600);
+  color: #059669;
 }
 
 .copy-btn {
@@ -848,7 +849,7 @@ watch(
 }
 
 :deep(.copy-btn.copied .p-button-icon) {
-  color: var(--p-green-500) !important;
+  color: #22c55e !important;
 }
 
 .copy-btn.copied {
@@ -858,7 +859,7 @@ watch(
 .comment-card-text {
   font-size: 0.9rem;
   line-height: 1.55;
-  color: var(--p-text-color);
+  color: #334155;
   margin: 0;
   font-family: 'Roboto Mono', monospace;
   white-space: pre-wrap;

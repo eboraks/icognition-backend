@@ -9,7 +9,7 @@
     <Column field="title" header="Title">
       <template #body="{ data }">
         <div class="flex align-items-center">
-          <i :class="getIconForType(data.type)" class="mr-2 text-600"></i>
+          <i :class="getIconForType(data.type)" class="mr-2 text-color-secondary"></i>
           <a 
             v-if="data.url || data.sourceUrl" 
             :href="data.url || data.sourceUrl" 
@@ -31,7 +31,7 @@
     <Column header="Source" style="width:10rem">
       <template #body="{ data }">
         <a v-if="data.sourceUrl" :href="data.sourceUrl" target="_blank" rel="noopener noreferrer" class="text-primary">{{ data.sourceHost }}</a>
-        <span v-else class="text-600">-</span>
+        <span v-else class="text-color-secondary">-</span>
       </template>
     </Column>
     <Column header="Actions" style="width:10rem">
@@ -51,7 +51,7 @@
     <template #expansion="{ data }">
       <div class="p-4 bg-white border-round">
         <div v-if="data.keyPoints" class="text-700" v-html="renderMarkdown(data.keyPoints)"></div>
-        <div v-else class="text-600 text-sm">No AI content available.</div>
+        <div v-else class="text-color-secondary text-sm">No AI content available.</div>
       </div>
     </template>
   </DataTable>

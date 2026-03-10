@@ -1,7 +1,7 @@
 <template>
   <div class="flex flex-column h-full chat-session-list">
     <!-- New Chat button -->
-    <div class="p-2 border-bottom-1 surface-border">
+    <div class="p-2" style="border-bottom: 1px solid #e2e8f0;">
       <Button
         label="New Chat"
         icon="pi pi-plus"
@@ -16,8 +16,8 @@
       <div
         v-for="session in sessions"
         :key="session.id"
-        class="session-row flex align-items-center gap-2 p-2 cursor-pointer border-bottom-1 surface-border"
-        :class="{ 'surface-100': session.id === activeSessionId }"
+        class="session-row flex align-items-center gap-2 p-2 cursor-pointer"
+        :class="{ 'active-session': session.id === activeSessionId }"
         @click="$emit('select', session.id)"
       >
         <!-- Scope badge -->
@@ -26,7 +26,7 @@
         </span>
 
         <!-- Session title -->
-        <span class="flex-1 text-sm text-overflow-ellipsis overflow-hidden white-space-nowrap" :title="session.title">
+        <span class="session-title flex-1 text-overflow-ellipsis overflow-hidden white-space-nowrap" :title="session.title">
           {{ session.title || 'New Chat' }}
         </span>
 
@@ -42,7 +42,7 @@
         />
       </div>
 
-      <div v-if="sessions.length === 0" class="p-3 text-center text-600 text-sm">
+      <div v-if="sessions.length === 0" class="empty-state p-3 text-center">
         No conversations yet
       </div>
     </div>
@@ -84,10 +84,26 @@ const getScopeBadgeTitle = (scopeType?: string): string => {
 <style scoped>
 .session-row {
   transition: background-color 0.15s;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.active-session {
+  background-color: #f1f5f9;
 }
 
 .session-row:hover {
-  background-color: var(--surface-hover);
+  background-color: #f1f5f9;
+}
+
+.session-title {
+  font-size: 0.875rem;
+  color: #334155;
+  white-space: nowrap;
+}
+
+.empty-state {
+  font-size: 0.875rem;
+  color: #64748b;
 }
 
 .session-row:hover .delete-btn {

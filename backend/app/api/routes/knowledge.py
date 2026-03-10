@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,6 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.user_context import UserContext, get_authenticated_user_context
 from app.db.database import get_session
 from app.services.knowledge_service import KnowledgeService
+from app.services.graph_service import GraphService
+from app.api.models.graph_schemas import (
+    SearchResponse, EntityRead, NeighborhoodResponse,
+    RelationshipRead, RelationshipSummary, DocumentSummary,
+    EntitySummary, SubgraphRequest, DocumentRead,
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -117,4 +123,140 @@ async def handle_action(
     except Exception as e:
         logger.error(f"Error handling action: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Graph exploration endpoints ───────────────────────────────────────────────
+
+
+@router.get("/graph/search", response_model=SearchResponse)
+async def graph_search(
+    q: str = Query(..., min_length=1),
+    result_type: Optional[str] = Query(None, pattern="^(entity|relationship|document)$"),
+    entity_type: Optional[str] = None,
+    limit: int = Query(20, ge=1, le=100),
+    threshold: float = Query(0.3, ge=0.0, le=1.0),
+    enrich: bool = Query(False, description="Include KG context for matched entities"),
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Fuzzy search across entities and relationships using pg_trgm."""
+    svc = GraphService(session)
+    search_result = await svc.search(
+        q=q, user_id=user_context.user.id,
+        result_type=result_type, entity_type=entity_type,
+        limit=limit, threshold=threshold,
+    )
+
+    # Optionally enrich with KG context (relationships + documents for matched entities)
+    if enrich:
+        entity_ids = [
+            r["id"] for r in search_result["results"]
+            if r["result_type"] == "entity"
+        ]
+        if entity_ids:
+            search_result["kg_context"] = await svc.get_entity_kg_context(entity_ids[:10])
+
+    return search_result
+
+
+@router.get("/graph/entities/{entity_id}", response_model=EntityRead)
+async def graph_get_entity(
+    entity_id: int,
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Fetch full entity detail including linked documents."""
+    svc = GraphService(session)
+    result = await svc.get_entity(entity_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    return result
+
+
+@router.get("/graph/entities/{entity_id}/neighborhood", response_model=NeighborhoodResponse)
+async def graph_get_neighborhood(
+    entity_id: int,
+    depth: int = Query(1, ge=1, le=2),
+    limit: int = Query(50, ge=1, le=100),
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Fetch 1-hop neighborhood of an entity."""
+    svc = GraphService(session)
+    return await svc.get_neighborhood(entity_id, depth=depth, limit=limit)
+
+
+@router.get("/graph/entities/{entity_id}/relationships", response_model=list[RelationshipSummary])
+async def graph_get_entity_relationships(
+    entity_id: int,
+    direction: str = Query("both", pattern="^(from|to|both)$"),
+    limit: int = Query(50, ge=1, le=100),
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """List relationships connected to an entity."""
+    svc = GraphService(session)
+    return await svc.get_entity_relationships(entity_id, direction=direction, limit=limit)
+
+
+@router.get("/graph/entities/{entity_id}/documents", response_model=list[DocumentSummary])
+async def graph_get_entity_documents(
+    entity_id: int,
+    limit: int = Query(50, ge=1, le=100),
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """List documents an entity appears in."""
+    svc = GraphService(session)
+    return await svc.get_entity_documents(entity_id, limit=limit)
+
+
+@router.get("/graph/relationships/{relationship_id}", response_model=RelationshipRead)
+async def graph_get_relationship(
+    relationship_id: int,
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Fetch full relationship detail."""
+    svc = GraphService(session)
+    result = await svc.get_relationship(relationship_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Relationship not found")
+    return result
+
+
+@router.post("/graph/subgraph", response_model=NeighborhoodResponse)
+async def graph_get_subgraph(
+    request: SubgraphRequest,
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Batch-fetch a subgraph for multiple entity IDs."""
+    svc = GraphService(session)
+    return await svc.get_subgraph(request.entity_ids, request.include_relationships)
+
+
+@router.get("/graph/documents/{document_id}", response_model=DocumentRead)
+async def graph_get_document(
+    document_id: int,
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Fetch full document detail including ai_markdown_content."""
+    svc = GraphService(session)
+    result = await svc.get_document(document_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return result
+
+
+@router.get("/graph/documents/{document_id}/subgraph", response_model=NeighborhoodResponse)
+async def graph_get_document_subgraph(
+    document_id: int,
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Fetch full subgraph for a document."""
+    svc = GraphService(session)
+    return await svc.get_document_subgraph(document_id)
 

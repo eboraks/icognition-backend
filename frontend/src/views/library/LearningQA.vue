@@ -1,7 +1,7 @@
 <template>
   <div class="chat-layout flex h-full">
     <!-- Session sidebar -->
-    <div class="session-sidebar border-right-1 surface-border flex flex-column" style="width: 260px; min-width: 200px;">
+    <div class="session-sidebar flex flex-column" style="width: 260px; min-width: 200px; border-right: 1px solid #e2e8f0;">
       <ChatSessionList
         :sessions="chatStore.sessions"
         :active-session-id="chatStore.activeSession?.id ?? null"
@@ -19,9 +19,9 @@
         :chat-session-id="chatStore.activeSession.id"
       />
       <div v-else class="flex-1 flex align-items-center justify-content-center">
-        <div class="text-center text-600">
+        <div class="text-center" style="color: #64748b;">
           <i class="pi pi-comments text-4xl mb-3 block"></i>
-          <p class="text-lg mb-3">No conversation selected</p>
+          <p class="text-lg mb-3" style="color: #334155;">No conversation selected</p>
           <Button label="Start a new chat" icon="pi pi-plus" @click="handleCreateSession" />
         </div>
       </div>

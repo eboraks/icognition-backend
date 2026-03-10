@@ -1,5 +1,10 @@
 import axios from 'axios';
 import { getAuth } from 'firebase/auth';
+import type {
+  SearchResponse, EntityRead, NeighborhoodResponse,
+  RelationshipRead, RelationshipSummary, DocumentSummary,
+  DocumentRead,
+} from '@/types/graph';
 
 const apiBaseUrl: string = import.meta.env.VITE_APP_API_BASE_URL || '';
 
@@ -106,6 +111,58 @@ export const knowledgeService = {
 
   getEntityRelationships(entityId: number): Promise<{ data: EntityRelationshipsResponse }> {
     return apiClient.get(`/api/v1/knowledge/entity/${entityId}/relationships`);
+  },
+
+  // ── Graph exploration endpoints ──────────────────
+
+  graphSearch(q: string, params?: {
+    result_type?: string;
+    entity_type?: string;
+    limit?: number;
+    threshold?: number;
+  }): Promise<{ data: SearchResponse }> {
+    return apiClient.get('/api/v1/knowledge/graph/search', { params: { q, ...params } });
+  },
+
+  getGraphEntity(entityId: number): Promise<{ data: EntityRead }> {
+    return apiClient.get(`/api/v1/knowledge/graph/entities/${entityId}`);
+  },
+
+  getNeighborhood(entityId: number, params?: {
+    depth?: number;
+    limit?: number;
+  }): Promise<{ data: NeighborhoodResponse }> {
+    return apiClient.get(`/api/v1/knowledge/graph/entities/${entityId}/neighborhood`, { params });
+  },
+
+  getGraphRelationship(relationshipId: number): Promise<{ data: RelationshipRead }> {
+    return apiClient.get(`/api/v1/knowledge/graph/relationships/${relationshipId}`);
+  },
+
+  getGraphEntityRelationships(entityId: number, params?: {
+    direction?: string;
+    limit?: number;
+  }): Promise<{ data: RelationshipSummary[] }> {
+    return apiClient.get(`/api/v1/knowledge/graph/entities/${entityId}/relationships`, { params });
+  },
+
+  getGraphEntityDocuments(entityId: number, limit?: number): Promise<{ data: DocumentSummary[] }> {
+    return apiClient.get(`/api/v1/knowledge/graph/entities/${entityId}/documents`, { params: { limit } });
+  },
+
+  getSubgraph(entityIds: number[], includeRelationships = true): Promise<{ data: NeighborhoodResponse }> {
+    return apiClient.post('/api/v1/knowledge/graph/subgraph', {
+      entity_ids: entityIds,
+      include_relationships: includeRelationships,
+    });
+  },
+
+  getGraphDocument(documentId: number): Promise<{ data: DocumentRead }> {
+    return apiClient.get(`/api/v1/knowledge/graph/documents/${documentId}`);
+  },
+
+  getDocumentSubgraph(documentId: number): Promise<{ data: NeighborhoodResponse }> {
+    return apiClient.get(`/api/v1/knowledge/graph/documents/${documentId}/subgraph`);
   },
 };
 

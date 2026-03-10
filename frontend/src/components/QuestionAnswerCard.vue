@@ -21,10 +21,10 @@
                             <p v-else class="flex-grow-1 py-1 text-sm text-black-alpha-90 border-round">{{qanda?.answer}}</p>
                         </div>
                         <div class="flex-row mx-3">
-                            <Button type="button" class="bg-white text-600 border-none" size="small" icon="pi pi-comment" @click="handleHightLightCitiation()" />
+                            <Button type="button" class="bg-white text-color-secondary border-none" size="small" icon="pi pi-comment" @click="handleHightLightCitiation()" />
 
-                            <Button v-if="qanda?.status === 'COMPLETED_NO_SAVE'" 
-                                type="button" class="bg-transparent border-transparent border-0 text-500 flex-shrink-0 align-content-start flex-wrap pb-0 pr-0" 
+                            <Button v-if="qanda?.status === 'COMPLETED_NO_SAVE'"
+                                type="button" class="bg-transparent border-transparent border-0 text-color-secondary flex-shrink-0 align-content-start flex-wrap pb-0 pr-0" 
                                 size="large" aria-label="Save" icon="pi pi-save" />
                         </div>
                     </div>

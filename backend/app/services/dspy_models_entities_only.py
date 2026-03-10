@@ -7,7 +7,11 @@ from typing import List, Literal
 from pydantic import BaseModel, Field
 
 # --- EntityType Literal ---
-EntityType = Literal["organization", "person", "topic", "location", "event", "technology", "product", "institution"]
+EntityType = Literal[
+    "person", "organization", "institution", "location", "event",
+    "technology", "product", "science", "medical_condition",
+    "organism", "regulation", "financial", "creative_work", "concept",
+]
 
 
 # --- Entity Model ---

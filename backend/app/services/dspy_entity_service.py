@@ -34,14 +34,20 @@ Return a valid JSON object with a list of entities.
     - INCLUDE: Main people, organizations, locations, events, concepts, products, technologies
 
 2.  **Entity Types:**
-    - organization: Companies, institutions, government bodies
     - person: Key individuals mentioned (not authors/photographers)
-    - topic: Main subjects or themes
+    - organization: Companies, institutions, government bodies
+    - institution: Academic or governmental institutions
     - location: Important places
     - event: Specific events or happenings
-    - technology: Technologies or technical concepts
+    - technology: Technologies, frameworks, or technical concepts
     - product: Products or services
-    - institution: Academic or governmental institutions
+    - science: Scientific disciplines, theories, research fields (e.g. "Quantum Physics", "Machine Learning")
+    - medical_condition: Diseases, disorders, symptoms, health conditions (e.g. "Breast Cancer", "Diabetes")
+    - organism: Biological species, animals, plants, microorganisms (e.g. "Macaca Mulatta", "E. Coli", "Redwood")
+    - regulation: Laws, policies, standards, treaties (e.g. "GDPR", "Paris Agreement")
+    - financial: Financial instruments, markets, economic concepts (e.g. "S&P 500", "Inflation")
+    - creative_work: Books, films, artworks, publications (e.g. "The Great Gatsby")
+    - concept: Abstract ideas, principles, or themes that don't fit above types (e.g. "Democracy", "Supply Chain")
 
 3.  **Quality over Quantity:**
     - Extract up to 15 entities maximum.

@@ -89,8 +89,9 @@ async def get_session_messages(
     Get all messages for a specific chat session.
     """
     try:
-        # TODO: Add validation to ensure the user owns the session
         return await chat_session_service.get_session_messages(session_id=session_id, user_id=user_context.user.id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Chat session not found")
     except Exception as e:
         from app.core.config import settings
         if settings.DISABLE_AUTH:

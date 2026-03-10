@@ -5,11 +5,16 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 
 from app.core.config import settings
 from app.chat_workflows.tools import get_google_search_tool, create_retrieve_documents_tool, create_fetch_social_post_tool, create_world_context_tool
 from app.services.prompt_service import PromptService
 from app.services.prompt_utils import PromptType
+from app.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 # --- State Definition ---
 
@@ -21,6 +26,8 @@ class AgentState(TypedDict):
     latest_query: str
     is_satisfactory: bool
     is_social_writing: bool
+    extracted_entities: List[str]
+    kg_context: str
 
 # --- Structured Outputs ---
 
@@ -29,12 +36,116 @@ class IntentClassification(TypedDict):
     refined_query: str
     reasoning: str
     is_social_writing: bool
+    key_entities: List[str]
 
 class ReflectionOutput(TypedDict):
     critique: str
     needs_search: bool
     search_query: str
     is_satisfactory: bool
+
+# --- Knowledge Graph Entity Resolution ---
+
+async def resolve_entities_from_query(
+    entity_names: List[str],
+    user_id: str,
+    db_session: AsyncSession,
+    similarity_threshold: float = 0.3,
+    max_entities: int = 10,
+) -> str:
+    """
+    Resolve a list of entity names against the knowledge graph using fuzzy matching.
+    Returns a formatted string with matched entities and their relationships,
+    ready to be injected into the LLM context.
+    """
+    if not entity_names:
+        return ""
+
+    all_entity_ids = []
+    entity_map: Dict[int, dict] = {}
+
+    for name in entity_names[:5]:  # cap at 5 to avoid slow queries
+        sql = text("""
+            SELECT DISTINCT ON (e.name, e.type)
+                   e.id, e.name, e.type, e.description,
+                   similarity(e.name, :q) AS sim
+            FROM entities e
+            WHERE similarity(e.name, :q) >= :threshold
+              AND (e.user_id = :user_id OR e.user_id IS NULL)
+            ORDER BY e.name, e.type, sim DESC
+            LIMIT 5
+        """)
+        result = await db_session.execute(sql, {
+            "q": name,
+            "threshold": similarity_threshold,
+            "user_id": user_id,
+        })
+        for row in result.mappings().all():
+            eid = row["id"]
+            if eid not in entity_map:
+                entity_map[eid] = {
+                    "id": eid,
+                    "name": row["name"],
+                    "type": row["type"],
+                    "description": row["description"],
+                    "similarity": round(float(row["sim"]), 3),
+                }
+                all_entity_ids.append(eid)
+
+    if not all_entity_ids:
+        return ""
+
+    # Fetch relationships between/involving matched entities
+    rels_sql = text("""
+        SELECT r.relationship_type,
+               e1.name AS from_name, e1.type AS from_type,
+               e2.name AS to_name, e2.type AS to_type
+        FROM entity_relationships r
+        JOIN entities e1 ON e1.id = r.from_entity_id
+        JOIN entities e2 ON e2.id = r.to_entity_id
+        WHERE r.from_entity_id = ANY(:ids) OR r.to_entity_id = ANY(:ids)
+        LIMIT 30
+    """)
+    rels_result = await db_session.execute(rels_sql, {"ids": all_entity_ids})
+    relationships = rels_result.mappings().all()
+
+    # Fetch documents linked to these entities
+    docs_sql = text("""
+        SELECT DISTINCT e.name AS entity_name, d.title AS doc_title
+        FROM entity_documents ed
+        JOIN entities e ON e.id = ed.entity_id
+        JOIN document d ON d.id = ed.document_id
+        WHERE ed.entity_id = ANY(:ids)
+        ORDER BY e.name, d.title
+        LIMIT 20
+    """)
+    docs_result = await db_session.execute(docs_sql, {"ids": all_entity_ids})
+    entity_docs = docs_result.mappings().all()
+
+    # Format the context
+    parts = ["[Knowledge Graph Context]"]
+
+    parts.append("Entities found in your library:")
+    for e in entity_map.values():
+        desc = f" — {e['description']}" if e["description"] else ""
+        parts.append(f"  • [{e['type']}] {e['name']}{desc}")
+
+    if relationships:
+        parts.append("\nRelationships:")
+        seen = set()
+        for r in relationships:
+            rel_key = (r["from_name"], r["relationship_type"], r["to_name"])
+            if rel_key not in seen:
+                seen.add(rel_key)
+                parts.append(f"  • {r['from_name']} --[{r['relationship_type']}]--> {r['to_name']}")
+
+    if entity_docs:
+        parts.append("\nAppears in documents:")
+        for ed in entity_docs:
+            parts.append(f"  • {ed['entity_name']} → \"{ed['doc_title']}\"")
+
+    return "\n".join(parts)
+
 
 # --- Graph Builder Helper ---
 
@@ -81,6 +192,8 @@ def build_research_graph(
     retrieve_tool=None,
     kg_tool=None,
     prompts: Optional[GraphPrompts] = None,
+    db_session: Optional[AsyncSession] = None,
+    user_id: Optional[str] = None,
 ):
     """
     Builds the compiled StateGraph for the Reflective Research Agent.
@@ -91,6 +204,8 @@ def build_research_graph(
         prompts: Pre-fetched prompt dict from fetch_graph_prompts().
                  All three prompt types (CHAT_INTENT_CLASSIFICATION,
                  CHAT_AGENT_SYSTEM, CHAT_REFLECTION) must be present.
+        db_session: AsyncSession for KG entity resolution (optional).
+        user_id: User ID for scoping KG queries (optional).
     """
     if prompts is None:
         raise ValueError(
@@ -142,12 +257,32 @@ def build_research_graph(
             config={"run_name": PromptType.CHAT_INTENT_CLASSIFICATION.value}
         )
         
-          
+
         return {
             "latest_query": result["refined_query"],
             "intent_description": result["describe_the_user_message_intent"],
             "is_social_writing": result.get("is_social_writing", False),
+            "extracted_entities": result.get("key_entities", []),
         }
+
+    async def enrich_kg_node(state: AgentState):
+        """Resolves extracted entity names against the knowledge graph and builds context."""
+        entities = state.get("extracted_entities", [])
+        if not entities or not db_session or not user_id:
+            return {"kg_context": ""}
+
+        try:
+            kg_context = await resolve_entities_from_query(
+                entity_names=entities,
+                user_id=user_id,
+                db_session=db_session,
+            )
+            if kg_context:
+                logger.info(f"KG enrichment found context for entities: {entities}")
+            return {"kg_context": kg_context}
+        except Exception as e:
+            logger.warning(f"KG enrichment failed (non-fatal): {e}")
+            return {"kg_context": ""}
 
     _SOCIAL_WRITER_FALLBACK = (
         "You are an expert social media comment writer. Your task is to write thoughtful, "
@@ -176,13 +311,14 @@ def build_research_graph(
     )
 
     async def _run_generate(state: AgentState, system_msg: str, run_name: str) -> dict:
-        """Shared generation logic: injects intent context and calls the LLM with tools."""
+        """Shared generation logic: injects intent + KG context and calls the LLM with tools."""
         messages = state["messages"]
         intent_desc = state.get("intent_description")
         refined_query = state.get("latest_query")
+        kg_context = state.get("kg_context", "")
 
         prompt_msgs = list(messages)
-        if intent_desc or refined_query:
+        if intent_desc or refined_query or kg_context:
             last_msg = prompt_msgs[-1]
             if isinstance(last_msg, HumanMessage):
                 context_block = "\n\n[Analysis Context]"
@@ -190,6 +326,8 @@ def build_research_graph(
                     context_block += f"\nIntent: {intent_desc}"
                 if refined_query:
                     context_block += f"\nRefined Query: {refined_query}"
+                if kg_context:
+                    context_block += f"\n\n{kg_context}"
                 prompt_msgs[-1] = HumanMessage(content=str(last_msg.content) + context_block)
 
         prompt_msgs = [SystemMessage(content=system_msg)] + prompt_msgs
@@ -308,6 +446,7 @@ def build_research_graph(
     graph = StateGraph(AgentState)
 
     graph.add_node("intent_node", intent_node)
+    graph.add_node("enrich_kg_node", enrich_kg_node)
     graph.add_node("generate_node", generate_node)
     graph.add_node("social_generate_node", social_generate_node)
     graph.add_node("reflect_node", reflect_node)
@@ -317,7 +456,8 @@ def build_research_graph(
     graph.add_node("tools", tools_node)
 
     graph.add_edge(START, "intent_node")
-    graph.add_conditional_edges("intent_node", route_to_generate)
+    graph.add_edge("intent_node", "enrich_kg_node")
+    graph.add_conditional_edges("enrich_kg_node", route_to_generate)
 
     def route_after_generate(state: AgentState) -> str:
         """Route to tools if tool_calls present, otherwise reflect."""

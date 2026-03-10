@@ -1,6 +1,12 @@
 <template>
   <div class="knowledge-explorer-view flex flex-column h-full p-3 gap-3">
 
+    <!-- View toggle -->
+    <div class="flex align-items-center gap-2">
+      <Button label="List" icon="pi pi-list" :outlined="false" size="small" disabled />
+      <Button label="Graph" icon="pi pi-sitemap" outlined size="small" @click="router.push({ name: 'knowledge-graph' })" />
+    </div>
+
     <!-- Entity detail panel (single entity selected) -->
     <div v-if="singleEntity" class="entity-detail surface-card border-round border-1 border-200 p-4">
       <div class="flex align-items-center gap-2 mb-3">

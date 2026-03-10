@@ -129,6 +129,8 @@ const props = defineProps({
   }
 });
 
+const emit = defineEmits(['session-invalid']);
+
 const messages = ref([]);
 const inputMessage = ref('');
 const messagesContainer = ref(null);
@@ -319,7 +321,7 @@ const loadMessages = async () => {
             name: 'get-chat-messages',
             data: { sessionId: props.sessionId }
         });
-        
+
         if (response && response.success) {
             console.log('ChatInterface: loaded', response.data.length, 'messages');
             const fetchedMessages = response.data.map(msg => ({
@@ -329,8 +331,12 @@ const loadMessages = async () => {
                 statusText: '',
                 commentOptions: msg.role !== 'user' ? parseCommentOptions(msg.content) : null,
             }));
-            
+
             messages.value = fetchedMessages;
+        } else if (response && !response.success) {
+            // Session not found or not owned — tell parent to re-create
+            console.log('ChatInterface: session invalid or not found, requesting re-creation');
+            emit('session-invalid', props.sessionId);
         }
     } catch (error) {
         console.log('[ERROR]', 'Failed to load messages:', error);
@@ -505,6 +511,12 @@ const sendMessage = async () => {
                  }
              });
         } else {
+             // Check if session is invalid (404 from backend)
+             if (response.error && (response.error.includes('404') || response.error.includes('not found') || response.error.includes('Not Found'))) {
+                 console.log('ChatInterface: session not found on send, requesting re-creation');
+                 emit('session-invalid', props.sessionId);
+                 return;
+             }
              throw new Error(response.error || 'Failed to send message');
         }
     } catch (error) {

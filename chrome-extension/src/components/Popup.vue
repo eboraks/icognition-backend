@@ -105,11 +105,12 @@
             </div>
             
             <div v-if="currentChatSessionId" class="chat-container flex-grow-1 overflow-hidden" tabindex="-1">
-                <ChatInterface 
-                    :key="currentChatSessionId + selectedFontSize" 
-                    :sessionId="currentChatSessionId" 
+                <ChatInterface
+                    :key="currentChatSessionId + selectedFontSize"
+                    :sessionId="currentChatSessionId"
                     :initialSummary="document_summary"
-                    :fontSize="fontSizeMap[selectedFontSize]" />
+                    :fontSize="fontSizeMap[selectedFontSize]"
+                    @session-invalid="handleSessionInvalid" />
             </div>
             <div v-else-if="isCreatingChatSession" class="flex align-items-center justify-content-center p-4">
                  <ProgressSpinner style="width:40px;height:40px" strokeWidth="4" />
@@ -445,6 +446,17 @@ const loadSettings = async () => {
             selectedFontSize.value = result.fontSize;
             console.log('Loaded font size preference:', selectedFontSize.value);
         }
+        // Restore chat session and document ID caches from session storage
+        // so they survive panel refreshes within the same browser session
+        const sessionData = await chrome.storage.session.get(['chatSessionsByUrl', 'documentIdsByUrl']);
+        if (sessionData.chatSessionsByUrl) {
+            chatSessionsByUrl.value = sessionData.chatSessionsByUrl;
+            console.log('Restored chatSessionsByUrl from session storage:', Object.keys(chatSessionsByUrl.value).length, 'entries');
+        }
+        if (sessionData.documentIdsByUrl) {
+            documentIdsByUrl.value = sessionData.documentIdsByUrl;
+            console.log('Restored documentIdsByUrl from session storage:', Object.keys(documentIdsByUrl.value).length, 'entries');
+        }
     } catch (error) {
         console.log('[ERROR]', 'Error loading settings:', error);
     }
@@ -620,8 +632,28 @@ onUnmounted(() => {
     // document.removeEventListener('keydown', handleScrollKeyEvents);
 });
 
+// Validate that the user still has a valid auth token.
+// Returns true if authenticated, false otherwise (and sets status to UNAUTHENTICATED).
+const validateAuth = async () => {
+    try {
+        const response = await chrome.runtime.sendMessage({ name: 'validate-session' });
+        if (response && response.valid) {
+            return true;
+        }
+    } catch (e) {
+        console.log('validateAuth: error checking session:', e);
+    }
+    // Token expired or missing — force login prompt
+    user.value = null;
+    chrome.storage.session.remove('session_user');
+    status.value = AppStatusEnum.UNAUTHENTICATED;
+    statusMessage.value = AppStatusEnum.UNAUTHENTICATED.message;
+    console.log('validateAuth: session invalid, prompting login');
+    return false;
+};
+
 // Add the handleTabChange function
-const handleTabChange = (tab) => {
+const handleTabChange = async (tab) => {
     // Prevent duplicate processing if the cleaned URL hasn't changed.
     // Compare cleaned URLs so query-string-only changes (e.g. ?mod=...) are ignored.
     if (cleanUrl(active_tab.value?.url || '') === cleanUrl(tab.url || '')) {
@@ -638,6 +670,14 @@ const handleTabChange = (tab) => {
 
     // Advance token so any in-flight async ops from the previous tab know to bail out.
     advanceToken();
+
+    // Verify auth token is still valid before proceeding.
+    // Without this, cached summaries/sessions would show the UI as if logged in
+    // even after the token has expired, and the user only discovers it on first API call.
+    if (!(await validateAuth())) {
+        active_tab.value = tab;
+        return;
+    }
 
     console.log('Current status before tab change:', status.value.state);
     console.log('Current active_tab:', active_tab.value?.url);
@@ -676,12 +716,12 @@ const handleTabChange = (tab) => {
         console.log('Found saved summary in cache for URL:', currentUrl, summariesByUrl.value[currentUrl]);
         document_summary.value = summariesByUrl.value[currentUrl];
         bookmark.value = bookmarksByUrl.value[currentUrl] || null;
-        
+
         if (documentIdsByUrl.value[currentUrl]) {
             // First check if the cached summary has content
             const summary = document_summary.value;
             const isMinimal = !summary || (!summary.summary && !summary.markdown_content);
-            
+
             if (isMinimal) {
                 console.log('Cached summary is minimal or missing content, setting status to PROCESSING and triggering refresh for URL:', currentUrl);
                 status.value = AppStatusEnum.PROCESSING;
@@ -693,6 +733,13 @@ const handleTabChange = (tab) => {
                 initializeChatSession(currentUrl, documentIdsByUrl.value[currentUrl]);
             }
         }
+    } else if (documentIdsByUrl.value[currentUrl] && chatSessionsByUrl.value[currentUrl]) {
+        // Fast path: no in-memory summary but we have persisted document/session IDs
+        // (happens after panel refresh). Immediately restore chat, fetch summary in background.
+        console.log('Restoring from persisted session cache for URL:', currentUrl);
+        currentChatSessionId.value = chatSessionsByUrl.value[currentUrl];
+        // Fetch the full document data in the background to populate the summary
+        searchBookmarksByUrl(currentUrl);
     } else if (user.value) {
         // If no saved chat but user is logged in, check for bookmarks
         status.value = AppStatusEnum.SERVER_READY;
@@ -708,6 +755,11 @@ const handleTabChange = (tab) => {
     
     console.log('Final status after tab change:', status.value.state);
 };
+
+// Persist documentIdsByUrl to session storage whenever it changes
+watch(documentIdsByUrl, (val) => {
+    chrome.storage.session.set({ documentIdsByUrl: { ...val } }).catch(() => {});
+}, { deep: true });
 
 watch(user, (after, before) => {
     if (after) {
@@ -726,6 +778,8 @@ watch(user, (after, before) => {
         bookmarksByUrl.value = {};
         documentIdsByUrl.value = {};
         chatSessionsByUrl.value = {};
+        // Clear persisted session caches
+        chrome.storage.session.remove(['chatSessionsByUrl', 'documentIdsByUrl']).catch(() => {});
         
         // Explicitly clear current view state
         document_summary.value = null;
@@ -1066,6 +1120,8 @@ const initializeChatSession = async (url, docId) => {
             console.log('Chat session created:', response.data);
             chatSessionsByUrl.value[url] = response.data.id;
             currentChatSessionId.value = response.data.id;
+            // Persist to session storage so it survives panel refreshes
+            chrome.storage.session.set({ chatSessionsByUrl: chatSessionsByUrl.value }).catch(() => {});
         } else {
             if (response.error && typeof response.error === 'string' && response.error.includes('Authentication token not available')) {
                 console.log('Failed to create chat session (expected if logged out):', response.error);
@@ -1085,6 +1141,28 @@ const initializeChatSession = async (url, docId) => {
         console.log('[ERROR]', 'Error initializing chat:', error);
     } finally {
         isCreatingChatSession.value = false;
+    }
+};
+
+// Handle invalid/stale session: clear cache and force re-creation
+const handleSessionInvalid = (invalidSessionId) => {
+    console.log('handleSessionInvalid: session', invalidSessionId, 'is invalid, clearing cache and re-creating');
+    // Remove the stale session from all caches
+    for (const [url, sid] of Object.entries(chatSessionsByUrl.value)) {
+        if (sid === invalidSessionId) {
+            delete chatSessionsByUrl.value[url];
+        }
+    }
+    currentChatSessionId.value = null;
+    // Persist the cleanup
+    chrome.storage.session.set({ chatSessionsByUrl: chatSessionsByUrl.value }).catch(() => {});
+    // Re-create the session for the current document
+    if (active_tab.value && active_tab.value.url) {
+        const currentUrl = cleanUrl(active_tab.value.url);
+        const docId = documentIdsByUrl.value[currentUrl];
+        if (docId) {
+            initializeChatSession(currentUrl, docId);
+        }
     }
 };
 

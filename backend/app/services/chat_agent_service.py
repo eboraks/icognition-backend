@@ -302,9 +302,19 @@ class ChatAgentService:
                             if doc.ai_is_about:
                                 context_parts.append(f"Summary: {doc.ai_is_about}")
 
-                            # Add full document content so the agent can reference specific details
+                            # Add AI-generated markdown summary
                             if doc.ai_markdown_content:
-                                context_parts.append(f"\nDocument Content:\n{doc.ai_markdown_content}")
+                                context_parts.append(f"\nDocument Analysis:\n{doc.ai_markdown_content}")
+
+                            # Add the full original document content so the agent can reference
+                            # specific details, paragraphs, and quotes that may not appear in the summary
+                            if doc.content:
+                                from app.chat_workflows.tools import strip_html_and_clean
+                                full_content = strip_html_and_clean(doc.content)
+                                # Truncate very long documents to avoid exceeding context limits
+                                if len(full_content) > 15000:
+                                    full_content = full_content[:15000] + "\n... [content truncated]"
+                                context_parts.append(f"\nFull Document Content:\n{full_content}")
                             
                             # Prepend to system prompt
                             context_header = "\n".join(context_parts)
@@ -330,6 +340,8 @@ class ChatAgentService:
                     retrieve_tool=retrieve_tool,
                     kg_tool=kg_tool,
                     prompts=graph_prompts,
+                    db_session=db_session,
+                    user_id=user_id,
                 )
                 logger.info(f"[Session {session_id}] Created Research Graph agent with tools and checkpointer")
             except Exception as e:

@@ -85,10 +85,7 @@ const routes: Array<RouteRecordRaw> = [
   {
     path: '/knowledge-explorer',
     name: 'knowledge-explorer',
-    components: {
-      default: () => import("../views/library/KnowledgeExplorer.vue"),
-      sidebar: () => import("@/components/knowledge_explorer/FilterTree.vue")
-    }
+    component: () => import("@/components/knowledge_explorer/GraphExplorer.vue"),
   },
   {
     path: '/docxray/:id',
