@@ -16,7 +16,7 @@
           <router-link 
             to="/library" 
             class="layout-topbar-menu-item"
-            :class="{ 'active': $route.name === 'library' || $route.name === 'docxray' }"
+            :class="{ 'active': $route.name === 'library' }"
           >
             My Library
           </router-link>

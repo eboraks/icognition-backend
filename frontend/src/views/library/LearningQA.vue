@@ -30,7 +30,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, watch } from 'vue';
+import { onMounted, watch, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import Button from 'primevue/button';
 import { useChatStore } from '@/stores/chat_store.js';
@@ -42,6 +42,7 @@ const route = useRoute();
 const router = useRouter();
 const chatStore = useChatStore();
 const authStore = useAuthStore();
+const initialized = ref(false);
 
 onMounted(async () => {
   if (!authStore.currentUser) return;
@@ -57,10 +58,12 @@ onMounted(async () => {
     await chatStore.switchActiveSession(firstId);
     router.replace({ name: 'chats', params: { id: firstId } });
   }
+  initialized.value = true;
 });
 
-// Sync when user navigates directly to /chats/:id
+// Sync when user navigates directly to /chats/:id (skip during initial mount)
 watch(() => route.params.id, async (newId) => {
+  if (!initialized.value) return;
   const id = Number(newId);
   if (!isNaN(id) && id > 0 && chatStore.activeSession?.id !== id) {
     await chatStore.switchActiveSession(id);

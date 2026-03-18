@@ -1,6 +1,7 @@
 <script setup lang="ts">
     import moment from 'moment';
     import { useDocumentStore } from '@/stores/documents_store';
+    import { useChatStore } from '@/stores/chat_store';
     import { useStudyCollection } from '@/composables/useStudyCollection';
     import user_state from '@/composables/getUser';
     import { defineAsyncComponent, ref, onMounted } from 'vue';
@@ -17,7 +18,15 @@
     import { useToast } from 'primevue/usetoast';
 
     const documentStore = useDocumentStore();
+    const chatStore = useChatStore();
     const { docs, answer, resp_type, errorLibrary, isPendingLibrary, getDocuments, getSubtopicsNodes, getEntitiesNames, deleteDocument, entities_names } = documentStore;
+
+    const navigateToDocChat = async (doc: any) => {
+        const session = await chatStore.getOrCreateDocumentSession(doc.id, doc.title);
+        if (session) {
+            router.push({ name: 'chats', params: { id: session.id } });
+        }
+    };
     const { studyCollections, studyCollection, errorStudyCollection, isPendingStudyCollection, getStudyCollections, getStudyCollection, 
         getRelatedEntities, postStudyCollection, postCollectionDocumentLink, postCollectionDocumentUnlink, 
         deleteStudyCollection, candidateDocs, getCandidatesDocs, searchCollections, searchResult } = useStudyCollection();
@@ -331,13 +340,10 @@
                                         <div class="flex flex-row align-items-center">
                                             <i v-if="slotProps.data.source_type == 'web'" class="pi pi-globe"></i>
                                             <i v-if="slotProps.data.source_type == 'pdf'" class="pi pi-pdf"></i>
-                                            <router-link 
-                                                :to="{
-                                                    name: 'docxray',
-                                                    params: {id: slotProps.data.id}
-                                                }"
-                                                class="text-700 py-1 ml-2">{{slotProps.data.title}}
-                                            </router-link>
+                                            <a
+                                                class="text-700 py-1 ml-2 cursor-pointer text-primary hover:underline"
+                                                @click="navigateToDocChat(slotProps.data)">{{slotProps.data.title}}
+                                            </a>
                                         </div>
                                     </template>
                                 </Column>

@@ -91,15 +91,26 @@ def extract_text_from_content(content) -> str:
             if isinstance(item, str):
                 parts.append(item)
             elif isinstance(item, dict):
-                # Chat model chunks commonly return {"type": "output_text", "text": "..."}
+                # Gemini returns {"type": "text", "text": "..."} parts
                 text_value = item.get("text")
                 if text_value:
                     parts.append(str(text_value))
+                elif item.get("content"):
+                    parts.append(str(item["content"]))
             else:
                 text_attr = getattr(item, "text", None)
                 if text_attr:
                     parts.append(str(text_attr))
-        return "".join(parts)
+        result = "".join(parts)
+        if not result and content:
+            # List was non-empty but no text extracted — log and fallback
+            logger.warning(
+                f"extract_text_from_content: non-empty list yielded no text. "
+                f"Types: {[type(i).__name__ for i in content[:3]]}. "
+                f"First item: {repr(content[0])[:200] if content else 'N/A'}"
+            )
+            return str(content)
+        return result
 
     # Fallback: convert to string
     return str(content)
@@ -202,7 +213,7 @@ class ChatAgentService:
                 logger.error(f"Error getting suggestion for session {session_id}: {e}", exc_info=True)
                 return ""
 
-    async def get_stream(self, session_id: int, message: str, user_id: str):
+    async def get_stream(self, session_id: int, message: str, user_id: str, skill_override: Optional[str] = None):
         """
         Stream agent responses for a chat message using LangGraph.
         The agent maintains conversation history via PostgreSQL checkpointer using thread_id.
@@ -342,6 +353,7 @@ class ChatAgentService:
                     prompts=graph_prompts,
                     db_session=db_session,
                     user_id=user_id,
+                    skill_override=skill_override,
                 )
                 logger.info(f"[Session {session_id}] Created Research Graph agent with tools and checkpointer")
             except Exception as e:
@@ -450,22 +462,26 @@ class ChatAgentService:
                         # If the last message is an AIMessage, we BUFFER it.
                         # We do NOT yield it yet. We wait for the next step (Reflection) to validate it.
                         if isinstance(last_msg, AIMessage):
-                            # If we already had a pending one and this is NEW, it means we replaced it?
-                            # Or maybe it's the same one (streaming updates?).
-                            # In 'values' mode, we get the whole list.
-                            # So 'last_msg' IS the potential answer.
-                            if last_msg != pending_ai_message:
-                                logger.info(f"[Session {session_id}] Buffering new AI message candidate.")
-                                pending_ai_message = last_msg
-                            
-                            # If is_satisfactory is TRUE in this chunk, we can yield it immediately!
-                            # Because the graph state says it's good.
-                            if chunk.get("is_satisfactory"):
-                                logger.info(f"[Session {session_id}] Message verified satisfactory. Yielding.")
-                                text = extract_text_from_content(pending_ai_message.content)
-                                yield {"type": "content", "content": text}
-                                pending_ai_message = None # Flushed
-                                return # End stream, we are done
+                            # Skip tool-calling messages — they are intermediate, not final answers
+                            if last_msg.tool_calls:
+                                logger.info(f"[Session {session_id}] Skipping AI message with tool_calls (not a final answer).")
+                                pending_ai_message = None
+                            else:
+                                if last_msg != pending_ai_message:
+                                    logger.info(f"[Session {session_id}] Buffering new AI message candidate.")
+                                    pending_ai_message = last_msg
+
+                                # If is_satisfactory is TRUE in this chunk AND we have actual content,
+                                # we can yield it immediately.
+                                text = extract_text_from_content(pending_ai_message.content) if pending_ai_message else ""
+                                if chunk.get("is_satisfactory") and text:
+                                    content_type = type(pending_ai_message.content).__name__
+                                    logger.info(f"[Session {session_id}] Message verified satisfactory. Yielding. Content type={content_type}, length={len(text)}")
+                                    yield {"type": "content", "content": text}
+                                    pending_ai_message = None # Flushed
+                                    return # End stream, we are done
+                                elif chunk.get("is_satisfactory") and not text:
+                                    logger.warning(f"[Session {session_id}] is_satisfactory=True but content is empty — not yielding, waiting for more chunks")
                                 
                 # If loop finishes and we still have a pending message (e.g. max reflections reached),
                 # we must yield it as best-effort.
@@ -473,7 +489,15 @@ class ChatAgentService:
                      logger.info(f"[Session {session_id}] Yielding final buffered message (Max reflections or End of Stream).")
                      text = extract_text_from_content(pending_ai_message.content)
                      yield {"type": "content", "content": text}
-                
+                elif chunk_count == 0:
+                     # Graph produced zero chunks — something went wrong silently
+                     logger.error(f"[Session {session_id}] Stream completed with ZERO chunks — graph likely crashed silently")
+                     yield {"type": "error", "content": "Failed to generate a response. The AI agent did not produce any output. Please try again."}
+                else:
+                     # We got chunks but no AI message was buffered — likely all were discarded by reflection
+                     logger.warning(f"[Session {session_id}] Stream completed with {chunk_count} chunks but no AI message to yield")
+                     yield {"type": "error", "content": "The AI could not generate a satisfactory response after multiple attempts. Please try rephrasing your question."}
+
                 logger.info(f"[Session {session_id}] Stream loop completed.")
 
             except RetryError as e:

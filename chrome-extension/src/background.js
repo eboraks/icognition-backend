@@ -763,8 +763,8 @@ async function handleSendChatMessage(data) {
 }
 
 async function handleStreamChatResponse(data) {
-    const { sessionId, messageId } = data;
-    console.log(`Starting SSE stream for session ${sessionId}, message ${messageId}`);
+    const { sessionId, messageId, skill } = data;
+    console.log(`Starting SSE stream for session ${sessionId}, message ${messageId}, skill: ${skill || 'auto'}`);
 
     try {
         const token = await getFirebaseIdToken();
@@ -772,7 +772,8 @@ async function handleStreamChatResponse(data) {
             throw new Error('No authentication token available');
         }
 
-        const streamUrl = `${base_url}${Endpoints.chat_stream.replace('{sessionId}', sessionId)}?message_id=${messageId}`;
+        const skillParam = skill ? `&skill=${encodeURIComponent(skill)}` : '';
+        const streamUrl = `${base_url}${Endpoints.chat_stream.replace('{sessionId}', sessionId)}?message_id=${messageId}${skillParam}`;
 
         const response = await fetch(streamUrl, {
             method: 'GET',

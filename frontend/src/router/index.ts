@@ -87,11 +87,10 @@ const routes: Array<RouteRecordRaw> = [
     name: 'knowledge-explorer',
     component: () => import("@/components/knowledge_explorer/GraphExplorer.vue"),
   },
+  // Legacy docxray URL redirects to library
   {
     path: '/docxray/:id',
-    name: 'docxray',
-    component: () => import("../views/library/DocXRayView.vue"),
-    props: true
+    redirect: { name: 'library' }
   },
   {
     path: '/privacy-policy',

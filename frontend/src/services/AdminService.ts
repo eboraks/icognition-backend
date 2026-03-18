@@ -21,13 +21,13 @@ export interface PromptResponse {
 export interface PromptCreate {
   prompt_type: string;
   system_prompt?: string;
-  user_prompt: string;
+  user_prompt?: string;
   description?: string;
 }
 
 export interface PromptUpdate {
   system_prompt?: string;
-  user_prompt: string;
+  user_prompt?: string;
   description?: string;
 }
 

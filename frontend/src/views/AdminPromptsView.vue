@@ -31,11 +31,17 @@
             </option>
           </select>
         </div>
-        <Button 
-          label="Refresh" 
-          icon="pi pi-refresh" 
+        <Button
+          label="Refresh"
+          icon="pi pi-refresh"
           @click="loadPrompts"
           :loading="loading"
+        />
+        <Button
+          label="New Prompt"
+          icon="pi pi-plus"
+          severity="success"
+          @click="openCreateDialog"
         />
       </div>
 
@@ -247,6 +253,14 @@ const formData = ref<PromptCreate>({
 
 // Prompt types (matching backend PromptType enum + react_agent_system)
 const promptTypes = [
+  'Chat Agent: System',
+  'Chat Agent: Intent Classification',
+  'Chat Agent: Reflection',
+  'Chat Agent: Social Writer',
+  'Chat Agent: Type-ahead Prompt',
+  'Chat Skill: Email Draft',
+  'Chat Skill: Summary',
+  'Chat Skill: Fact Check',
   'Doc Analysis: Summary',
   'Doc Analysis: Entities',
   'Doc Analysis: Topics',
@@ -256,8 +270,6 @@ const promptTypes = [
   'Doc Analysis: Bullet Points',
   'Doc Analysis: Opening Message',
   'Doc Analysis: Classifier',
-  'Chat Agent: System',
-  'Chat Agent: Type-ahead Prompt',
   'Doc Extract: News',
   'Doc Extract: Blog',
   'Doc Extract: Social',
@@ -327,11 +339,11 @@ const closeEditDialog = () => {
 };
 
 const savePrompt = async () => {
-  if (!formData.value.prompt_type || !formData.value.user_prompt.trim()) {
+  if (!formData.value.prompt_type) {
     toast.add({
       severity: 'warn',
       summary: 'Validation Error',
-      detail: 'Prompt type and user prompt are required',
+      detail: 'Prompt type is required',
       life: 3000
     });
     return;

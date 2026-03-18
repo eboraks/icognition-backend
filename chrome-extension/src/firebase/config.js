@@ -19,42 +19,88 @@ const auth = getAuth(firebase);
 // Token refresh functionality
 let tokenRefreshPromise = null;
 
+// Refresh token via Firebase REST API using the stored refresh token.
+// This works even when auth.currentUser is null (e.g., after service worker restart).
+async function _refreshViaRestApi(refreshToken) {
+    const response = await fetch(
+        `https://securetoken.googleapis.com/v1/token?key=${firebaseConfig.apiKey}`,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken)}`,
+        }
+    );
+
+    if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(`Token refresh failed (${response.status}): ${errorBody}`);
+    }
+
+    const data = await response.json();
+    return {
+        idToken: data.id_token,
+        refreshToken: data.refresh_token,
+        expiresIn: parseInt(data.expires_in, 10),
+    };
+}
+
 // Function to refresh Firebase ID token
 async function refreshFirebaseToken() {
     if (tokenRefreshPromise) {
         return tokenRefreshPromise;
     }
-    
+
     tokenRefreshPromise = new Promise(async (resolve, reject) => {
         try {
+            // First, try using auth.currentUser (available when service worker hasn't restarted)
             const currentUser = auth.currentUser;
-            if (!currentUser) {
-                reject(new Error('No authenticated user'));
+            if (currentUser) {
+                const newToken = await currentUser.getIdToken(true);
+                const updatedUser = {
+                    uid: currentUser.uid,
+                    email: currentUser.email,
+                    displayName: currentUser.displayName,
+                    photoURL: currentUser.photoURL,
+                    emailVerified: currentUser.emailVerified,
+                    stsTokenManager: {
+                        accessToken: newToken,
+                        refreshToken: currentUser.stsTokenManager.refreshToken,
+                        expirationTime: currentUser.stsTokenManager.expirationTime
+                    }
+                };
+                await chrome.storage.session.set({ session_user: updatedUser });
+                console.log('Firebase token refreshed via SDK');
+                resolve(newToken);
                 return;
             }
-            
-            // Force refresh the ID token
-            const newToken = await currentUser.getIdToken(true);
-            
-            // Serialize the updated user object properly for Chrome storage
+
+            // Fallback: auth.currentUser is null (service worker restarted).
+            // Use the stored refresh token to call Firebase REST API directly.
+            const store = await chrome.storage.session.get(["session_user"]);
+            const storedUser = store.session_user;
+            if (!storedUser?.stsTokenManager?.refreshToken) {
+                reject(new Error('No authenticated user and no refresh token available'));
+                return;
+            }
+
+            console.log('Firebase SDK user unavailable, refreshing via REST API...');
+            const result = await _refreshViaRestApi(storedUser.stsTokenManager.refreshToken);
+
+            // Calculate new expiration time
+            const expirationTime = Date.now() + result.expiresIn * 1000;
+
+            // Update stored user with new tokens
             const updatedUser = {
-                uid: currentUser.uid,
-                email: currentUser.email,
-                displayName: currentUser.displayName,
-                photoURL: currentUser.photoURL,
-                emailVerified: currentUser.emailVerified,
+                ...storedUser,
                 stsTokenManager: {
-                    accessToken: newToken,
-                    refreshToken: currentUser.stsTokenManager.refreshToken,
-                    expirationTime: currentUser.stsTokenManager.expirationTime
+                    accessToken: result.idToken,
+                    refreshToken: result.refreshToken,
+                    expirationTime: expirationTime,
                 }
             };
-            
-            // Store updated user in session storage
             await chrome.storage.session.set({ session_user: updatedUser });
-            
-            console.log('Firebase token refreshed successfully');
-            resolve(newToken);
+            console.log('Firebase token refreshed via REST API');
+            resolve(result.idToken);
         } catch (error) {
             console.log('[ERROR]', 'Failed to refresh Firebase token:', error);
             reject(error);
@@ -62,7 +108,7 @@ async function refreshFirebaseToken() {
             tokenRefreshPromise = null;
         }
     });
-    
+
     return tokenRefreshPromise;
 }
 

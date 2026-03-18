@@ -110,29 +110,36 @@ def get_google_search_tool():
         k=5
     )
 
-    def search_with_metadata(query: str) -> str:
-        """Wrapper to include titles and links in search results."""
+    @tool
+    async def google_search_tool(query: str) -> str:
+        """
+        Searches Google for recent results to validate or augment document context.
+        Use this tool to verify facts, statistics, dates, or any claims that need external validation.
+
+        Args:
+            query: The search query string to look up on Google.
+
+        Returns:
+            Formatted search results with titles, URLs, and snippets.
+        """
+        import asyncio
         try:
-            results = search.results(query, num_results=5)
+            results = await asyncio.to_thread(search.results, query, 5)
             if not results:
                 return f"No Google search results found for: {query}"
-            
+
             formatted = []
             for i, r in enumerate(results, 1):
                 title = r.get("title", "No Title")
                 link = r.get("link", "No Link")
                 snippet = r.get("snippet", "No Snippet")
-                formatted.append(f"[{i}] {title}\nURL: {link}\nSnippet: {snippet}\n")
-            
-            return "\\n---\\n".join(formatted)
+                formatted.append(f"[{i}] {title}\nURL: {link}\nSnippet: {snippet}")
+
+            return "\n\n---\n\n".join(formatted)
         except Exception as e:
             return f"Error performing search: {str(e)}"
 
-    return Tool(
-        name="google_search_tool",
-        description="Searches Google for recent results to validate or augment document context.",
-        func=search_with_metadata,
-    )
+    return google_search_tool
 
 
 def create_fetch_social_post_tool():

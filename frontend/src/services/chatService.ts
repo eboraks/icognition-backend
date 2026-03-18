@@ -52,4 +52,10 @@ export const chatService = {
   sendMessage(sessionId: number, content: string) {
     return apiClient.post(`/api/v1/chat/sessions/${sessionId}/messages`, { content });
   },
+
+  // Build the SSE stream URL with optional skill override
+  getStreamUrl(sessionId: number, messageId: number, skill?: string): string {
+    const base = `${apiBaseUrl}/api/v1/chat/sessions/${sessionId}/stream?message_id=${messageId}`;
+    return skill ? `${base}&skill=${encodeURIComponent(skill)}` : base;
+  },
 };

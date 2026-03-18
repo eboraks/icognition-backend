@@ -74,25 +74,14 @@
       </div>
     </ScrollPanel>
     <div class="chat-input-container" v-if="sessionId">
-      <div class="quick-actions-row">
-        <Button
-          label="Write Comment"
-          icon="pi pi-pencil"
-          outlined
-          severity="secondary"
-          size="small"
-          class="quick-action-btn"
-          :disabled="loading"
-          @click="writeComment"
-        />
-      </div>
       <div class="input-row">
         <TypedChatInput
           v-model="inputMessage"
-          placeholder="Ask a follow-up question..."
-          :is-extension="true"
+          placeholder="Type / for skills, or ask a question..."
           :session-id="sessionId"
           :disabled="loading"
+          :skill-commands="SKILL_COMMAND_LIST"
+          :vocabulary="chatVocabulary"
           @send="sendMessage"
         />
         <Button
@@ -107,7 +96,7 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import { marked } from 'marked';
 import Button from 'primevue/button';
 import TypedChatInput from './TypedChatInput.vue';
@@ -135,9 +124,16 @@ const messages = ref([]);
 const inputMessage = ref('');
 const messagesContainer = ref(null);
 const loading = ref(false);
-const suggestions = ref([]);
-const allVocabulary = ref([]);
 const copiedLabel = ref(null);
+
+const decodeHtmlEntities = (text) => {
+  const doc = new DOMParser().parseFromString(text, 'text/html');
+  return doc.body.textContent || '';
+};
+
+const stripHtmlToText = (html) => {
+  return decodeHtmlEntities(html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim());
+};
 
 const parseCommentOptions = (content) => {
   const stripped = content.replace(/<[^>]*>/g, ' ');
@@ -149,21 +145,17 @@ const parseCommentOptions = (content) => {
   if (htmlHeaders.length === 3) {
     const parts = content.split(/<strong>Option [ABC][^<]*<\/strong>/gi);
     return htmlHeaders.map((h, i) => ({
-      label: h[1].trim(),
-      text: parts[i + 1]
-        .replace(/^[:\s–\-]+/, '')
-        .replace(/<[^>]*>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim(),
+      label: decodeHtmlEntities(h[1].trim()),
+      text: stripHtmlToText(parts[i + 1].replace(/^[:\s–\-]+/, '')),
     }));
   }
   // Markdown mode: split on **Option X...** markers
   const mdParts = content.split(/\*{1,2}(Option [ABC][^*]*)\*{1,2}/i);
   if (mdParts.length >= 7) {
     return [
-      { label: mdParts[1].trim(), text: mdParts[2].trim() },
-      { label: mdParts[3].trim(), text: mdParts[4].trim() },
-      { label: mdParts[5].trim(), text: mdParts[6].trim() },
+      { label: mdParts[1].trim(), text: decodeHtmlEntities(mdParts[2].trim()) },
+      { label: mdParts[3].trim(), text: decodeHtmlEntities(mdParts[4].trim()) },
+      { label: mdParts[5].trim(), text: decodeHtmlEntities(mdParts[6].trim()) },
     ];
   }
   return null;
@@ -186,67 +178,52 @@ const copyToClipboard = async (text, label) => {
   }
 };
 
-const extractVocabulary = () => {
-    if (!props.initialSummary) return;
+const STOP_WORDS = new Set(['the', 'and', 'for', 'that', 'this', 'with', 'you', 'are', 'not', 'have', 'from', 'but', 'can', 'will', 'what', 'all', 'one', 'has', 'more', 'about', 'they', 'our', 'out', 'was', 'were', 'been', 'being', 'would', 'could', 'should', 'also', 'into', 'than', 'then', 'when', 'where', 'which', 'while', 'how', 'each', 'other', 'there', 'their', 'these', 'those', 'some', 'such', 'just', 'only', 'very', 'most']);
 
-    const textParts = [];
-    if (props.initialSummary.summary) textParts.push(props.initialSummary.summary);
-    if (props.initialSummary.markdown_content) textParts.push(props.initialSummary.markdown_content);
+function extractWordsFromText(text) {
+  const clean = text.replace(/<[^>]*>/g, ' ').replace(/&[^;]+;/g, ' ');
+  const words = clean.match(/\b[a-zA-Z]{4,}\b/g) || [];
+  return words.filter(w => !STOP_WORDS.has(w.toLowerCase()));
+}
 
-    // Join all text, remove Markdown/HTML-like chars if simple ones exist (mostly raw text expected)
-    const text = textParts.join(' ').toLowerCase();
-    
-    // Simple regex for words >= 3 chars
-    const words = text.match(/\b[a-z]{3,}\b/g) || [];
-    
-    // Basic stop words to filter out noise
-    const stopWords = new Set(['the', 'and', 'for', 'that', 'this', 'with', 'you', 'are', 'not', 'have', 'from', 'but', 'can', 'will', 'what', 'all', 'one', 'has', 'more', 'about', 'they', 'our', 'out', 'key', 'points', 'summary', 'inc', 'ltd', 'com']);
-    
-    const uniqueWords = new Set();
-    words.forEach(word => {
-        if (!stopWords.has(word)) {
-            uniqueWords.add(word);
-        }
-    });
-    
-    allVocabulary.value = Array.from(uniqueWords).sort();
-};
+const vocabularyCache = ref([]);
+let lastVocabKey = '';
 
-const onSearch = (event) => {
-    // If empty input, show nothing or all (let's show nothing to be cleaner)
-    if (!event.query || !event.query.trim()) {
-        suggestions.value = [];
-        return;
+function rebuildVocabulary() {
+  const wordSet = new Map(); // lowercase -> original case
+  // Extract from initial summary
+  if (props.initialSummary) {
+    const parts = [props.initialSummary.summary, props.initialSummary.markdown_content, props.initialSummary.title].filter(Boolean);
+    for (const part of parts) {
+      for (const word of extractWordsFromText(part)) {
+        const lower = word.toLowerCase();
+        if (!wordSet.has(lower)) wordSet.set(lower, word);
+      }
+      if (wordSet.size >= 2000) break;
     }
+  }
+  // Extract from finalized chat messages only
+  for (const msg of messages.value) {
+    if (msg.pending || !msg.content) continue;
+    for (const word of extractWordsFromText(msg.content)) {
+      const lower = word.toLowerCase();
+      if (!wordSet.has(lower)) wordSet.set(lower, word);
+      if (wordSet.size >= 2000) break;
+    }
+    if (wordSet.size >= 2000) break;
+  }
+  vocabularyCache.value = Array.from(wordSet.values()).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+}
 
-    const query = event.query.trim().toLowerCase();
-    // Find the last word being typed
-    const lastSpaceIndex = query.lastIndexOf(' ');
-    let prefix = '';
-    let term = query;
-    
-    if (lastSpaceIndex !== -1) {
-        prefix = query.substring(0, lastSpaceIndex + 1);
-        term = query.substring(lastSpaceIndex + 1);
-    }
-    
-    // If the last term is empty (trailing space), we might want to show all vocabulary
-    // OR show nothing until they start typing the next word.
-    // Let's require at least 1 char for the current word to suggest
-    if (!term) {
-        suggestions.value = [];
-        return;
-    }
-    
-    term = term.toLowerCase();
-    
-    const matches = allVocabulary.value.filter(word => 
-        word.toLowerCase().startsWith(term)
-    );
-    
-    // Construct suggestions that preserve the user's typed prefix
-    suggestions.value = matches.map(word => prefix + word);
-};
+const chatVocabulary = computed(() => {
+  const finalizedCount = messages.value.filter(m => !m.pending).length;
+  const key = `${finalizedCount}-${!!props.initialSummary}`;
+  if (key !== lastVocabKey) {
+    lastVocabKey = key;
+    rebuildVocabulary();
+  }
+  return vocabularyCache.value;
+});
 
 const escapeHtml = (unsafe) =>
   unsafe
@@ -362,9 +339,6 @@ const initChat = () => {
             content += `<h4 class="font-semibold mb-1 mt-1">Content</h4><div class="mt-1">${marked.parse(props.initialSummary.markdown_content)}</div>`;
         }
         
-        // Extract vocabulary for autocomplete
-        extractVocabulary();
-
         if (content) {
              const summaryMsg = {
                 type: 'system',
@@ -460,26 +434,50 @@ const handleActionClick = (action) => {
     sendMessage();
 };
 
-const writeComment = () => {
-    inputMessage.value = 'Write a comment on this post: ';
+// Slash-command → skill key mapping
+const SKILL_SHORTCUTS = {
+    '/social_post': 'social_post',
+    '/write_comment': 'social_post',
+    '/fact_check': 'fact_check',
+    '/email': 'email_draft',
+    '/email_draft': 'email_draft',
+    '/summary': 'summary',
+    '/summarize': 'summary',
 };
+
+// Skill commands for the autocomplete dropdown
+const SKILL_COMMAND_LIST = [
+    { command: '/social_post', description: 'Write a social media comment' },
+    { command: '/fact_check', description: 'Fact check claims in this article' },
+    { command: '/summary', description: 'Summarize this document' },
+    { command: '/email_draft', description: 'Draft an email about this' },
+];
 
 const sendMessage = async () => {
     if (!inputMessage.value || !inputMessage.value.trim() || loading.value) return;
 
-    const content = inputMessage.value.trim();
-    
-    // Clear input and suggestions
+    let content = inputMessage.value.trim();
+
+    // Check for slash command at the start of the message
+    let skill = null;
+    const match = content.match(/^(\/\w+)\s*/);
+    if (match) {
+        const cmd = match[1].toLowerCase();
+        if (SKILL_SHORTCUTS[cmd]) {
+            skill = SKILL_SHORTCUTS[cmd];
+        }
+    }
+
+    // Clear input
     inputMessage.value = '';
-    suggestions.value = [];
-    
+
     // Add user message
     messages.value.push({
         type: 'user',
         content: toParagraphHtml(content),
         id: Date.now().toString()
     });
-    
+
     // Add placeholder for AI response
     messages.value.push({
         type: 'system',
@@ -487,7 +485,7 @@ const sendMessage = async () => {
         pending: true,
         id: 'temp-' + Date.now()
     });
-    
+
     loading.value = true;
     scrollToBottom();
 
@@ -502,12 +500,13 @@ const sendMessage = async () => {
 
         if (response && response.success) {
             const messageId = response.data.id || response.data.data.id;
-             // Start streaming
+             // Start streaming (with optional skill override)
              chrome.runtime.sendMessage({
                  name: 'stream-chat-response',
                  data: {
                      sessionId: props.sessionId,
-                     messageId: messageId
+                     messageId: messageId,
+                     skill: skill
                  }
              });
         } else {
@@ -726,18 +725,6 @@ const sendMessage = async () => {
   border-top: 1px solid var(--surface-border);
   gap: 0.4rem;
   background: var(--surface-card);
-}
-
-.quick-actions-row {
-  display: flex;
-  gap: 0.4rem;
-}
-
-:deep(.quick-action-btn) {
-  border-radius: 999px;
-  padding-inline: 0.75rem;
-  padding-block: 0.25rem;
-  font-size: 0.78rem;
 }
 
 .input-row {

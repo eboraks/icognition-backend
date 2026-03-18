@@ -28,13 +28,13 @@ router = APIRouter(
 class PromptCreate(BaseModel):
     prompt_type: str
     system_prompt: Optional[str] = None
-    user_prompt: str
+    user_prompt: Optional[str] = None
     description: Optional[str] = None
 
 
 class PromptUpdate(BaseModel):
     system_prompt: Optional[str] = None
-    user_prompt: str
+    user_prompt: Optional[str] = None
     description: Optional[str] = None
 
 

@@ -196,6 +196,7 @@ async def send_chat_message(
 async def stream_chat_response(
     session_id: int,
     message_id: int,
+    skill: Optional[str] = None,
     user_context: UserContext = Depends(get_authenticated_user_context),
     chat_agent_service: ChatAgentService = Depends(get_chat_agent_service),
     chat_session_service: ChatSessionService = Depends(get_chat_session_service),
@@ -240,7 +241,7 @@ async def stream_chat_response(
             try:
                 # Stream the AI response
                 logger.info(f"[Session {session_id}] Starting iteration over chat_agent_service.get_stream()...")
-                async for chunk in chat_agent_service.get_stream(session_id, user_message, user_context.user.id):
+                async for chunk in chat_agent_service.get_stream(session_id, user_message, user_context.user.id, skill_override=skill):
                     chunk_type = chunk.get("type")
                     
                     if chunk_type == "content":
@@ -380,7 +381,8 @@ async def chat_websocket_endpoint(
                 try:
                     message_data = json.loads(data)
                     user_message = message_data.get('content', '')
-                    
+                    ws_skill_override = message_data.get('skill', None)
+
                     if not user_message or not user_message.strip():
                         logger.warning(f"Empty message received from session {session_id}")
                         await websocket.send_text(json.dumps({"error": "Message cannot be empty"}))
@@ -407,7 +409,7 @@ async def chat_websocket_endpoint(
                 response_message_id = str(uuid.uuid4())
 
                 try:
-                    async for chunk in chat_agent_service.get_stream(session_id, user_message, user_id):
+                    async for chunk in chat_agent_service.get_stream(session_id, user_message, user_id, skill_override=ws_skill_override):
                         chunk_type = chunk.get("type")
                         
                         if chunk_type == "content":

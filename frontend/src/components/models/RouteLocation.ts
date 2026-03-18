@@ -4,6 +4,5 @@ export enum Route_Location {
     COLLECTIONS = 'collections',
     HOME = 'home',
     COLLECTIONDETAILS = 'collectiondetails',
-    DOCXRAY = 'docxray',
     UNDEFINED = 'undefined'
 }

@@ -73,25 +73,14 @@
       </div>
     </ScrollPanel>
     <div class="chat-input-container">
-      <div class="quick-actions-row">
-        <Button
-          label="Write Comment"
-          icon="pi pi-pencil"
-          outlined
-          severity="secondary"
-          size="small"
-          class="quick-action-btn"
-          :disabled="loading"
-          @click="writeComment"
-        />
-      </div>
       <div class="input-row">
         <TypedChatInput
           v-model="inputMessage"
-          placeholder="Ask a follow-up question..."
-          :is-extension="false"
+          placeholder="Type / for skills, or ask a question..."
           :session-id="chatSessionId"
           :disabled="loading"
+          :skill-commands="SKILL_COMMAND_LIST"
+          :vocabulary="chatVocabulary"
           @send="sendMessage"
           class="flex-1"
         />
@@ -107,14 +96,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue';
+import { ref, computed, watch, nextTick } from 'vue';
 import Button from 'primevue/button';
 import TypedChatInput from './TypedChatInput.vue';
 import ScrollPanel from 'primevue/scrollpanel';
 import ProgressSpinner from 'primevue/progressspinner';
+import { marked } from 'marked';
 import { knowledgeService, type ContextualMessageResponse, type ActionResponse } from '@/services/knowledgeService.js';
 import { useChatStore, type ChatMessage as ChatStoreMessage } from '@/stores/chat_store.js';
 import { useAuthStore } from '@/stores/auth_store.js';
+import { documentService } from '@/services/DocumentService.js';
 
 interface CommentOption {
   label: string;
@@ -131,6 +122,15 @@ interface ChatMessage {
   commentOptions?: CommentOption[] | null;
 }
 
+function decodeHtmlEntities(text: string): string {
+  const doc = new DOMParser().parseFromString(text, 'text/html');
+  return doc.body.textContent || '';
+}
+
+function stripHtmlToText(html: string): string {
+  return decodeHtmlEntities(html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim());
+}
+
 function parseCommentOptions(content: string): CommentOption[] | null {
   const stripped = content.replace(/<[^>]*>/g, ' ');
   if (!/Option A/i.test(stripped) || !/Option B/i.test(stripped) || !/Option C/i.test(stripped)) {
@@ -142,12 +142,8 @@ function parseCommentOptions(content: string): CommentOption[] | null {
   if (htmlHeaders.length === 3) {
     const parts = content.split(/<strong>Option [ABC][^<]*<\/strong>/gi);
     return htmlHeaders.map((h, i) => ({
-      label: h[1].trim(),
-      text: parts[i + 1]
-        .replace(/^[:\s–\-]+/, '')
-        .replace(/<[^>]*>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim(),
+      label: decodeHtmlEntities(h[1].trim()),
+      text: stripHtmlToText(parts[i + 1].replace(/^[:\s–\-]+/, '')),
     }));
   }
 
@@ -155,9 +151,9 @@ function parseCommentOptions(content: string): CommentOption[] | null {
   const mdParts = content.split(/\*{1,2}(Option [ABC][^*]*)\*{1,2}/i);
   if (mdParts.length >= 7) {
     return [
-      { label: mdParts[1].trim(), text: mdParts[2].trim() },
-      { label: mdParts[3].trim(), text: mdParts[4].trim() },
-      { label: mdParts[5].trim(), text: mdParts[6].trim() },
+      { label: mdParts[1].trim(), text: decodeHtmlEntities(mdParts[2].trim()) },
+      { label: mdParts[3].trim(), text: decodeHtmlEntities(mdParts[4].trim()) },
+      { label: mdParts[5].trim(), text: decodeHtmlEntities(mdParts[6].trim()) },
     ];
   }
 
@@ -180,6 +176,25 @@ const escapeHtml = (unsafe: string) =>
 
 const toParagraphHtml = (content: string) => `<p>${escapeHtml(content)}</p>`;
 
+// Slash-command → skill key mapping
+const SKILL_SHORTCUTS: Record<string, string> = {
+  '/social_post': 'social_post',
+  '/write_comment': 'social_post',
+  '/fact_check': 'fact_check',
+  '/email': 'email_draft',
+  '/email_draft': 'email_draft',
+  '/summary': 'summary',
+  '/summarize': 'summary',
+};
+
+// Skill commands for the autocomplete dropdown
+const SKILL_COMMAND_LIST = [
+  { command: '/social_post', description: 'Write a social media comment' },
+  { command: '/fact_check', description: 'Fact check claims in this article' },
+  { command: '/summary', description: 'Summarize this document' },
+  { command: '/email_draft', description: 'Draft an email about this' },
+];
+
 const chatStore = useChatStore();
 const authStore = useAuthStore();
 const messages = ref<ChatMessage[]>([]);
@@ -187,8 +202,6 @@ const inputMessage = ref('');
 const messagesContainer = ref<any>(null);
 const loading = ref(false);
 const isLoadingInitialMessage = ref(false); // Prevent duplicate calls
-const suggestions = ref<string[]>([]);
-const allVocabulary = ref<string[]>([]);
 const copiedLabel = ref<string | null>(null);
 
 const copyToClipboard = async (text: string, label: string) => {
@@ -220,62 +233,41 @@ const scrollToBottom = () => {
   });
 };
 
-const extractVocabulary = (contextualData: ContextualMessageResponse) => {
-    const textParts: string[] = [];
-    if (contextualData.message) {
-        // Simple HTML tag removal
-        const cleanMsg = contextualData.message.replace(/<[^>]*>?/gm, ' ');
-        textParts.push(cleanMsg);
-    }
-    if (contextualData.entity?.name) textParts.push(contextualData.entity.name);
-    if (contextualData.document?.title) textParts.push(contextualData.document.title);
+const STOP_WORDS = new Set(['the', 'and', 'for', 'that', 'this', 'with', 'you', 'are', 'not', 'have', 'from', 'but', 'can', 'will', 'what', 'all', 'one', 'has', 'more', 'about', 'they', 'our', 'out', 'was', 'were', 'been', 'being', 'would', 'could', 'should', 'also', 'into', 'than', 'then', 'when', 'where', 'which', 'while', 'how', 'each', 'other', 'there', 'their', 'these', 'those', 'some', 'such', 'just', 'only', 'very', 'most']);
 
-    const text = textParts.join(' ').toLowerCase();
-    
-    // Simple regex for words >= 3 chars
-    const words = text.match(/\b[a-z]{3,}\b/g) || [];
-    
-    // Basic stop words to filter out noise
-    const stopWords = new Set(['the', 'and', 'for', 'that', 'this', 'with', 'you', 'are', 'not', 'have', 'from', 'but', 'can', 'will', 'what', 'all', 'one', 'has', 'more', 'about', 'they', 'our', 'out', 'key', 'points', 'summary', 'inc', 'ltd', 'com']);
-    
-    const uniqueWords = new Set<string>();
-    words.forEach(word => {
-        if (!stopWords.has(word)) {
-            uniqueWords.add(word);
-        }
-    });
-    
-    allVocabulary.value = Array.from(uniqueWords).sort();
-};
+function extractWordsFromText(text: string): string[] {
+  // Strip HTML tags and entities
+  const clean = text.replace(/<[^>]*>/g, ' ').replace(/&[^;]+;/g, ' ');
+  // Match words with 4+ alpha chars (preserves original casing)
+  const words = clean.match(/\b[a-zA-Z]{4,}\b/g) || [];
+  return words.filter(w => !STOP_WORDS.has(w.toLowerCase()));
+}
 
-const search = (event: { query: string }) => {
-    if (!event.query || !event.query.trim()) {
-        suggestions.value = [];
-        return;
-    }
+const vocabularyCache = ref<string[]>([]);
+let lastVocabMessageCount = 0;
 
-    const query = event.query;
-    const lastSpaceIndex = query.lastIndexOf(' ');
-    let prefix = '';
-    let term = query;
-    
-    if (lastSpaceIndex !== -1) {
-        prefix = query.substring(0, lastSpaceIndex + 1);
-        term = query.substring(lastSpaceIndex + 1);
+function rebuildVocabulary() {
+  const wordSet = new Map<string, string>(); // lowercase -> original case
+  for (const msg of messages.value) {
+    if (msg.pending) continue; // skip streaming messages
+    for (const word of extractWordsFromText(msg.content)) {
+      const lower = word.toLowerCase();
+      if (!wordSet.has(lower)) wordSet.set(lower, word);
+      if (wordSet.size >= 2000) break; // cap vocabulary size
     }
-    
-    if (!term) {
-        suggestions.value = [];
-        return;
-    }
-    
-    const lowerTerm = term.toLowerCase();
-    const matches = allVocabulary.value.filter(word => 
-        word.toLowerCase().startsWith(lowerTerm)
-    );
-    
-    suggestions.value = matches.map(word => prefix + word);
-};
+    if (wordSet.size >= 2000) break;
+  }
+  vocabularyCache.value = Array.from(wordSet.values()).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+  lastVocabMessageCount = messages.value.filter(m => !m.pending).length;
+}
+
+const chatVocabulary = computed(() => {
+  const finalized = messages.value.filter(m => !m.pending).length;
+  if (finalized !== lastVocabMessageCount) {
+    rebuildVocabulary();
+  }
+  return vocabularyCache.value;
+});
 
 const loadInitialMessage = async () => {
   // Prevent duplicate calls
@@ -295,10 +287,12 @@ const loadInitialMessage = async () => {
   isLoadingInitialMessage.value = true;
   
   try {
-    // Switch chat store to the session provided by the prop
-    await chatStore.switchActiveSession(props.chatSessionId);
+    // Ensure store is on the correct session (no-op if already there)
+    if (chatStore.activeSession?.id !== props.chatSessionId) {
+      await chatStore.switchActiveSession(props.chatSessionId);
+    }
 
-    // After switching, populate local messages from the active session's messages
+    // Populate local messages from the active session's messages
     if (chatStore.activeSession) {
       messages.value = chatStore.activeSession.messages.map(msg => {
         const isPending = (msg as any).pending ?? false;
@@ -315,42 +309,47 @@ const loadInitialMessage = async () => {
       messages.value = [];
     }
 
-    // Only show an opening message if this session has no messages yet
+    // Determine the effective document scope — from props or from the session itself
+    const effectiveDocumentId = props.selectedDocumentId
+      || (chatStore.activeSession?.scope_type === 'document' ? chatStore.activeSession.scope_id : null);
+
+    // For document-scoped sessions, always prepend the document summary as the first message
+    if (effectiveDocumentId) {
+      try {
+        const doc = await documentService.getDocument(effectiveDocumentId);
+        if (doc && doc.ai_markdown_content) {
+          const titleHtml = doc.title ? `<h3>${escapeHtml(doc.title)}</h3>` : '';
+          const urlHtml = doc.url ? `<p style="font-size:0.85rem;color:#64748b;"><a href="${doc.url}" target="_blank" rel="noopener noreferrer">${doc.url}</a></p>` : '';
+          const contentHtml = marked.parse(doc.ai_markdown_content) as string;
+          messages.value.unshift({
+            type: 'system',
+            content: `${titleHtml}${urlHtml}${contentHtml}`,
+          });
+        }
+      } catch (err) {
+        console.warn('Failed to load document summary for chat:', err);
+      }
+
+      // Sync backend session scope if needed
+      if (chatStore.activeSession &&
+          (chatStore.activeSession.scope_type !== 'document' || chatStore.activeSession.scope_id !== effectiveDocumentId)) {
+        await chatStore.updateSessionScope(props.chatSessionId, 'document', effectiveDocumentId);
+      }
+    }
+
+    // Only show a greeting if there are no messages at all (no chat history, no document summary)
     if (messages.value.length === 0) {
-      if (props.selectedEntityId || props.selectedDocumentId) {
-        // Scoped session: show a context-aware greeting
-        let scopeType = 'all_library';
-        let scopeId: number | null = null;
-        let filterMessage = '';
-
-        if (props.selectedEntityId) {
-          scopeType = 'entity';
-          scopeId = props.selectedEntityId;
-          filterMessage = 'Entity context active. How can I help you explore this topic?';
-        } else if (props.selectedDocumentId) {
-          scopeType = 'document';
-          scopeId = props.selectedDocumentId;
-          filterMessage = 'Document context active. How can I help you explore this document?';
-        }
-
-        // Sync backend session scope
-        if (chatStore.activeSession &&
-            (chatStore.activeSession.scope_type !== scopeType || chatStore.activeSession.scope_id !== scopeId)) {
-          await chatStore.updateSessionScope(props.chatSessionId, scopeType, scopeId);
-        }
-
+      if (props.selectedEntityId) {
         messages.value.push({
           type: 'system',
-          content: toParagraphHtml(filterMessage),
+          content: toParagraphHtml('Entity context active. How can I help you explore this topic?'),
           actions: [],
         });
       } else {
-        // Reset to all_library scope if no selection
+        // General chat — no document scope
         if (chatStore.activeSession && chatStore.activeSession.scope_type !== 'all_library') {
           await chatStore.updateSessionScope(props.chatSessionId, 'all_library', null);
         }
-
-        // Simple greeting — no external API call
         messages.value.push({
           type: 'system',
           content: toParagraphHtml('How can I help you today?'),
@@ -365,9 +364,6 @@ const loadInitialMessage = async () => {
   scrollToBottom();
 };
 
-const writeComment = () => {
-  inputMessage.value = 'Write a comment on this post: ';
-};
 
 const handleActionClick = async (action: { id: string; label: string }) => {
   // Add user message for the action
@@ -445,15 +441,22 @@ const sendMessage = async () => {
     }
   }
   
-  const userMessageContent = inputMessage.value.trim();
+  let userMessageContent = inputMessage.value.trim();
   inputMessage.value = '';
-  suggestions.value = [];
-  
+
+  // Check for slash command at the start of the message
+  let skill: string | undefined;
+  const match = userMessageContent.match(/^(\/\w+)\s*/);
+  if (match) {
+    const cmd = match[1].toLowerCase();
+    if (SKILL_SHORTCUTS[cmd]) {
+      skill = SKILL_SHORTCUTS[cmd];
+    }
+  }
+
   try {
     loading.value = true;
-    // Send message via chatStore, which handles WebSocket and adds message to chatStore.messages
-    // The watcher will sync it to local messages.value
-    await chatStore.sendMessage(userMessageContent, props.chatSessionId);
+    await chatStore.sendMessage(userMessageContent, props.chatSessionId, skill);
   } catch (error) {
     console.error('Failed to send chat message:', error);
     if (chatStore.activeSession) {
@@ -571,10 +574,13 @@ watch(
 }
 
 :deep(.p-scrollpanel-content) {
-  padding: 1.5rem;
+  padding: 1rem 1.5rem;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 0.6rem;
+  max-width: 900px;
+  margin: 0 auto;
+  width: 100%;
 }
 
 .message-wrapper {
@@ -594,46 +600,60 @@ watch(
 .message {
   max-width: min(640px, 70%);
   width: fit-content;
-  padding: 0.9rem 1.1rem;
+  padding: 0.7rem 1rem;
   border-radius: 14px;
   background: #ffffff;
   border: 1px solid #e2e8f0;
-  box-shadow: 0 8px 16px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 4px 8px rgba(15, 23, 42, 0.06);
   word-break: break-word;
   overflow-wrap: anywhere;
 }
 
 .message-text {
-  white-space: pre-wrap;
-  line-height: 1.5;
-  font-family: 'Roboto Mono', monospace;
+  white-space: normal;
+  line-height: 1.45;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: #334155;
+  font-size: 0.92rem;
 }
 
 .message-text p {
-  margin: 0 0 0.75rem 0;
+  margin: 0 0 0.6rem 0;
 }
 
 .message-text p:last-child {
   margin-bottom: 0;
 }
 
+.message-text h3 {
+  margin: 0 0 0.4rem 0;
+}
+
+.message-text h4 {
+  margin: 0.5rem 0 0.25rem 0;
+}
+
 .message-text ul {
-  margin: 0.5rem 0 0.5rem 1.25rem;
+  margin: 0.4rem 0 0.4rem 1.25rem;
   padding-left: 1.25rem;
   list-style-type: disc;
 }
 
 .message-text li {
-  margin-bottom: 0.25rem;
+  margin-bottom: 0.3rem;
 }
 
 .system-message {
   display: flex;
   gap: 0.85rem;
   align-items: flex-start;
-  background: var(--blue-100); /* Light blue background */
-  border-color: var(--blue-200); /* Slightly darker blue border */
+  background: var(--blue-100);
+  border-color: var(--blue-200);
+}
+
+/* Document summary messages should use full width */
+.message-wrapper.system:first-child .message {
+  max-width: 100%;
 }
 
 .message-icon {
@@ -654,8 +674,8 @@ watch(
 }
 
 .message-content p {
-  margin: 0 0 0.75rem 0;
-  line-height: 1.6;
+  margin: 0 0 0.6rem 0;
+  line-height: 1.5;
   color: #334155;
   font-size: 0.95rem;
 }
@@ -694,7 +714,6 @@ watch(
   padding: 0.55rem 1.2rem;
   border-radius: 999px;
   box-shadow: none;
-  font-family: 'Roboto Mono', monospace;
 }
 
 .user-message {
@@ -760,19 +779,9 @@ watch(
   border-top: 1px solid #e2e8f0;
   gap: 0.5rem;
   background: #ffffff;
-}
-
-.quick-actions-row {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.quick-action-btn {
-  border-radius: 999px;
-  padding-inline: 1rem;
-  padding-block: 0.35rem;
-  font-size: 0.82rem;
-  font-weight: 500;
+  max-width: 900px;
+  margin: 0 auto;
+  width: 100%;
 }
 
 .input-row {
@@ -793,12 +802,10 @@ watch(
   border: 1px solid #e2e8f0;
   color: #64748b;
   padding-left: 1rem;
-  font-family: 'Roboto Mono', monospace;
 }
 
 :deep(.chat-input-container .p-autocomplete-input::placeholder) {
   color: #64748b;
-  font-family: 'Roboto Mono', monospace;
 }
 
 /* Comment option cards (Phase 6.2) */

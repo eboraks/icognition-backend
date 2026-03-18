@@ -131,7 +131,7 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  async function sendMessage(messageContent: string, sessionId?: number) {
+  async function sendMessage(messageContent: string, sessionId?: number, skill?: string) {
     if (!authStore.currentUser) {
       console.error('No active user.');
       return;
@@ -196,7 +196,7 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       // Start SSE stream for AI response
-      await streamChatResponse(activeSession.value.id, messageId);
+      await streamChatResponse(activeSession.value.id, messageId, skill);
     } catch (error) {
       console.error('Failed to send message:', error);
       // Update placeholder with error
@@ -213,7 +213,7 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  async function streamChatResponse(sessionId: number, messageId: number) {
+  async function streamChatResponse(sessionId: number, messageId: number, skill?: string) {
     const startTime = Date.now();
     const log = (msg: string) => console.log(`[${new Date().toISOString()}] [Chat SSE] ${msg}`);
 
@@ -256,7 +256,8 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       // Create SSE connection with authentication
-      const streamUrl = `${apiBase}/api/v1/chat/sessions/${sessionId}/stream?message_id=${messageId}`;
+      const skillParam = skill ? `&skill=${encodeURIComponent(skill)}` : '';
+      const streamUrl = `${apiBase}/api/v1/chat/sessions/${sessionId}/stream?message_id=${messageId}${skillParam}`;
       log(`Fetching SSE stream from: ${streamUrl}`);
 
       // Use fetch with ReadableStream for SSE (EventSource doesn't support custom headers)
@@ -500,6 +501,27 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  async function getOrCreateDocumentSession(documentId: number, documentTitle: string): Promise<ChatSession | null> {
+    /**
+     * Find or create a chat session scoped to a specific document.
+     * The backend POST /sessions already handles "find or create" logic for scoped sessions.
+     * Returns the session (existing or new) so the caller can navigate to it.
+     */
+    if (!authStore.currentUser) return null;
+    try {
+      const response = await chatService.createSession(documentTitle, 'document', documentId);
+      const session = { ...response.data, messages: response.data.messages || [] };
+      // Add to local sessions list if not already present
+      if (!sessions.value.find(s => s.id === session.id)) {
+        sessions.value.unshift(session);
+      }
+      return session;
+    } catch (err: any) {
+      error.value = err.message || 'Failed to get or create document session';
+      return null;
+    }
+  }
+
   return {
     sessions,
     activeSession,
@@ -514,5 +536,6 @@ export const useChatStore = defineStore('chat', () => {
     deleteSession,
     switchActiveSession,
     updateSessionScope,
+    getOrCreateDocumentSession,
   };
 });

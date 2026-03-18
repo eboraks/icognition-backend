@@ -1,3 +1,5 @@
+import re
+from dataclasses import dataclass
 from typing import Annotated, Any, Dict, List, Optional, TypedDict, Union, Literal
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
@@ -25,7 +27,7 @@ class AgentState(TypedDict):
     search_needed: bool
     latest_query: str
     is_satisfactory: bool
-    is_social_writing: bool
+    skill: str
     extracted_entities: List[str]
     kg_context: str
 
@@ -35,14 +37,138 @@ class IntentClassification(TypedDict):
     describe_the_user_message_intent: str
     refined_query: str
     reasoning: str
-    is_social_writing: bool
+    skill: Annotated[str, "One of: qa, social_post, email_draft, summary, fact_check"]
     key_entities: List[str]
+
+# --- Skill Registry ---
+
+@dataclass
+class SkillConfig:
+    prompt_type: PromptType
+    node_name: str
+    description: str
+    fallback_prompt: Optional[str] = None
 
 class ReflectionOutput(TypedDict):
     critique: str
     needs_search: bool
     search_query: str
     is_satisfactory: bool
+
+_SOCIAL_WRITER_FALLBACK = (
+    "You are an expert social media comment writer. Your task is to write thoughtful, "
+    "engaging comments for social media posts and articles.\n\n"
+    "The post content is provided in the CURRENT CONTEXT above under 'Document Content'. "
+    "Use it directly — do not re-fetch the URL unless the content is missing or incomplete.\n"
+    "If 'Document Content' is absent from the context but a URL is available, "
+    "call `fetch_social_post_tool` with that URL to retrieve the content.\n\n"
+    "CURRENT EVENTS ENRICHMENT:\n"
+    "If the post touches on current events, geopolitics, breaking news, ongoing conflicts, "
+    "elections, economic policy, or any time-sensitive topic, call `world_context_tool` "
+    "with the main subject of the post (e.g. 'Israel Iran war', 'US tariffs 2026', "
+    "'OpenAI GPT-5'). Use the returned headlines and snippets to make your comments "
+    "specific and timely — reference what is actually happening in the world right now.\n\n"
+    "When writing comments:\n"
+    "1. Match the tone and style of the platform (professional for LinkedIn, "
+    "conversational for Twitter/X, community-focused for Reddit)\n"
+    "2. Reference specific points, arguments, or details from the post content\n"
+    "3. Be authentic, concise, and add genuine value to the conversation\n"
+    "4. If the user has relevant documents in their library, incorporate insights from them\n\n"
+    "Provide 3 different comment options:\n"
+    "- **Option A – Engaging**: Adds value and invites follow-up discussion\n"
+    "- **Option B – Insightful**: Shares a related perspective, data point, or nuance\n"
+    "- **Option C – Conversational**: Friendly tone that builds genuine connection\n\n"
+    "Keep each option under 3 sentences unless the platform and content call for more depth."
+)
+
+_EMAIL_DRAFT_FALLBACK = (
+    "You are a professional email drafting assistant. Your task is to write clear, "
+    "well-structured emails based on the user's request.\n\n"
+    "When drafting emails:\n"
+    "1. Use an appropriate tone (formal, semi-formal, or casual) based on context\n"
+    "2. Include a clear subject line suggestion\n"
+    "3. Structure with greeting, body paragraphs, and sign-off\n"
+    "4. If the user has relevant documents in their library, incorporate key points\n"
+    "5. Keep it concise and action-oriented\n\n"
+    "Provide 2 versions:\n"
+    "- **Version A – Concise**: Straight to the point\n"
+    "- **Version B – Detailed**: More context and nuance\n"
+)
+
+_SUMMARY_FALLBACK = (
+    "You are a summarization expert. Your task is to create clear, comprehensive "
+    "summaries of documents and topics from the user's knowledge library.\n\n"
+    "When summarizing:\n"
+    "1. Identify the core thesis or main points\n"
+    "2. Preserve key facts, data, and arguments\n"
+    "3. Use bullet points for clarity when appropriate\n"
+    "4. Note any connections to other documents in the user's library\n"
+    "5. Keep the summary to 20-30% of the original length\n"
+)
+
+_FACT_CHECK_FALLBACK = (
+    "You are an expert fact-checker and critical analysis assistant. Your task is to "
+    "evaluate claims, statements, and arguments for accuracy and reliability.\n\n"
+    "IMPORTANT: The document to fact-check is provided in the CURRENT CONTEXT system message above. "
+    "If the user's message is just '/fact_check' or a short command, fact-check the document "
+    "from the CURRENT CONTEXT — do NOT ask for more information.\n\n"
+    "MANDATORY TOOL USE:\n"
+    "You MUST call `world_context_tool` and/or `google_search_tool` to verify claims. "
+    "Do NOT rely solely on your training data. Always use at least one tool to check "
+    "the key claims before providing your verdict.\n\n"
+    "APPROACH:\n"
+    "1. Identify the key claims or assertions in the content\n"
+    "2. Call `world_context_tool` with the main topic to get current facts and context\n"
+    "3. Call `google_search_tool` to verify specific statistics, dates, or disputed claims\n"
+    "4. Cross-reference with the user's library documents using `retrieve_documents_tool` when relevant\n"
+    "5. For each claim, assess whether it is supported, contested, or unsupported\n\n"
+    "OUTPUT FORMAT:\n"
+    "For each claim, provide:\n"
+    "- **Claim**: The statement being evaluated\n"
+    "- **Verdict**: Supported / Partially True / Misleading / Unsupported / False\n"
+    "- **Evidence**: What supports or contradicts this claim (cite tool results)\n"
+    "- **Context**: Important nuance or missing context\n\n"
+    "End with an **Overall Assessment** that summarizes the reliability of the content "
+    "and highlights the most important findings.\n\n"
+    "Be balanced and evidence-based. Distinguish between factual errors and differences "
+    "of opinion. When uncertain, say so explicitly rather than guessing."
+)
+
+SKILL_REGISTRY: Dict[str, SkillConfig] = {
+    "qa": SkillConfig(
+        prompt_type=PromptType.CHAT_AGENT_SYSTEM,
+        node_name="generate_node",
+        description="Default knowledge Q&A",
+        fallback_prompt=None,  # required in DB — raises if missing
+    ),
+    "social_post": SkillConfig(
+        prompt_type=PromptType.CHAT_SOCIAL_WRITER,
+        node_name="social_generate_node",
+        description="Social media comment writing",
+        fallback_prompt=_SOCIAL_WRITER_FALLBACK,
+    ),
+    "email_draft": SkillConfig(
+        prompt_type=PromptType.CHAT_SKILL_EMAIL_DRAFT,
+        node_name="email_generate_node",
+        description="Email drafting",
+        fallback_prompt=_EMAIL_DRAFT_FALLBACK,
+    ),
+    "summary": SkillConfig(
+        prompt_type=PromptType.CHAT_SKILL_SUMMARY,
+        node_name="summary_generate_node",
+        description="Document/topic summarization",
+        fallback_prompt=_SUMMARY_FALLBACK,
+    ),
+    "fact_check": SkillConfig(
+        prompt_type=PromptType.CHAT_SKILL_FACT_CHECK,
+        node_name="fact_check_generate_node",
+        description="Fact checking and claim verification",
+        fallback_prompt=_FACT_CHECK_FALLBACK,
+    ),
+}
+
+DEFAULT_SKILL = "qa"
+
 
 # --- Knowledge Graph Entity Resolution ---
 
@@ -166,7 +292,6 @@ async def fetch_graph_prompts(db_session) -> GraphPrompts:
     prompt_service = PromptService(db_session)
     required = [
         PromptType.CHAT_INTENT_CLASSIFICATION,
-        PromptType.CHAT_AGENT_SYSTEM,
         PromptType.CHAT_REFLECTION,
     ]
     prompts: GraphPrompts = {}
@@ -179,10 +304,18 @@ async def fetch_graph_prompts(db_session) -> GraphPrompts:
             )
         prompts[pt.value] = prompt
 
-    # Optional: social writer prompt (falls back to hardcoded if not in DB)
-    social_prompt = await prompt_service.get_latest_prompt(PromptType.CHAT_SOCIAL_WRITER.value)
-    if social_prompt is not None:
-        prompts[PromptType.CHAT_SOCIAL_WRITER.value] = social_prompt
+    # Fetch all skill prompts (optional — skills with fallback_prompt survive missing DB entries)
+    for skill_key, skill_config in SKILL_REGISTRY.items():
+        pt = skill_config.prompt_type
+        if pt.value not in prompts:  # avoid re-fetching if already required
+            skill_prompt = await prompt_service.get_latest_prompt(pt.value)
+            if skill_prompt is not None:
+                prompts[pt.value] = skill_prompt
+            elif skill_config.fallback_prompt is None:
+                raise ValueError(
+                    f"CRITICAL: Missing prompt '{pt.value}' in database "
+                    f"and skill '{skill_key}' has no fallback. Cannot build research graph."
+                )
 
     return prompts
 
@@ -194,6 +327,7 @@ def build_research_graph(
     prompts: Optional[GraphPrompts] = None,
     db_session: Optional[AsyncSession] = None,
     user_id: Optional[str] = None,
+    skill_override: Optional[str] = None,
 ):
     """
     Builds the compiled StateGraph for the Reflective Research Agent.
@@ -242,27 +376,65 @@ def build_research_graph(
         messages = state["messages"]
         last_message = messages[-1].content
 
-        db_prompt = prompts[PromptType.CHAT_INTENT_CLASSIFICATION.value]
-        system_prompt = db_prompt.system_prompt
-        user_template = db_prompt.user_prompt or "{input}"
-        
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            ("human", user_template),
-        ])
-        
-        classifier = prompt | llm.with_structured_output(IntentClassification)
-        result = await classifier.ainvoke(
-            {"input": last_message},
-            config={"run_name": PromptType.CHAT_INTENT_CLASSIFICATION.value}
-        )
-        
+        try:
+            db_prompt = prompts.get(PromptType.CHAT_INTENT_CLASSIFICATION.value)
+            if not db_prompt:
+                logger.warning("Intent classification prompt not found in DB — using defaults")
+                raise ValueError("Missing intent prompt")
+
+            # Build a skill reference so the LLM knows the valid skill values
+            skill_list = "\n".join(
+                f'  - "{key}": {cfg.description}'
+                for key, cfg in SKILL_REGISTRY.items()
+            )
+            skill_guidance = (
+                f"\n\nYou MUST classify the `skill` field as one of these exact values:\n"
+                f"{skill_list}\n"
+                f'If the message does not clearly match a specific skill, use "qa".'
+            )
+
+            system_prompt = db_prompt.system_prompt + skill_guidance
+            user_template = db_prompt.user_prompt or "{input}"
+
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", system_prompt),
+                ("human", user_template),
+            ])
+
+            classifier = prompt | llm.with_structured_output(IntentClassification)
+            result = await classifier.ainvoke(
+                {"input": last_message},
+                config={"run_name": PromptType.CHAT_INTENT_CLASSIFICATION.value}
+            )
+        except Exception as e:
+            logger.error(f"Intent classification failed: {e}", exc_info=True)
+            # Fallback: use skill_override if available, otherwise default
+            result = {
+                "refined_query": str(last_message),
+                "describe_the_user_message_intent": "",
+                "skill": skill_override or DEFAULT_SKILL,
+                "key_entities": [],
+            }
+
+        # Use skill_override if provided (from slash commands), otherwise use classified skill
+        if skill_override and skill_override in SKILL_REGISTRY:
+            skill = skill_override
+            logger.info(f"Using skill override: '{skill}'")
+        else:
+            raw_skill = result.get("skill", DEFAULT_SKILL)
+            skill = raw_skill if raw_skill in SKILL_REGISTRY else DEFAULT_SKILL
+            if raw_skill != skill:
+                logger.warning(f"Unknown skill '{raw_skill}' from intent classification, falling back to '{DEFAULT_SKILL}'")
 
         return {
             "latest_query": result["refined_query"],
             "intent_description": result["describe_the_user_message_intent"],
-            "is_social_writing": result.get("is_social_writing", False),
+            "skill": skill,
             "extracted_entities": result.get("key_entities", []),
+            # Reset per-turn state so previous turn's values don't carry over
+            "is_satisfactory": False,
+            "reflection_count": 0,
+            "search_needed": False,
         }
 
     async def enrich_kg_node(state: AgentState):
@@ -284,31 +456,35 @@ def build_research_graph(
             logger.warning(f"KG enrichment failed (non-fatal): {e}")
             return {"kg_context": ""}
 
-    _SOCIAL_WRITER_FALLBACK = (
-        "You are an expert social media comment writer. Your task is to write thoughtful, "
-        "engaging comments for social media posts and articles.\n\n"
-        "The post content is provided in the CURRENT CONTEXT above under 'Document Content'. "
-        "Use it directly — do not re-fetch the URL unless the content is missing or incomplete.\n"
-        "If 'Document Content' is absent from the context but a URL is available, "
-        "call `fetch_social_post_tool` with that URL to retrieve the content.\n\n"
-        "CURRENT EVENTS ENRICHMENT:\n"
-        "If the post touches on current events, geopolitics, breaking news, ongoing conflicts, "
-        "elections, economic policy, or any time-sensitive topic, call `world_context_tool` "
-        "with the main subject of the post (e.g. 'Israel Iran war', 'US tariffs 2026', "
-        "'OpenAI GPT-5'). Use the returned headlines and snippets to make your comments "
-        "specific and timely — reference what is actually happening in the world right now.\n\n"
-        "When writing comments:\n"
-        "1. Match the tone and style of the platform (professional for LinkedIn, "
-        "conversational for Twitter/X, community-focused for Reddit)\n"
-        "2. Reference specific points, arguments, or details from the post content\n"
-        "3. Be authentic, concise, and add genuine value to the conversation\n"
-        "4. If the user has relevant documents in their library, incorporate insights from them\n\n"
-        "Provide 3 different comment options:\n"
-        "- **Option A – Engaging**: Adds value and invites follow-up discussion\n"
-        "- **Option B – Insightful**: Shares a related perspective, data point, or nuance\n"
-        "- **Option C – Conversational**: Friendly tone that builds genuine connection\n\n"
-        "Keep each option under 3 sentences unless the platform and content call for more depth."
-    )
+    # Skill-specific instructions for when the user sends just a slash command
+    # with no additional text. These replace the raw "/skill_name" with a clear
+    # instruction the LLM can act on.
+    # Every skill in SKILL_REGISTRY should have an entry here.
+    SKILL_INSTRUCTIONS: Dict[str, str] = {
+        "qa": (
+            "Answer questions about the document provided in the CURRENT CONTEXT above. "
+            "Use retrieve_documents_tool to find related documents in the user's library if needed."
+        ),
+        "fact_check": (
+            "Fact-check the document provided in the CURRENT CONTEXT above. "
+            "You MUST use world_context_tool and/or google_search_tool to verify the key claims. "
+            "Do not rely on your training data alone."
+        ),
+        "summary": "Summarize the document provided in the CURRENT CONTEXT above.",
+        "social_post": (
+            "Write social media comments about the document provided in the CURRENT CONTEXT above. "
+            "Use world_context_tool to get recent news context if the topic is time-sensitive."
+        ),
+        "email_draft": "Draft an email based on the document provided in the CURRENT CONTEXT above.",
+    }
+
+    # Validate that every registered skill has a corresponding instruction
+    missing_instructions = set(SKILL_REGISTRY.keys()) - set(SKILL_INSTRUCTIONS.keys())
+    if missing_instructions:
+        logger.warning(
+            f"Skills missing from SKILL_INSTRUCTIONS: {missing_instructions}. "
+            "Bare slash commands for these skills will pass through as-is."
+        )
 
     async def _run_generate(state: AgentState, system_msg: str, run_name: str) -> dict:
         """Shared generation logic: injects intent + KG context and calls the LLM with tools."""
@@ -316,9 +492,30 @@ def build_research_graph(
         intent_desc = state.get("intent_description")
         refined_query = state.get("latest_query")
         kg_context = state.get("kg_context", "")
+        skill = state.get("skill", DEFAULT_SKILL)
 
         prompt_msgs = list(messages)
-        if intent_desc or refined_query or kg_context:
+
+        # When a skill_override is active (slash command like /fact_check), check if the
+        # user message is essentially just the slash command with no real content.
+        # If so, replace it with a clear instruction the LLM can act on.
+        skip_intent = bool(skill_override)
+        if skip_intent:
+            last_msg = prompt_msgs[-1]
+            if isinstance(last_msg, HumanMessage):
+                # Strip HTML tags and whitespace to check if there's real content beyond the command
+                clean_text = re.sub(r'<[^>]*>', '', str(last_msg.content)).strip()
+                # Remove the slash command itself to see if there's additional user text
+                remaining = re.sub(r'^/\w+\s*', '', clean_text).strip()
+                if not remaining and skill in SKILL_INSTRUCTIONS:
+                    # User sent just the slash command — replace with clear instruction
+                    instruction = SKILL_INSTRUCTIONS[skill]
+                    if kg_context:
+                        instruction += f"\n\n{kg_context}"
+                    prompt_msgs[-1] = HumanMessage(content=instruction)
+                elif kg_context:
+                    prompt_msgs[-1] = HumanMessage(content=str(last_msg.content) + f"\n\n{kg_context}")
+        elif (intent_desc or refined_query) or kg_context:
             last_msg = prompt_msgs[-1]
             if isinstance(last_msg, HumanMessage):
                 context_block = "\n\n[Analysis Context]"
@@ -330,93 +527,114 @@ def build_research_graph(
                     context_block += f"\n\n{kg_context}"
                 prompt_msgs[-1] = HumanMessage(content=str(last_msg.content) + context_block)
 
+        # Append a tool-usage reminder so the LLM doesn't skip tools when it should use them
+        tool_names = [t.name for t in tools]
+        tool_reminder = (
+            "\n\nIMPORTANT — Available tools: " + ", ".join(tool_names) + ". "
+            "If the user's question is NOT fully answerable from the CURRENT CONTEXT above, "
+            "you MUST call the appropriate tool before answering. "
+            "Use retrieve_documents_tool to search the user's library. "
+            "Use google_search_tool to find information not in the library or document context."
+        )
+        system_msg += tool_reminder
+
         prompt_msgs = [SystemMessage(content=system_msg)] + prompt_msgs
-        response = await llm_with_tools.ainvoke(prompt_msgs, config={"run_name": run_name})
+
+        try:
+            response = await llm_with_tools.ainvoke(prompt_msgs, config={"run_name": run_name})
+
+            # Handle MALFORMED_FUNCTION_CALL: Gemini sometimes generates a tool call
+            # that doesn't match the schema, returning empty content. Retry once without tools.
+            finish_reason = response.response_metadata.get("finish_reason", "")
+            if finish_reason == "MALFORMED_FUNCTION_CALL" or (not response.content and not response.tool_calls):
+                logger.warning(f"Malformed LLM response (finish_reason={finish_reason}), retrying without tools")
+                response = await llm.ainvoke(prompt_msgs, config={"run_name": f"{run_name}_retry"})
+        except Exception as e:
+            logger.error(f"LLM call failed in _run_generate ({run_name}): {e}", exc_info=True)
+            # Return an error message as AIMessage so the graph doesn't crash silently
+            response = AIMessage(content=f"I'm sorry, I encountered an error while processing your request. Please try again. (Error: {type(e).__name__})")
+
         return {"messages": [response]}
 
-    async def generate_node(state: AgentState):
-        """Generates an answer for normal knowledge Q&A."""
-        db_prompt = prompts[PromptType.CHAT_AGENT_SYSTEM.value]
-        system_msg = db_prompt.system_prompt
-        if db_prompt.user_prompt:
-            system_msg += f"\n\n{db_prompt.user_prompt}"
-        return await _run_generate(state, system_msg, run_name=PromptType.CHAT_AGENT_SYSTEM.value)
+    def _make_skill_generate_node(skill_key: str):
+        """Factory: creates a generate node for a given skill key."""
+        skill_config = SKILL_REGISTRY[skill_key]
 
-    async def social_generate_node(state: AgentState):
-        """Generates social media comment drafts."""
-        social_db_prompt = prompts.get(PromptType.CHAT_SOCIAL_WRITER.value)
-        if social_db_prompt:
-            system_msg = social_db_prompt.system_prompt
-            if social_db_prompt.user_prompt:
-                system_msg += f"\n\n{social_db_prompt.user_prompt}"
-        else:
-            system_msg = _SOCIAL_WRITER_FALLBACK
-        return await _run_generate(state, system_msg, run_name=PromptType.CHAT_SOCIAL_WRITER.value)
+        async def skill_generate_node(state: AgentState):
+            db_prompt = prompts.get(skill_config.prompt_type.value)
+            if db_prompt:
+                system_msg = db_prompt.system_prompt
+                if db_prompt.user_prompt:
+                    system_msg += f"\n\n{db_prompt.user_prompt}"
+            elif skill_config.fallback_prompt:
+                system_msg = skill_config.fallback_prompt
+            else:
+                logger.error(f"No prompt available for skill '{skill_key}' — returning error message")
+                return {"messages": [AIMessage(content=f"I'm sorry, the '{skill_key}' skill is not properly configured. Please contact support.")]}
+            return await _run_generate(state, system_msg, run_name=skill_config.prompt_type.value)
+
+        skill_generate_node.__name__ = skill_config.node_name
+        skill_generate_node.__qualname__ = skill_config.node_name
+        return skill_generate_node
 
     async def reflect_node(state: AgentState):
         """Critiques the answer and decides if search is needed."""
         messages = state["messages"]
         last_ai_msg = messages[-1]
-        
+
         # If the last message was a tool call (not text), we skip reflection and go back to generate
-        if last_ai_msg.tool_calls:
+        if hasattr(last_ai_msg, 'tool_calls') and last_ai_msg.tool_calls:
              return {"search_needed": False, "reflection_count": state.get("reflection_count", 0)}
 
-        # Role Swapping: Frame the conversation so the Reflector thinks the AI's answer is a Human submission
-        # This helps the Reflector act as a "Teacher" grading a "Student"
-        cls_map = {"ai": HumanMessage, "human": AIMessage}
-        translated_messages = []
-        
-        for msg in messages:
-            # We want to preserve the system message if we had one in the list (though usually it's implicit)
-            # But for the graph history, we typically have [Human, AI, Human, AI...]
-            # The last message is AI (the one we want to critique).
-            # We swap it to HumanMessage.
-            # We swap previous HumanMessages to AIMessages (context).
-            msg_type = "ai" if isinstance(msg, AIMessage) else "human"
-            if msg_type in cls_map:
-                translated_messages.append(cls_map[msg_type](content=msg.content))
-            else:
-                # System messages or Tool messages -> keep as is or skip if confusing?
-                # For simplicity, we just keep content if possible, or skip strictly tool messages 
-                # that might confuse the simple reflection prompt.
-                # Actually, SystemMessage should stay SystemMessage (but we inject our own teacher prompt).
-                pass
-
-        db_prompt = prompts[PromptType.CHAT_REFLECTION.value]
-        system_prompt = db_prompt.system_prompt
-        # The user_prompt in DB is expected to be a template like "Student Submission:\n{messages}"
-        user_template = db_prompt.user_prompt or "Student Submission:\n{messages}"
-        
-        # Convert translated messages to a string representation for the teacher
-        # We format them clearly as "Role: Content"
-        msgs_str = "\n\n".join([f"{m.type.upper()}: {m.content}" for m in translated_messages])
-        
         try:
-            user_content = user_template.format(messages=msgs_str)
-        except Exception:
-            # Fallback if format fails but we must be strict about the prompt existing
-            user_content = f"Student Submission:\n{msgs_str}"
+            # Role Swapping: Frame the conversation so the Reflector thinks the AI's answer is a Human submission
+            # This helps the Reflector act as a "Teacher" grading a "Student"
+            cls_map = {"ai": HumanMessage, "human": AIMessage}
+            translated_messages = []
 
-        # Use Message objects directly to prevent LangChain from interpreting content as templates
-        prompt = ChatPromptTemplate.from_messages([
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_content)
-        ])
-        
-        chain = prompt | llm.with_structured_output(ReflectionOutput)
-        # We pass the translated messages to the chain (though prompt is already formatted)
-        # Add run_name for Langfuse
-        result = await chain.ainvoke(
-            {"messages": translated_messages},
-            config={"run_name": PromptType.CHAT_REFLECTION.value}
-        )
-        
-        # LOGIC:
-        # If is_satisfactory is True -> we are done.
-        # If is_satisfactory is False -> we pass the critique back to the Generator.
-        # CRITIQUE AS HUMAN MESSAGE: The generator will see this as a user saying "Please fix X".
-        
+            for msg in messages:
+                msg_type = "ai" if isinstance(msg, AIMessage) else "human"
+                if msg_type in cls_map:
+                    translated_messages.append(cls_map[msg_type](content=msg.content))
+
+            db_prompt = prompts.get(PromptType.CHAT_REFLECTION.value)
+            if not db_prompt:
+                logger.warning("Reflection prompt not found in DB — skipping reflection, accepting answer as-is")
+                return {
+                    "search_needed": False,
+                    "reflection_count": state.get("reflection_count", 0) + 1,
+                    "is_satisfactory": True,
+                }
+
+            system_prompt = db_prompt.system_prompt
+            user_template = db_prompt.user_prompt or "Student Submission:\n{messages}"
+
+            msgs_str = "\n\n".join([f"{m.type.upper()}: {m.content}" for m in translated_messages])
+
+            try:
+                user_content = user_template.format(messages=msgs_str)
+            except Exception:
+                user_content = f"Student Submission:\n{msgs_str}"
+
+            prompt = ChatPromptTemplate.from_messages([
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_content)
+            ])
+
+            chain = prompt | llm.with_structured_output(ReflectionOutput)
+            result = await chain.ainvoke(
+                {"messages": translated_messages},
+                config={"run_name": PromptType.CHAT_REFLECTION.value}
+            )
+        except Exception as e:
+            logger.error(f"Reflection node failed: {e}", exc_info=True)
+            # On reflection failure, accept the current answer rather than crashing
+            return {
+                "search_needed": False,
+                "reflection_count": state.get("reflection_count", 0) + 1,
+                "is_satisfactory": True,
+            }
+
         return {
             "search_needed": result["needs_search"],
             "latest_query": result["search_query"],
@@ -430,34 +648,44 @@ def build_research_graph(
         query = state["latest_query"]
         if not google_tool:
             return {"messages": [AIMessage(content="Search tool not available.")]}
-            
-        res = google_tool.func(query)
-        # return as a ToolMessage or just context in a HumanMessage "System Note" style
-        # For simplicity in this custom graph, we'll inject it as a visible system note for the next generation.
+
+        try:
+            res = await google_tool.ainvoke({"query": query})
+        except Exception:
+            # Fallback to sync if ainvoke isn't available
+            import asyncio
+            res = await asyncio.to_thread(google_tool.func, query) if hasattr(google_tool, 'func') else "Search failed."
         return {"messages": [HumanMessage(content=f"SYSTEM NOTE: Google Search Results for '{query}':\n{res}")]}
 
     # 3. Graph Construction
     from langgraph.prebuilt import ToolNode
 
-    def route_to_generate(state: AgentState) -> str:
-        """Route to the appropriate generate node based on social writing intent."""
-        return "social_generate_node" if state.get("is_social_writing", False) else "generate_node"
+    def route_by_skill(state: AgentState) -> str:
+        """Route to the appropriate generate node based on the classified skill."""
+        skill = state.get("skill", DEFAULT_SKILL)
+        config = SKILL_REGISTRY.get(skill, SKILL_REGISTRY[DEFAULT_SKILL])
+        return config.node_name
 
     graph = StateGraph(AgentState)
 
     graph.add_node("intent_node", intent_node)
     graph.add_node("enrich_kg_node", enrich_kg_node)
-    graph.add_node("generate_node", generate_node)
-    graph.add_node("social_generate_node", social_generate_node)
     graph.add_node("reflect_node", reflect_node)
     graph.add_node("google_search_node", google_search_node)
 
-    tools_node = ToolNode(tools)
+    # Register a generate node for each skill in the registry
+    skill_node_names = []
+    for skill_key in SKILL_REGISTRY:
+        node_name = SKILL_REGISTRY[skill_key].node_name
+        graph.add_node(node_name, _make_skill_generate_node(skill_key))
+        skill_node_names.append(node_name)
+
+    tools_node = ToolNode(tools, handle_tool_errors=True)
     graph.add_node("tools", tools_node)
 
     graph.add_edge(START, "intent_node")
     graph.add_edge("intent_node", "enrich_kg_node")
-    graph.add_conditional_edges("enrich_kg_node", route_to_generate)
+    graph.add_conditional_edges("enrich_kg_node", route_by_skill)
 
     def route_after_generate(state: AgentState) -> str:
         """Route to tools if tool_calls present, otherwise reflect."""
@@ -466,9 +694,12 @@ def build_research_graph(
             return "tools"
         return "reflect_node"
 
-    graph.add_conditional_edges("generate_node", route_after_generate)
-    graph.add_conditional_edges("social_generate_node", route_after_generate)
-    graph.add_conditional_edges("tools", route_to_generate)  # loop back to the right generate node
+    # Each skill generate node routes the same way after generation
+    for node_name in skill_node_names:
+        graph.add_conditional_edges(node_name, route_after_generate)
+
+    # Tools loop back to the correct skill's generate node
+    graph.add_conditional_edges("tools", route_by_skill)
 
     def route_after_reflect(state: AgentState) -> str:
         """Route to google search, retry generate, or END."""
@@ -478,10 +709,10 @@ def build_research_graph(
             return END
         if state["search_needed"]:
             return "google_search_node"
-        # Not satisfactory: retry the appropriate generate node
-        return route_to_generate(state)
+        # Not satisfactory: retry via skill router
+        return route_by_skill(state)
 
     graph.add_conditional_edges("reflect_node", route_after_reflect)
-    graph.add_conditional_edges("google_search_node", route_to_generate)
+    graph.add_conditional_edges("google_search_node", route_by_skill)
 
     return graph.compile(checkpointer=checkpointer)

@@ -238,7 +238,7 @@ class PromptService:
     async def update_prompt(
         self,
         prompt_id: int,
-        user_prompt: str,
+        user_prompt: Optional[str] = None,
         system_prompt: Optional[str] = None,
         description: Optional[str] = None
     ) -> Prompt:

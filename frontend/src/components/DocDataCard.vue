@@ -13,13 +13,10 @@
                     <p class="m-0">{{ doc.is_about }}</p>
                 </div>
                 <div class="col-2">
-                    <router-link 
-                        :to="{
-                            name: 'docxray',
-                            params: { id: doc.id }
-                        }" 
-                        class="border-primary border-round mt-2 border-solid surface-border border-1 p-2 text-white bg-blue-600 w-full">Open XRay
-                    </router-link>
+                    <a
+                        @click="navigateToDocChat(doc)"
+                        class="border-primary border-round mt-2 border-solid surface-border border-1 p-2 text-white bg-blue-600 w-full cursor-pointer">Open Chat
+                    </a>
                     <button type="button" class="border-primary border-round mt-2 border-solid surface-border border-1 p-2 text-white surface-400 w-full" @click="handleRemoveClick">Remove</button>
                 </div>
                 <!-- <div class="col-12">
@@ -47,14 +44,25 @@
 </template>
 <script setup lang="ts">
     import { ref, computed} from 'vue';
+    import { useRouter } from 'vue-router';
     import { DocModel } from './models/DocModel.js';
+    import { useChatStore } from '../stores/chat_store.js';
     import moment from 'moment';
 
+    const router = useRouter();
+    const chatStore = useChatStore();
     const showmore = ref(false);
 
     const props = defineProps<{
         doc: DocModel | any
     }>();
+
+    const navigateToDocChat = async (doc: any) => {
+        const session = await chatStore.getOrCreateDocumentSession(doc.id, doc.title);
+        if (session) {
+            router.push({ name: 'chats', params: { id: session.id } });
+        }
+    };
 
     const showmore_text = computed(() => {
         return showmore.value ? 'Less Details' : 'More Details';

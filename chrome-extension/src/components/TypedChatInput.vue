@@ -1,9 +1,23 @@
 <template>
   <div class="typed-chat-input-wrapper">
+    <!-- Slash-command dropdown -->
+    <div v-if="showSlashMenu" class="slash-menu">
+      <div
+        v-for="(cmd, index) in filteredCommands"
+        :key="cmd.command"
+        class="slash-menu-item"
+        :class="{ active: index === selectedCommandIndex }"
+        @mousedown.prevent="selectCommand(cmd)"
+        @mouseenter="selectedCommandIndex = index"
+      >
+        <span class="slash-cmd">{{ cmd.command }}</span>
+        <span class="slash-desc">{{ cmd.description }}</span>
+      </div>
+    </div>
     <div class="layers-container">
       <!-- Ghost Layer (Background) -->
       <div class="layer ghost-layer" ref="ghostLayer">
-        <span class="invisible-content">{{ internalValue }}</span><span v-if="internalValue && internalValue.length >= 3" class="suggestion-content">{{ suggestion }}</span>
+        <span class="invisible-content">{{ internalValue }}</span><span v-if="suggestion" class="suggestion-content">{{ suggestion }}</span>
       </div>
 
       <!-- Input Layer (Foreground) -->
@@ -24,18 +38,21 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, nextTick } from 'vue';
+import { ref, computed, watch, onMounted, nextTick } from 'vue';
 
 const props = defineProps({
   modelValue: String,
   placeholder: String,
   disabled: Boolean,
-  isExtension: {
-    type: Boolean,
-    default: false
-  },
   sessionId: [Number, String],
-  context: String
+  skillCommands: {
+    type: Array,
+    default: () => []
+  },
+  vocabulary: {
+    type: Array,
+    default: () => []
+  }
 });
 
 const emit = defineEmits(['update:modelValue', 'send']);
@@ -44,7 +61,31 @@ const internalValue = ref(props.modelValue);
 const suggestion = ref('');
 const inputField = ref(null);
 const ghostLayer = ref(null);
-let debounceTimer = null;
+const selectedCommandIndex = ref(0);
+
+// Slash-command menu logic
+const showSlashMenu = computed(() => {
+  if (!internalValue.value || !props.skillCommands.length) return false;
+  return internalValue.value.startsWith('/') && !internalValue.value.includes(' ');
+});
+
+const filteredCommands = computed(() => {
+  if (!showSlashMenu.value) return [];
+  const typed = internalValue.value.toLowerCase();
+  return props.skillCommands.filter(cmd =>
+    cmd.command.toLowerCase().startsWith(typed)
+  );
+});
+
+const selectCommand = (cmd) => {
+  internalValue.value = cmd.command + ' ';
+  selectedCommandIndex.value = 0;
+  nextTick(() => {
+    inputField.value?.focus();
+    autoResize();
+    syncScroll();
+  });
+};
 
 // Keep internal value in sync with modelValue
 watch(() => props.modelValue, (newVal) => {
@@ -61,73 +102,73 @@ watch(internalValue, (newVal) => {
   emit('update:modelValue', newVal);
 });
 
+const getWordCompletion = () => {
+  const text = internalValue.value || '';
+  if (!text || showSlashMenu.value || !props.vocabulary.length) {
+    suggestion.value = '';
+    return;
+  }
+
+  // Find the current word being typed (after last space)
+  const lastSpaceIdx = text.lastIndexOf(' ');
+  const currentWord = lastSpaceIdx === -1 ? text : text.substring(lastSpaceIdx + 1);
+
+  // Need at least 3 chars in the current word to suggest
+  if (currentWord.length < 3 || currentWord.startsWith('/')) {
+    suggestion.value = '';
+    return;
+  }
+
+  const lower = currentWord.toLowerCase();
+
+  // Find first matching word from vocabulary (case-insensitive prefix match)
+  const match = props.vocabulary.find(w =>
+    w.toLowerCase().startsWith(lower) && w.toLowerCase() !== lower
+  );
+
+  if (match) {
+    // Show only the remaining suffix of the matched word
+    suggestion.value = match.substring(currentWord.length);
+  } else {
+    suggestion.value = '';
+  }
+};
+
 const onInput = () => {
   suggestion.value = '';
-  clearTimeout(debounceTimer);
+  selectedCommandIndex.value = 0;
 
-  if (internalValue.value.length >= 3 && props.sessionId) {
-    debounceTimer = setTimeout(() => {
-      fetchSuggestion();
-    }, 400);
-  }
-  
+  getWordCompletion();
+
   autoResize();
   syncScroll();
 };
 
-const fetchSuggestion = async () => {
-  if (!internalValue.value || internalValue.value.length < 3) return;
-  
-  try {
-    if (props.isExtension && typeof chrome !== 'undefined' && chrome.runtime) {
-      chrome.runtime.sendMessage(
-        { 
-          name: 'get-chat-suggestion', 
-          data: { 
-            text: internalValue.value, 
-            sessionId: props.sessionId,
-            context: props.context
-          } 
-        },
-        (response) => {
-          if (response && response.success) {
-            // Check if input still justifies a suggestion to prevent race conditions
-            if (internalValue.value && internalValue.value.length >= 3) {
-                suggestion.value = response.data.prediction;
-                nextTick(syncScroll);
-            }
-          }
-        }
-      );
-    } else {
-        // Web app path
-        const response = await fetch(`/api/v1/chat/sessions/${props.sessionId}/suggest`, {
-            method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
-                // Authorization header might be needed if not handled by cookies/session
-            },
-            body: JSON.stringify({ 
-                text: internalValue.value, 
-                session_id: props.sessionId,
-                context: props.context
-            })
-        });
-        if (response.ok) {
-            const data = await response.json();
-            // Check if input still justifies a suggestion to prevent race conditions
-            if (internalValue.value && internalValue.value.length >= 3) {
-                suggestion.value = data.prediction;
-                nextTick(syncScroll);
-            }
-        }
-    }
-  } catch (err) {
-    console.log('[ERROR]', "Type-ahead error:", err);
-  }
-};
-
 const onKeydown = (e) => {
+  // Slash-command menu navigation
+  if (showSlashMenu.value && filteredCommands.value.length > 0) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      selectedCommandIndex.value = (selectedCommandIndex.value + 1) % filteredCommands.value.length;
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      selectedCommandIndex.value = (selectedCommandIndex.value - 1 + filteredCommands.value.length) % filteredCommands.value.length;
+      return;
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      selectCommand(filteredCommands.value[selectedCommandIndex.value]);
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      internalValue.value = '';
+      return;
+    }
+  }
+
   if (e.key === 'Tab') {
     if (suggestion.value) {
       e.preventDefault();
@@ -167,7 +208,7 @@ const autoResize = () => {
     const maxHeight = 120;
     const newHeight = Math.min(scrollHeight, maxHeight);
     el.style.height = newHeight + 'px';
-    
+
     // Only show scrollbar if we've reached maxHeight and there's more content
     if (scrollHeight > maxHeight) {
       el.style.overflowY = 'auto';
@@ -191,7 +232,61 @@ onMounted(() => {
   width: 100%;
   position: relative;
   display: flex;
+  flex-direction: column;
   background: var(--surface-card);
+}
+
+/* Slash-command menu */
+.slash-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  background: var(--surface-card, #fff);
+  border: 1px solid var(--surface-border, #d1d5db);
+  border-radius: 8px;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.12);
+  margin-bottom: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+  z-index: 10;
+}
+
+.slash-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.slash-menu-item:first-child {
+  border-radius: 8px 8px 0 0;
+}
+
+.slash-menu-item:last-child {
+  border-radius: 0 0 8px 8px;
+}
+
+.slash-menu-item.active {
+  background: var(--primary-50, #eff6ff);
+}
+
+.slash-cmd {
+  font-family: 'Roboto Mono', monospace;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--primary-color, #3b82f6);
+  white-space: nowrap;
+}
+
+.slash-desc {
+  font-size: 0.78rem;
+  color: var(--text-color-secondary, #6b7280);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .layers-container {
