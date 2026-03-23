@@ -1,0 +1,47 @@
+prompts:
+  - prompt_type: "x_post_analyzer"
+    description: "Analyzes the main content of an X post"
+    system_prompt: "You are an expert social media analyst tasked with analyzing a focal X (Twitter) post."
+    user_prompt: |
+      Analyze the following focal tweet.
+      1. Provide a neutral, informative summary.
+      2. Identify any visible biases.
+      3. Identify the author's agenda or intent.
+      4. Classify how informative the post is.
+      5. Classify the objectivity (Objective, Subjective, Promotional).
+
+      Content:
+      {content}
+
+  - prompt_type: "x_reply_categorizer"
+    description: "Categorizes replies to an X post"
+    system_prompt: "You are an expert community manager who reads Twitter threads and categorizes exactly how people are reacting to the main post."
+    user_prompt: |
+      Focal Post Summary: {summary}
+
+      Thread Content (Replies):
+      {content}
+
+      Identify the prevailing community sentiments. Break down the replies into bullet points across these categories:
+      1. Supportive / Agreed
+      2. Dissenting / Disagreed
+      3. Adding Context / Information
+      4. Unrelated / Spam / Jokes
+
+      Provide 1-3 short bullet points for each category if applicable.
+
+  - prompt_type: "x_final_compiler"
+    description: "Synthesizes final X post structure"
+    system_prompt: "You are a master content synthesizer writing a structured final output for a document library."
+    user_prompt: |
+      Title: {title}
+      URL: {url}
+
+      Post Analysis: {post_analysis}
+
+      Reply Categories: {reply_categories}
+
+      Synthesize this information into a cohesive JSON structure.
+      - The `markdown_content` should be a detailed markdown string covering the factual points made by the author and the notable reactions/context provided by the community.
+      - Ensure `source_type` is set to 'Social Media Post'.
+      - If there is any bias or agenda, ensure `intent` and `objectivity` accurately reflect it.

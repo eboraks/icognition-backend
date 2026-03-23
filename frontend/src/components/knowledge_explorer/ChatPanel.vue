@@ -96,7 +96,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue';
+import { ref, computed, watch, nextTick, onMounted } from 'vue';
 import Button from 'primevue/button';
 import TypedChatInput from './TypedChatInput.vue';
 import ScrollPanel from 'primevue/scrollpanel';
@@ -178,8 +178,10 @@ const toParagraphHtml = (content: string) => `<p>${escapeHtml(content)}</p>`;
 
 // Slash-command → skill key mapping
 const SKILL_SHORTCUTS: Record<string, string> = {
-  '/social_post': 'social_post',
-  '/write_comment': 'social_post',
+  '/write_post': 'write_social_media_post',
+  '/write_social_media_post': 'write_social_media_post',
+  '/write_comment': 'write_social_media_comment',
+  '/write_social_media_comment': 'write_social_media_comment',
   '/fact_check': 'fact_check',
   '/email': 'email_draft',
   '/email_draft': 'email_draft',
@@ -189,7 +191,8 @@ const SKILL_SHORTCUTS: Record<string, string> = {
 
 // Skill commands for the autocomplete dropdown
 const SKILL_COMMAND_LIST = [
-  { command: '/social_post', description: 'Write a social media comment' },
+  { command: '/write_post', description: 'Write a social media post from this article' },
+  { command: '/write_comment', description: 'Write a comment on this social media post' },
   { command: '/fact_check', description: 'Fact check claims in this article' },
   { command: '/summary', description: 'Summarize this document' },
   { command: '/email_draft', description: 'Draft an email about this' },
@@ -543,10 +546,15 @@ watch(
   { immediate: true }
 );
 
-// The initial load is now handled by the 'watch' with immediate: true
-// onMounted(() => {
-//   loadInitialMessage();
-// });
+// Make the scroll content focusable so arrow keys work after clicking
+onMounted(() => {
+  nextTick(() => {
+    const el = messagesContainer.value?.$el?.querySelector('.p-scrollpanel-content');
+    if (el) {
+      el.setAttribute('tabindex', '0');
+    }
+  });
+});
 </script>
 
 <style scoped>
@@ -581,6 +589,7 @@ watch(
   max-width: 900px;
   margin: 0 auto;
   width: 100%;
+  outline: none;
 }
 
 .message-wrapper {

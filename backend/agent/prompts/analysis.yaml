@@ -1,0 +1,154 @@
+prompts:
+  - prompt_type: "Doc Analysis: Summary"
+    description: "Content summarization prompt"
+    user_prompt: |
+      Please provide a concise summary of the following content in no more than {max_length} words. Focus on the main ideas and key information.
+
+      Content:
+      {content}
+
+      Summary:
+
+  - prompt_type: "Doc Analysis: Entities"
+    description: "Named entity extraction prompt"
+    user_prompt: |
+      Extract all named entities from the following content. Categorize them into:
+      - PERSON: People's names
+      - ORGANIZATION: Companies, institutions, groups
+      - LOCATION: Places, cities, countries
+      - EVENT: Events, conferences, meetings
+      - PRODUCT: Products, services, technologies
+      - DATE: Dates, time periods
+      - OTHER: Any other significant entities
+
+      Format the response as JSON with the following structure:
+      {{
+          "entities": [
+              {{
+                  "text": "entity text",
+                  "category": "PERSON|ORGANIZATION|LOCATION|EVENT|PRODUCT|DATE|OTHER",
+                  "confidence": 0.95,
+                  "context": "surrounding text for context"
+              }}
+          ]
+      }}
+
+      Content:
+      {content}
+
+      Entities:
+
+  - prompt_type: "Doc Analysis: Topics"
+    description: "Topic categorization prompt"
+    user_prompt: |
+      Analyze the following content and identify the main topics and categories it discusses. Provide a hierarchical categorization.
+
+      Content:
+      {content}
+
+      Topics and Categories:
+
+  - prompt_type: "Doc Analysis: Sentiment"
+    description: "Sentiment analysis prompt"
+    user_prompt: |
+      Analyze the sentiment of the following content. Provide:
+      1. Overall sentiment (positive, negative, neutral)
+      2. Confidence score (0.0 to 1.0)
+      3. Key phrases that indicate the sentiment
+      4. Emotional tone (professional, casual, academic, etc.)
+
+      Format as JSON:
+      {{
+          "sentiment": "positive|negative|neutral",
+          "confidence": 0.85,
+          "key_phrases": ["phrase1", "phrase2"],
+          "tone": "professional|casual|academic|technical"
+      }}
+
+      Content:
+      {content}
+
+      Sentiment Analysis:
+
+  - prompt_type: "Doc Analysis: Language"
+    description: "Language detection prompt"
+    user_prompt: |
+      Identify the primary language of the following content. If multiple languages are present, identify the dominant language and list any secondary languages.
+
+      Content:
+      {content}
+
+      Language:
+
+  - prompt_type: "Doc Analysis: Validation"
+    description: "Content validation prompt"
+    user_prompt: |
+      Analyze the following content and provide validation information:
+      1. Content quality (high, medium, low)
+      2. Completeness (complete, partial, incomplete)
+      3. Readability (excellent, good, fair, poor)
+      4. Potential issues or concerns
+      5. Content type (article, blog post, documentation, etc.)
+
+      Format as JSON:
+      {{
+          "quality": "high|medium|low",
+          "completeness": "complete|partial|incomplete",
+          "readability": "excellent|good|fair|poor",
+          "issues": ["issue1", "issue2"],
+          "content_type": "article|blog|documentation|news|other"
+      }}
+
+      Content:
+      {content}
+
+      Validation:
+
+  - prompt_type: "Doc Analysis: Bullet Points"
+    description: "Bullet point extraction prompt"
+    user_prompt: |
+      Create {max_points} bullet points that capture the essential, most important information from the following content. Each bullet point should be concise but informative. You can use quotes from the original content, if they can help the reader understand better what the content is about. For example, the president said "I will not raise taxes" in the news conference.
+
+      Content:
+      {content}
+
+      Bullet Points:
+
+  - prompt_type: "Doc Analysis: Opening Message"
+    description: "Contextual opening message based on recently bookmarked documents"
+    user_prompt: |
+      You are a knowledge exploration assistant. The user has recently bookmarked or saved the following documents:
+
+      {documents_list}
+
+      For each document, you are provided:
+      - Title: [document title]
+      - URL: [document url]
+      - Content preview: [first 500 characters of content]
+
+      Your task:
+      1. Analyze the documents to understand what they are about
+      2. Determine if the documents are related (same topic, theme, or subject)
+      3. Generate a natural, conversational opening message that:
+         - Mentions the documents the user recently bookmarked
+         - Describes what each document is about in a brief, engaging way
+         - If documents are related, combine them: "You recently bookmarked 'doc1' and 'doc2' about [common topic]. Would you like to explore this topic?"
+         - If documents are unrelated, mention them separately: "You recently bookmarked 'doc1' that is about [topic1] and 'doc2' that discussed [topic2]"
+      4. Determine which documents should have summary buttons:
+         - DO NOT create summary buttons for short social media posts (e.g., Twitter/X posts, short comments)
+         - DO create summary buttons for articles, blog posts, news articles, or substantial content
+         - Consider content length and source type when making this decision
+      5. Format your response as JSON:
+      {{
+        "message": "Your generated opening message text here",
+        "buttons": [
+          {{"document_id": 123, "label": "Summary of [document title]"}},
+          ...
+        ]
+      }}
+
+      Important guidelines:
+      - Keep the message conversational and friendly
+      - Be specific about what each document discusses
+      - Only suggest summaries for documents that would benefit from summarization
+      - If all documents are too short for summaries, return an empty buttons array

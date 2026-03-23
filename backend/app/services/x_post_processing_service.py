@@ -12,8 +12,7 @@ from langgraph.graph import StateGraph, END
 from dotenv import load_dotenv
 
 from app.models import LLMContentExtraction
-from app.db.database import get_session
-from app.services.prompt_service import PromptService
+from app.services.prompt_service import get_prompt
 from app.utils.logging import get_logger
 from app.utils.langfuse_worker import get_langfuse_handler
 from app.services.image_analysis_service import get_image_analysis_service
@@ -79,16 +78,14 @@ class XPostProcessingService:
         logger.info("XPostProcessingService (LangGraph) initialized")
 
     async def _get_db_prompt(self, prompt_type: str) -> Optional[str]:
-        """Helper to fetch prompts from the database."""
-        async for session in get_session():
-            service = PromptService(session)
-            db_prompt = await service.get_latest_prompt(prompt_type)
-            if db_prompt:
-                instructions = ""
-                if db_prompt.system_prompt:
-                    instructions += db_prompt.system_prompt + "\n\n"
-                instructions += db_prompt.user_prompt
-                return instructions
+        """Helper to fetch prompts from YAML."""
+        db_prompt = get_prompt(prompt_type)
+        if db_prompt:
+            instructions = ""
+            if db_prompt.system_prompt:
+                instructions += db_prompt.system_prompt + "\n\n"
+            instructions += db_prompt.user_prompt
+            return instructions
         return None
 
     # --- Node Functions ---

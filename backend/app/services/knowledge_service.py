@@ -12,7 +12,7 @@ import re
 
 from app.models import Entity, Document, EntityDocument, EntityRelationship
 from app.services.document_service import DocumentService
-from app.services.prompt_service import PromptService
+from app.services.prompt_service import get_prompt
 from app.services.gemini_service import get_gemini_service, GeminiModel, GeminiConfig
 from app.utils.logging import get_logger
 from app.utils.text_utils import extract_text_from_html
@@ -90,23 +90,11 @@ class KnowledgeService:
     
     async def _ensure_opening_message_prompt(self) -> str:
         """
-        Ensure the opening message prompt exists in the database.
+        Get the opening message prompt from YAML.
         Returns the prompt content.
         """
         from app.services.prompt_utils import PromptType
-        prompt_service = PromptService(self.session)
-        prompt = await prompt_service.get_latest_prompt(PromptType.OPENING_MESSAGE.value)
-        
-        if not prompt:
-            # Create the prompt if it doesn't exist
-            logger.info(f"Creating {PromptType.OPENING_MESSAGE.value} prompt in database")
-            prompt = await prompt_service.create_prompt(
-                prompt_type=PromptType.OPENING_MESSAGE.value,
-                user_prompt=DEFAULT_OPENING_MESSAGE_PROMPT,
-                description="Prompt for generating contextual opening messages based on latest bookmarked documents"
-            )
-            await self.session.commit()
-        
+        prompt = get_prompt(PromptType.OPENING_MESSAGE.value)
         return prompt.user_prompt if prompt else DEFAULT_OPENING_MESSAGE_PROMPT
     
     async def _generate_opening_message_from_documents(
@@ -669,10 +657,9 @@ class KnowledgeService:
                             "message": f"Sorry, I couldn't generate a summary for '{document.title or 'Untitled'}' because the document has no readable content.",
                         }
                     
-                    # Try to get template from database
+                    # Get template from YAML
                     from app.services.prompt_utils import PromptType
-                    prompt_service = PromptService(self.session)
-                    db_prompt = await prompt_service.get_latest_prompt(PromptType.CONTENT_SUMMARY.value)
+                    db_prompt = get_prompt(PromptType.CONTENT_SUMMARY.value)
                     
                     if db_prompt:
                         system_prompt = db_prompt.system_prompt or ""

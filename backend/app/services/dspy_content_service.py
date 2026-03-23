@@ -111,24 +111,19 @@ class DspyContentService:
         logger.info("DspyContentService initialized successfully with Flash Lite model")
     
     async def _get_db_instructions(self) -> Optional[str]:
-        """Fetch DSPy instructions from database"""
-        from app.db.database import get_session
-        from app.services.prompt_service import PromptService
-        
+        """Fetch DSPy instructions from YAML"""
+        from app.services.prompt_service import get_prompt
+
         try:
-            async for session in get_session():
-                prompt_service = PromptService(session)
-                db_prompt = await prompt_service.get_latest_prompt("DSPy: Content Extraction")
-                if db_prompt:
-                    # Combine system and user prompt for DSPy instructions
-                    instructions = ""
-                    if db_prompt.system_prompt:
-                        instructions += db_prompt.system_prompt + "\n\n"
-                    instructions += db_prompt.user_prompt
-                    return instructions
-                break
+            db_prompt = get_prompt("DSPy: Content Extraction")
+            if db_prompt:
+                instructions = ""
+                if db_prompt.system_prompt:
+                    instructions += db_prompt.system_prompt + "\n\n"
+                instructions += db_prompt.user_prompt
+                return instructions
         except Exception as e:
-            logger.warning(f"Failed to fetch DSPy instructions from DB: {e}")
+            logger.warning(f"Failed to fetch DSPy instructions from YAML: {e}")
         return None
 
     async def analyze_document_content(

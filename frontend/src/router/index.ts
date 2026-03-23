@@ -30,30 +30,6 @@ const guestOnly = (to: any, from: any, next: any) => {
   }
 };
 
-// Route guard for admin routes (requires sysadmin role)
-const requireAdmin = async (to: any, from: any, next: any) => {
-  const authStore = useAuthStore();
-
-  // Wait for auth initialization if not already done
-  if (!authStore.initialized) {
-    await authStore.initAuth();
-  }
-
-  if (!authStore.isAuthenticated) {
-    console.log('Admin route guard: User not authenticated, redirecting to home');
-    next({ name: 'home' });
-    return;
-  }
-
-  if (!authStore.isAdmin) {
-    console.log('Admin route guard: User is not admin, redirecting to home');
-    next({ name: 'home' });
-    return;
-  }
-
-  console.log('Admin route guard: User is admin, allowing access');
-  next();
-};
 
 const routes: Array<RouteRecordRaw> = [
   {
@@ -102,12 +78,6 @@ const routes: Array<RouteRecordRaw> = [
     name: 'terms-of-use',
     component: () => import("../components/TermsOfUse.vue"),
   },
-  {
-    path: '/admin/prompts',
-    name: 'admin-prompts',
-    component: () => import("../views/AdminPromptsView.vue"),
-    beforeEnter: requireAdmin
-  }
 ];
 
 const router = createRouter({
@@ -128,7 +98,7 @@ router.beforeEach(async (to, from, next) => {
   console.log('Global router guard - going to:', to.name, 'authenticated:', authStore.isAuthenticated);
 
   // Handle automatic redirects based on auth state
-  const protectedRoutes = ['library', 'search', 'collections', 'document', 'analyze', 'profile', 'admin-prompts'];
+  const protectedRoutes = ['library', 'search', 'collections', 'document', 'analyze', 'profile'];
   const guestRoutes = ['home'];
 
   if (authStore.isAuthenticated && guestRoutes.includes(to.name as string) && !authStore.isAuthDisabled) {

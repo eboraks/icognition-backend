@@ -13,7 +13,7 @@ from app.utils.logging import get_logger
 from app.services.dspy_models_entities_only import EntityExtractionResult, Entity, EntityRelationshipResult
 from app.models import Document
 from app.utils.text_utils import extract_text_from_html
-from app.services.prompt_service import PromptService
+from app.services.prompt_service import get_prompt
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = get_logger(__name__)
@@ -162,17 +162,15 @@ class DspyEntityService:
             logger.info(f"Content for document {document_id} is too short ({word_count} words), skipping entity extraction (min 50 words required)")
             return []
         
-        # Load prompt from database if session is provided
+        # Load prompt from YAML
         custom_instructions = None
-        if session:
-            try:
-                prompt_service = PromptService(session)
-                db_prompt = await prompt_service.get_latest_prompt("entity_extraction")
-                if db_prompt and db_prompt.user_prompt:
-                    logger.info(f"Using custom entity extraction prompt from database (version {db_prompt.version})")
-                    custom_instructions = db_prompt.user_prompt
-            except Exception as e:
-                logger.warning(f"Error loading prompt from database, falling back to hardcoded: {e}")
+        try:
+            db_prompt = get_prompt("entity_extraction")
+            if db_prompt and db_prompt.user_prompt:
+                logger.info("Using custom entity extraction prompt from YAML")
+                custom_instructions = db_prompt.user_prompt
+        except Exception as e:
+            logger.warning(f"Error loading prompt from YAML, falling back to hardcoded: {e}")
 
         logger.info(f"Starting DSPy entity extraction for document {document_id or 'unknown'}")
         

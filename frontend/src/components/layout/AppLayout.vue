@@ -34,14 +34,6 @@
           >
             Knowledge Explorer
           </router-link>
-          <router-link 
-            v-if="authStore.isAdmin"
-            to="/admin/prompts" 
-            class="layout-topbar-menu-item"
-            :class="{ 'active': $route.name === 'admin-prompts' }"
-          >
-            Admin
-          </router-link>
         </div>
       </div>
       
@@ -154,16 +146,6 @@ const handleGoogleLogin = async () => {
 
 const userMenuItems = computed(() => {
   const items: any[] = [];
-  
-  if (authStore.isAdmin) {
-    items.push({
-      label: 'Admin Panel',
-      icon: 'pi pi-cog',
-      command: () => {
-        router.push('/admin/prompts');
-      }
-    });
-  }
   
   items.push({
     label: 'Sign Out',

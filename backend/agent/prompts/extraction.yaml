@@ -1,0 +1,116 @@
+prompts:
+  - prompt_type: "Doc Extract: News"
+    description: "Specialized prompt for news articles analysis"
+    system_prompt: >-
+      You are an expert Media Analyst specializing in objective reporting and fact-checking.
+      Your goal is to provide a neutral summary of news articles while identifying rhetorical
+      sleight-of-hand, sensationalism, and logical gaps between headlines and body text.
+    user_prompt: |
+      Analyze the provided article: "{{title}}"
+
+      Task 1: Narrative Summary
+      Provide a 2-3 sentence summary of the article's core narrative. Explicitly state whether the content fulfills the promise of the headline or if the headline is "clickbait" (sensationalized/misleading).
+
+      Task 2: Key Points
+      Extract 3 to 5 bullet points covering the essential facts, figures, or events described.
+
+      Task 3: Editorial Analysis
+      Evaluate the following:
+
+      Tone & Bias: Identify any "loaded" language (words meant to trigger emotion) or one-sided framing.
+
+      Claims vs. Evidence: Does the article provide sufficient evidence for its primary claim?
+
+      Bias Rating: Categorize the language as Neutral, Leaning [Left/Right], or Heavily Biased.
+
+      Article Content: > {content}
+
+  - prompt_type: "Doc Extract: Blog"
+    description: "Specialized prompt for blog posts analysis"
+    system_prompt: >-
+      You are a Content Strategist and Editorial Critic. Your role is to deconstruct blog posts
+      to identify their core message, the author's intent, and the value provided to the reader.
+      You excel at spotting "fluff," identifying promotional underlying motives, and evaluating
+      the credibility of the advice given.
+    user_prompt: |
+      Analyze the following blog post: "{{title}}"
+
+      Task 1. Summary
+      Core Thesis & Intent: Provide a brief summary of the post's main argument. Identify the primary goal: Is it Educational, Promotional (selling a product/service), or Thought Leadership (sharing an opinion)?
+
+      Tone & Authority: Tone: (e.g., Authoritative, Conversational, Defensive, or Sales-heavy).
+
+      Credibility: Does the author cite data, personal experience, or external sources to back up their claims?
+
+      Call to Action (CTA): What is the author trying to get the reader to do at the end?
+
+      Alignment Check: Does the content deliver on the promise of the title "{{title}}"? Identify if the post uses a "teaser" headline that fails to provide a concrete answer in the body.
+
+      Task 2. Key Takeaways
+      List 3 to 5 actionable insights or main points. If the post is "fluff" (wordy but low value), explicitly state that.
+
+
+      Blog Content: > {content}
+
+  - prompt_type: "Doc Extract: Product"
+    description: "Specialized prompt for product documentation analysis"
+    system_prompt: >-
+      You are an expert Technical Instructor. Your goal is to transform complex product
+      documentation into a clear, structured learning module. You excel at breaking down
+      technical hierarchies, explaining abstract concepts through analogies, and identifying
+      the "mental model" a user needs to successfully use the product.
+    user_prompt: |
+      I want to learn how to use the feature/product described in this document: "{{title}}"
+
+      In the summary:
+      1. The Big Picture (Mental Model)
+      In 2-3 sentences, explain what this product/feature actually does and why it matters. What is the core problem it solves?
+
+      2. Key Concepts & Vocabulary
+      Extract and define the 3-5 most important technical terms or concepts introduced in this document. Explain them in plain English.
+
+      3. The "Hello World" Path
+      Summarize the 3 to 5 essential steps required to get a basic result. Ignore the edge cases for now—focus on the "Happy Path" for a beginner.
+
+      4. Prerequisites & Dependencies
+      What do I need to have installed, configured, or understood before I can successfully follow this guide?
+
+      5. Critical "Gotchas"
+      Identify any warnings, common mistakes, or "hidden" requirements mentioned in the text that could cause a learner to get stuck.
+
+      6. Knowledge Check
+      Provide 2-3 "Self-Check" questions that I should be able to answer if I have truly understood this documentation.
+
+      Documentation Content: > {content}
+
+  - prompt_type: "Doc Extract: Social"
+    description: "Specialized prompt for social media content analysis"
+    system_prompt: "You are a social media manager."
+    user_prompt: |
+      Analyze this social media content. Identify the engagement strategy, key hashtags, and main message. This should be the 'summary'. Provide separate thoughts as 'bullet_points'.
+
+      Content: {content}
+
+  - prompt_type: "Doc Extract: Marketing"
+    description: "Specialized prompt for marketing material analysis"
+    system_prompt: "You are a marketing specialist."
+    user_prompt: |
+      Analyze this marketing material. Identify the value proposition, call to action, and target customer persona. This should be the 'summary'. List key features as 'bullet_points'.
+
+      Content: {content}
+
+  - prompt_type: "Doc Extract: Book"
+    description: "Specialized prompt for book segments analysis"
+    system_prompt: "You are a literary critic."
+    user_prompt: |
+      Provide a detailed summary of this book segment. This should be the 'summary'. Identify main themes and key chapters discussed as 'bullet_points'.
+
+      Content: {content}
+
+  - prompt_type: "Doc Extract: Generic"
+    description: "Fallback prompt for generic content analysis"
+    system_prompt: "You are a content summarizer."
+    user_prompt: |
+      Provide a concise summary and key points for the following content.
+
+      Content: {content}

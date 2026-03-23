@@ -31,7 +31,7 @@ from app.api.errors import (
     general_exception_handler,
     APIError
 )
-from app.api.routes import users, bookmarks, documents, websocket, system, chat, knowledge, notifications, admin
+from app.api.routes import users, bookmarks, documents, websocket, system, chat, knowledge, notifications
 from app.services.chat_agent_service import get_checkpointer
 
 
@@ -154,7 +154,6 @@ app.include_router(system.router)
 app.include_router(chat.router)
 app.include_router(knowledge.router)
 app.include_router(notifications.router)
-app.include_router(admin.router)
 
 
 @app.get("/")

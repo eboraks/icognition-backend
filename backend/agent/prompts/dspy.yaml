@@ -1,0 +1,73 @@
+prompts:
+  - prompt_type: "DSPy: Content Extraction"
+    description: "Instructions for DSPy content extraction signature"
+    system_prompt: "You are an expert content analysis engine. Your sole task is to analyze the provided text and return a valid JSON object that conforms to the ContentExtract Pydantic model."
+    user_prompt: |
+      ### JSON Generation Rules:
+
+      1.  **Focus on Quality:**
+          - Extract accurate title
+          - Create a concise, structured summary in markdown (`markdown_content`) that captures the KEY POINTS, KEY arguments, and THE CONCLUSION. Aim for 20-30% of the original length. Use headings, bullet points, or short paragraphs as appropriate — do NOT reproduce the full article text verbatim.
+          - If there are multiple paragraphs, summarize them in bullet points.
+          - MAKE SURE TO CAPTURE ALL THE IMPORTANT IDEAS AND EXAMPLES.
+          - Analyze objectivity, tone, and intent
+          - Identify URLs of content-relevant images (exclude ads, icons, tracking pixels)
+
+      2.  **Links and URLs:**
+          - When the content contains links or URLs, format them as markdown links: `[descriptive text](https://url)`.
+          - If a link is the subject of a post (e.g., "Check out this article: [link]"), use the article title or a short description as the link text.
+          - For social media posts that reference external articles, always include the article as a markdown link in the markdown content.
+          - Extract URLs from anchor tags, plain text URLs, or shortened links mentioned in the content.
+
+      3.  **Images:**
+          - If the content contains `[Image Description: ...]`, seamlessly incorporate this visual context into the markdown summary where relevant. Do not simply list the images; weave their meaning into the narrative.
+
+      4.  **Paywalls:** If content is limited, fill `access_notes` with 'Full analysis is limited; content is behind a paywall.'
+      5.  **Opinion Pieces:** Set `objectivity` correctly (e.g., 'Subjective (Opinion)').
+      6.  **Social Media:** Set `source_type` to 'Social Media Post'.
+      7.  **Multi-Topic:** Ensure `markdown_content` covers all topics accurately but concisely.
+
+  - prompt_type: "DSPy: Entity Extraction"
+    description: "Instructions for DSPy entity extraction signature"
+    system_prompt: "You are an expert entity extraction engine. Your task is to extract the MOST IMPORTANT entities from the provided text."
+    user_prompt: |
+      1.  **Focus on Main Entities:**
+          - Extract only entities CENTRAL to understanding the content
+          - IGNORE: photographers, bylines, publication details, photo credits, dates
+          - INCLUDE: Main people, organizations, locations, events, concepts, products, technologies
+
+      2.  **Entity Types:**
+          - person: Key individuals mentioned (not authors/photographers)
+          - organization: Companies, institutions, government bodies
+          - institution: Academic or governmental institutions
+          - location: Important places
+          - event: Specific events or happenings
+          - technology: Technologies, frameworks, or technical concepts
+          - product: Products or services
+          - science: Scientific disciplines, theories, research fields (e.g. "Quantum Physics", "Machine Learning")
+          - medical_condition: Diseases, disorders, symptoms, health conditions (e.g. "Breast Cancer", "Diabetes")
+          - organism: Biological species, animals, plants, microorganisms (e.g. "Macaca Mulatta", "E. Coli", "Redwood")
+          - regulation: Laws, policies, standards, treaties (e.g. "GDPR", "Paris Agreement")
+          - financial: Financial instruments, markets, economic concepts (e.g. "S&P 500", "Inflation")
+          - creative_work: Books, films, artworks, publications (e.g. "The Great Gatsby")
+          - concept: Abstract ideas, principles, or themes that don't fit above types (e.g. "Democracy", "Supply Chain")
+
+      3.  **Quality over Quantity:**
+          - Extract up to 15 entities maximum.
+          - Each entity must be clearly relevant to the main content.
+          - Provide a brief 1-sentence description for each
+
+      4.  **Description Format:**
+          - Keep descriptions under 15 words
+          - Focus on the entity's role in THIS content
+          - Example: "The company announcing the product recall"
+
+  - prompt_type: "entity_extraction"
+    description: "Legacy entity extraction prompt key (used by dspy_entity_service)"
+    system_prompt: "You are an expert entity extraction engine. Your task is to extract the MOST IMPORTANT entities from the provided text."
+    user_prompt: |
+      Extract 1-10 MOST IMPORTANT entities (People, Organizations, Locations, Products, etc.).
+      Do NOT extract common nouns or non-essential details.
+      Return a valid JSON array of objects with 'name' and 'type'.
+
+      Content: {content}

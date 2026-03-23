@@ -17,7 +17,7 @@ from app.chat_workflows.research_graph import build_research_graph, fetch_graph_
 from app.db.database import get_session, get_database_url
 from app.services.chat_session_service import ChatSessionService
 from app.services.document_service import DocumentService
-from app.services.prompt_service import PromptService
+from app.services.prompt_service import get_prompt
 from app.services.prompt_utils import PromptType
 from app.utils.langfuse_worker import get_langfuse_handler
 
@@ -160,8 +160,7 @@ class ChatAgentService:
                     max_tokens=20
                 )
 
-                prompt_service = PromptService(db_session)
-                db_prompt = await prompt_service.get_latest_prompt(PromptType.CHAT_AGENT_TYPE_AHEAD.value)
+                db_prompt = get_prompt(PromptType.CHAT_AGENT_TYPE_AHEAD.value)
 
                 if db_prompt:
                     system_prompt = db_prompt.system_prompt or "You are an AI writing assistant."
@@ -266,31 +265,17 @@ class ChatAgentService:
             
             # Create LangGraph ReAct agent with checkpointer for memory
             try:
-                # Try to get system prompt from database, fallback to hardcoded
-                prompt_service = PromptService(db_session)
-                db_prompt = await prompt_service.get_latest_prompt(PromptType.CHAT_AGENT_SYSTEM.value)
-                
+                # Get system prompt from YAML
+                db_prompt = get_prompt(PromptType.CHAT_AGENT_SYSTEM.value)
+
                 if db_prompt:
-                    system_prompt = db_prompt.system_prompt
+                    system_prompt = db_prompt.system_prompt or ""
                     if db_prompt.user_prompt:
                         system_prompt += f"\n\n{db_prompt.user_prompt}"
-                    logger.info(f"[Session {session_id}] Using system prompt from database (version {db_prompt.version})")
+                    logger.info(f"[Session {session_id}] Using system prompt from YAML")
                 else:
-                    # Fallback to hardcoded prompt
-                    system_prompt = (
-                        "You are a helpful research assistant that can answer questions using the user's document library. "
-                        "\n\nYour primary goal is to help the user understand and analyze their documents. You have two tools:"
-                        "\n1. `retrieve_documents_tool`: Use this to find relevant information from the user's personal documents, articles, or bookmarks. This is your primary source of truth."
-                        "\n2. `google_search_tool`: Use this ONLY to augment or validate information found in the documents, or to provide necessary context that helps explain the document's content. GROUND your search queries in the subject of the document and the current conversation. Do NOT use it for general, unrelated AI chat."
-                        "\n\nWhen answering:"
-                        "\n- ALWAYS prioritize information from the user's library."
-                        "\n- Use Google Search to verify facts mentioned in the documents or to find updated information if requested (e.g., 'Has this legislation changed since this article was written?')."
-                        "\n- Synthesize information from both sources, clearly distinguishing what comes from the library versus the web."
-                        "\n- Provide a comprehensive, natural-language answer. Avoid verbatim tool output."
-                        "\n- Always cite specific document titles and URLs when referencing the library."
-                        "\n- If the documents don't contain relevant information and it's outside the scope of augmenting their content, inform the user clearly rather than just searching the web for a general answer."
-                    )
-                    logger.info(f"[Session {session_id}] Using fallback hardcoded system prompt")
+                    system_prompt = "You are a helpful research assistant."
+                    logger.warning(f"[Session {session_id}] System prompt not found in YAML, using minimal fallback")
 
                 # PRIME THE AGENT with document context if scoped
                 if chat_session.scope_type == "document" and chat_session.scope_id:
@@ -339,11 +324,9 @@ class ChatAgentService:
                 # Note: tools (retrieve, fetch_social_post, google_search) are assembled
                 # inside build_research_graph — no need to build them here.
 
-                logger.info(f"[Session {session_id}] Getting checkpointer and pre-fetching graph prompts...")
-                checkpointer, graph_prompts = await asyncio.gather(
-                    get_checkpointer(),
-                    fetch_graph_prompts(db_session),
-                )
+                logger.info(f"[Session {session_id}] Getting checkpointer and loading graph prompts...")
+                graph_prompts = fetch_graph_prompts()
+                checkpointer = await get_checkpointer()
                 logger.info(f"[Session {session_id}] Checkpointer and prompts ready, creating Research Graph agent...")
 
                 agent = build_research_graph(
