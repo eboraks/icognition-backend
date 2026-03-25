@@ -437,15 +437,45 @@ def build_research_graph(
              return {"search_needed": False, "reflection_count": state.get("reflection_count", 0)}
 
         try:
+            # Extract only the latest exchange: last human question + last AI response.
+            # Using the full history caused the reflector to confuse old messages
+            # (e.g. a prior single-word "France" turn) with the current AI response.
+            last_human_msg = None
+            last_ai_response = None
+            for msg in reversed(messages):
+                if isinstance(msg, AIMessage) and not msg.tool_calls and last_ai_response is None:
+                    # Extract text content, handling both str and list-of-blocks formats
+                    content = msg.content
+                    if isinstance(content, list):
+                        content = " ".join(
+                            block.get("text", "") if isinstance(block, dict) else str(block)
+                            for block in content
+                        )
+                    last_ai_response = content
+                elif isinstance(msg, HumanMessage) and last_human_msg is None and last_ai_response is not None:
+                    content = msg.content
+                    if isinstance(content, list):
+                        content = " ".join(
+                            block.get("text", "") if isinstance(block, dict) else str(block)
+                            for block in content
+                        )
+                    last_human_msg = content
+                    break
+
+            if not last_ai_response:
+                logger.warning("reflect_node: no AI response found to evaluate — accepting as-is")
+                return {
+                    "search_needed": False,
+                    "reflection_count": state.get("reflection_count", 0) + 1,
+                    "is_satisfactory": True,
+                }
+
             # Role Swapping: Frame the conversation so the Reflector thinks the AI's answer is a Human submission
             # This helps the Reflector act as a "Teacher" grading a "Student"
-            cls_map = {"ai": HumanMessage, "human": AIMessage}
             translated_messages = []
-
-            for msg in messages:
-                msg_type = "ai" if isinstance(msg, AIMessage) else "human"
-                if msg_type in cls_map:
-                    translated_messages.append(cls_map[msg_type](content=msg.content))
+            if last_human_msg:
+                translated_messages.append(AIMessage(content=last_human_msg))
+            translated_messages.append(HumanMessage(content=last_ai_response))
 
             reflect_prompt = prompts.get(PromptType.CHAT_REFLECTION.value)
             if not reflect_prompt:

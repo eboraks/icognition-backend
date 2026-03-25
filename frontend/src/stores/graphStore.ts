@@ -13,6 +13,9 @@ export const useGraphStore = defineStore('graph', () => {
   const documents = ref<DocumentSummary[]>([])
   const entityDocumentLinks = ref<{ entityId: number; documentId: number }[]>([])
 
+  // Track which nodes have been expanded (their neighborhood loaded)
+  const expandedNodeIds = ref<Set<string>>(new Set())
+
   // Selection state
   const selectedElement = ref<EntityRead | RelationshipRead | DocumentRead | null>(null)
   const selectedType = ref<'entity' | 'relationship' | 'document' | null>(null)
@@ -47,6 +50,33 @@ export const useGraphStore = defineStore('graph', () => {
     selectedType.value = null
   }
 
+  /**
+   * Focus the graph on a single entity: reset everything, load only 1-hop neighborhood.
+   * Documents are omitted from the graph to keep it clean — they appear in the sidebar.
+   */
+  async function focusOnEntity(entityId: string) {
+    loading.value = true
+    try {
+      // Fetch data FIRST, then replace arrays in one go.
+      // This prevents race conditions with loadDiscoveryGraph.
+      const resp = await knowledgeService.getNeighborhood(Number(entityId), { limit: 15 })
+      const neighborhood = resp.data
+
+      // Direct assignment — single reactive change per array, no intermediate empty state
+      entities.value = neighborhood.entities
+      relationships.value = neighborhood.relationships
+      documents.value = []
+      entityDocumentLinks.value = []
+      expandedNodeIds.value = new Set([entityId])
+      clearSelection()
+    } finally {
+      loading.value = false
+    }
+  }
+
+  /**
+   * Expand a node's neighborhood incrementally (adds to existing graph).
+   */
   async function expandEntity(entityId: string) {
     loading.value = true
     try {
@@ -78,9 +108,6 @@ export const useGraphStore = defineStore('graph', () => {
       // Link center entity to all its documents
       for (const docId of allDocIds) {
         for (const eId of allEntityIds) {
-          // We only know for sure the center entity is linked; for others, the backend
-          // returned docs linked to ANY entity in the neighborhood. We'll create links
-          // from the expanded entity to all returned docs.
           if (eId === Number(entityId)) {
             const key = `${eId}-${docId}`
             if (!existingLinkKeys.has(key)) {
@@ -90,6 +117,9 @@ export const useGraphStore = defineStore('graph', () => {
           }
         }
       }
+
+      // Mark this node as expanded
+      expandedNodeIds.value.add(entityId)
     } finally {
       loading.value = false
     }
@@ -101,7 +131,7 @@ export const useGraphStore = defineStore('graph', () => {
     focusFn: (id: string) => void,
   ) {
     if (type === 'entity') {
-      await expandEntity(String(id))
+      await focusOnEntity(String(id))
       focusFn(String(id))
       await selectEntity(String(id))
     } else if (type === 'document') {
@@ -152,13 +182,19 @@ export const useGraphStore = defineStore('graph', () => {
     relationships.value = []
     documents.value = []
     entityDocumentLinks.value = []
+    expandedNodeIds.value.clear()
     clearSelection()
+  }
+
+  function isNodeExpanded(nodeId: string) {
+    return expandedNodeIds.value.has(nodeId)
   }
 
   return {
     entities, relationships, documents, entityDocumentLinks,
+    expandedNodeIds,
     selectedElement, selectedType, loading,
     selectEntity, selectRelationship, selectDocument, clearSelection,
-    expandEntity, handleSearchSelect, resetGraph,
+    focusOnEntity, expandEntity, handleSearchSelect, resetGraph, isNodeExpanded,
   }
 })

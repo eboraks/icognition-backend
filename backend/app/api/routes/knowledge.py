@@ -128,6 +128,31 @@ async def handle_action(
 # ── Graph exploration endpoints ───────────────────────────────────────────────
 
 
+@router.get("/graph/discovery", response_model=NeighborhoodResponse)
+async def graph_discovery(
+    source: Optional[str] = Query(None, description="Filter by document source domain"),
+    limit: int = Query(30, ge=1, le=50),
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Return popular + recent entities for the discovery hub landing page."""
+    svc = GraphService(session)
+    return await svc.get_discovery_graph(
+        user_id=user_context.user.id, source=source, limit=limit
+    )
+
+
+@router.get("/graph/sources")
+async def graph_sources(
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Return document sources grouped by domain with counts."""
+    svc = GraphService(session)
+    sources = await svc.get_document_sources(user_context.user.id)
+    return {"sources": sources}
+
+
 @router.get("/graph/search", response_model=SearchResponse)
 async def graph_search(
     q: str = Query(..., min_length=1),

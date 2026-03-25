@@ -3,38 +3,13 @@
     <!-- Top Bar -->
     <div class="layout-topbar bg-primary-500">
       <div class="layout-topbar-left">
-        <button v-if="hasSidebar" class="layout-menu-button p-link" @click="onMenuToggle">
-          <i class="pi pi-bars"></i>
-        </button>
         <div class="layout-topbar-logo">
           <img src="/src/assets/images/iCognitionLogo.png?format=1500w" alt="iCognition.ai" />
         </div>
       </div>
       
       <div class="layout-topbar-center">
-        <div class="layout-topbar-menu">
-          <router-link 
-            to="/library" 
-            class="layout-topbar-menu-item"
-            :class="{ 'active': $route.name === 'library' }"
-          >
-            My Library
-          </router-link>
-          <router-link
-            to="/chats"
-            class="layout-topbar-menu-item"
-            :class="{ 'active': $route.name === 'chats' }"
-          >
-            Chat
-          </router-link>
-          <router-link 
-            to="/knowledge-explorer" 
-            class="layout-topbar-menu-item"
-            :class="{ 'active': $route.name === 'knowledge-explorer' }"
-          >
-            Knowledge Explorer
-          </router-link>
-        </div>
+        <!-- Unified view — no tab navigation needed -->
       </div>
       
       <div class="layout-topbar-right">
@@ -59,23 +34,8 @@
       </div>
     </div>
 
-    <!-- Sidebar -->
-    <div v-if="hasSidebar" class="layout-sidebar" :class="{ 'layout-sidebar-active': sidebarVisible }">
-      <div class="layout-sidebar-content">
-        <router-view name="sidebar" />
-      </div>
-    </div>
-
-    <!-- Overlay for mobile -->
-    <div 
-      v-if="hasSidebar"
-      class="layout-sidebar-overlay" 
-      :class="{ 'layout-sidebar-overlay-active': sidebarVisible && isMobile }"
-      @click="onMenuToggle"
-    ></div>
-
     <!-- Main Content -->
-    <div class="layout-content" :class="{ 'layout-content-sidebar-active': sidebarVisible && hasSidebar }">
+    <div class="layout-content">
       <div class="layout-content-container">
         <router-view />
       </div>
@@ -84,43 +44,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { ref, computed } from 'vue';
+import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth_store';
 import Menu from 'primevue/menu';
-import Button from 'primevue/button';
 
-const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
 const userMenu = ref();
-const sidebarVisible = ref(true);
-const isMobile = ref(false);
-
-// Check if current route has a sidebar component
-const hasSidebar = computed(() => {
-  return route.matched.some(record => record.components?.sidebar);
-});
-
-const checkMobile = () => {
-  isMobile.value = window.innerWidth < 992;
-  if (isMobile.value) {
-    sidebarVisible.value = false;
-  }
-};
-
-onMounted(() => {
-  checkMobile();
-  window.addEventListener('resize', checkMobile);
-});
-
-onUnmounted(() => {
-  window.removeEventListener('resize', checkMobile);
-});
-
-const onMenuToggle = () => {
-  sidebarVisible.value = !sidebarVisible.value;
-};
 
 const toggleUserMenu = (event: Event) => {
   userMenu.value.toggle(event);
@@ -215,29 +146,6 @@ const userMenuItems = computed(() => {
   align-items: center;
 }
 
-.layout-topbar-menu {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-}
-
-.layout-topbar-menu-item {
-  padding: 0.5rem 1rem;
-  color: var(--p-primary-contrast-color);
-  text-decoration: none;
-  border-radius: var(--p-border-radius);
-  transition: background-color 0.2s;
-  font-weight: 500;
-}
-
-.layout-topbar-menu-item:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.layout-topbar-menu-item.active {
-  background: rgba(255, 255, 255, 0.2);
-}
-
 .layout-topbar-right {
   display: flex;
   align-items: center;
@@ -300,89 +208,14 @@ const userMenuItems = computed(() => {
   background-color: transparent; /* No background change on hover for image button */
 }
 
-/* Sidebar */
-.layout-sidebar {
-  position: fixed;
-  left: 0;
-  top: 4rem;
-  height: calc(100vh - 4rem);
-  width: 20rem;
-  background: var(--p-surface-card);
-  border-right: 1px solid var(--p-content-border-color);
-  transition: transform 0.3s;
-  z-index: 999;
-  overflow-y: auto;
-}
-
-.layout-sidebar-content {
-  padding: 1rem;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  min-height: 0;
-}
-
-@media (max-width: 991px) {
-  .layout-sidebar {
-    transform: translateX(-100%);
-  }
-  
-  .layout-sidebar-active {
-    transform: translateX(0);
-  }
-  
-  .layout-sidebar-overlay {
-    display: block;
-    position: fixed;
-    top: 4rem;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.4);
-    z-index: 998;
-    opacity: 0;
-    visibility: hidden;
-    transition: opacity 0.3s, visibility 0.3s;
-  }
-  
-  .layout-sidebar-overlay-active {
-    opacity: 1;
-    visibility: visible;
-  }
-}
-
-@media (min-width: 992px) {
-  .layout-sidebar-overlay {
-    display: none;
-  }
-}
-
 /* Main Content */
 .layout-content {
   margin-top: 4rem;
-  margin-left: 0;
-  transition: margin-left 0.3s;
   min-height: calc(100vh - 4rem);
   background: var(--p-surface-ground);
 }
 
-.layout-content-sidebar-active {
-  margin-left: 20rem;
-}
-
-.layout-wrapper:has(.layout-sidebar) .layout-content-sidebar-active {
-  margin-left: 20rem;
-}
-
-@media (max-width: 991px) {
-  .layout-content-sidebar-active {
-    margin-left: 0;
-  }
-}
-
 .layout-content-container {
-  padding: 1.5rem;
   height: 100%;
 }
 </style>

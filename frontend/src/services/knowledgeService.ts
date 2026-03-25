@@ -113,6 +113,19 @@ export const knowledgeService = {
     return apiClient.get(`/api/v1/knowledge/entity/${entityId}/relationships`);
   },
 
+  // ── Discovery Hub endpoints ──────────────────────
+
+  getDiscoveryGraph(params?: {
+    source?: string;
+    limit?: number;
+  }): Promise<{ data: NeighborhoodResponse }> {
+    return apiClient.get('/api/v1/knowledge/graph/discovery', { params });
+  },
+
+  getDocumentSources(): Promise<{ data: { sources: { site_name: string; count: number }[] } }> {
+    return apiClient.get('/api/v1/knowledge/graph/sources');
+  },
+
   // ── Graph exploration endpoints ──────────────────
 
   graphSearch(q: string, params?: {

@@ -1,5 +1,6 @@
 <template>
   <div class="chat-panel-container">
+    <div class="chat-messages-wrapper">
     <ScrollPanel class="chat-messages" ref="messagesContainer">
       <div
         v-for="(message, index) in messages"
@@ -8,9 +9,6 @@
         :class="message.type"
       >
         <div v-if="message.type === 'system'" class="message system-message">
-          <div class="message-icon">
-            <img src="/src/assets/images/icog_action_icon_16x16.png" alt="AI Icon" style="width: 2.25rem; height: 2.25rem; object-fit: contain;" />
-          </div>
           <div class="message-content">
             <div v-if="message.pending" class="message-spinner">
               <ProgressSpinner strokeWidth="4" style="width: 32px; height: 32px" />
@@ -72,6 +70,18 @@
         </div>
       </div>
     </ScrollPanel>
+    <!-- Scroll-to-bottom FAB -->
+    <Transition name="fade">
+      <button
+        v-if="showScrollToBottom"
+        class="scroll-to-bottom-btn"
+        @click="scrollToBottom"
+        aria-label="Scroll to bottom"
+      >
+        <i class="pi pi-arrow-down" />
+      </button>
+    </Transition>
+    </div>
     <div class="chat-input-container">
       <div class="input-row">
         <TypedChatInput
@@ -96,7 +106,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted } from 'vue';
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue';
 import Button from 'primevue/button';
 import TypedChatInput from './TypedChatInput.vue';
 import ScrollPanel from 'primevue/scrollpanel';
@@ -206,6 +216,41 @@ const messagesContainer = ref<any>(null);
 const loading = ref(false);
 const isLoadingInitialMessage = ref(false); // Prevent duplicate calls
 const copiedLabel = ref<string | null>(null);
+const showScrollToBottom = ref(false);
+
+function checkScrollPosition() {
+  if (!messagesContainer.value) return;
+  const scrollElement = messagesContainer.value.$el?.querySelector('.p-scrollpanel-content');
+  if (!scrollElement) return;
+  const threshold = 100;
+  const distanceFromBottom = scrollElement.scrollHeight - scrollElement.scrollTop - scrollElement.clientHeight;
+  showScrollToBottom.value = distanceFromBottom > threshold;
+}
+
+let scrollListener: (() => void) | null = null;
+
+function attachScrollListener() {
+  nextTick(() => {
+    const scrollElement = messagesContainer.value?.$el?.querySelector('.p-scrollpanel-content');
+    if (scrollElement && !scrollListener) {
+      scrollListener = () => checkScrollPosition();
+      scrollElement.addEventListener('scroll', scrollListener);
+    }
+  });
+}
+
+onMounted(() => {
+  attachScrollListener();
+});
+
+onBeforeUnmount(() => {
+  if (scrollListener) {
+    const scrollElement = messagesContainer.value?.$el?.querySelector('.p-scrollpanel-content');
+    if (scrollElement) {
+      scrollElement.removeEventListener('scroll', scrollListener);
+    }
+  }
+});
 
 const copyToClipboard = async (text: string, label: string) => {
   try {
@@ -231,6 +276,19 @@ const scrollToBottom = () => {
       const scrollElement = messagesContainer.value.$el?.querySelector('.p-scrollpanel-content');
       if (scrollElement) {
         scrollElement.scrollTop = scrollElement.scrollHeight;
+        checkScrollPosition();
+      }
+    }
+  });
+};
+
+const scrollToTop = () => {
+  nextTick(() => {
+    if (messagesContainer.value) {
+      const scrollElement = messagesContainer.value.$el?.querySelector('.p-scrollpanel-content');
+      if (scrollElement) {
+        scrollElement.scrollTop = 0;
+        checkScrollPosition();
       }
     }
   });
@@ -321,12 +379,15 @@ const loadInitialMessage = async () => {
       try {
         const doc = await documentService.getDocument(effectiveDocumentId);
         if (doc && doc.ai_markdown_content) {
-          const titleHtml = doc.title ? `<h3>${escapeHtml(doc.title)}</h3>` : '';
-          const urlHtml = doc.url ? `<p style="font-size:0.85rem;color:#64748b;"><a href="${doc.url}" target="_blank" rel="noopener noreferrer">${doc.url}</a></p>` : '';
+          const titleHtml = doc.title
+            ? (doc.url
+              ? `<h3><a href="${doc.url}" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:none;">${escapeHtml(doc.title)}</a></h3>`
+              : `<h3>${escapeHtml(doc.title)}</h3>`)
+            : '';
           const contentHtml = marked.parse(doc.ai_markdown_content) as string;
           messages.value.unshift({
             type: 'system',
-            content: `${titleHtml}${urlHtml}${contentHtml}`,
+            content: `${titleHtml}${contentHtml}`,
           });
         }
       } catch (err) {
@@ -363,8 +424,9 @@ const loadInitialMessage = async () => {
   } finally {
     isLoadingInitialMessage.value = false;
   }
-  
-  scrollToBottom();
+
+  // Scroll to top so user sees the document title/summary first
+  scrollToTop();
 };
 
 
@@ -546,14 +608,38 @@ watch(
   { immediate: true }
 );
 
+// Handle clicks on source info buttons (event delegation)
+function onMessagesClick(event: Event) {
+  const target = event.target as HTMLElement;
+  const btn = target.closest('.source-info-btn') as HTMLElement | null;
+  if (!btn) return;
+
+  event.preventDefault();
+  const docId = btn.dataset.docId;
+  const docTitle = btn.dataset.docTitle;
+  if (!docId || !docTitle) return;
+
+  // Send a contextual follow-up question about this source
+  inputMessage.value = `Tell me more about the source "${docTitle}" and how it relates to our conversation.`;
+  sendMessage();
+}
+
 // Make the scroll content focusable so arrow keys work after clicking
 onMounted(() => {
   nextTick(() => {
     const el = messagesContainer.value?.$el?.querySelector('.p-scrollpanel-content');
     if (el) {
       el.setAttribute('tabindex', '0');
+      el.addEventListener('click', onMessagesClick);
     }
   });
+});
+
+onBeforeUnmount(() => {
+  const el = messagesContainer.value?.$el?.querySelector('.p-scrollpanel-content');
+  if (el) {
+    el.removeEventListener('click', onMessagesClick);
+  }
 });
 </script>
 
@@ -568,9 +654,7 @@ onMounted(() => {
 }
 
 .chat-messages {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
+  height: 100%;
 }
 
 :deep(.p-scrollpanel) {
@@ -606,14 +690,22 @@ onMounted(() => {
   justify-content: flex-start;
 }
 
+/* Subtle separator between conversation turns */
+.message-wrapper.system + .message-wrapper.user,
+.message-wrapper.user + .message-wrapper.system {
+  margin-top: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #f1f5f9;
+}
+
 .message {
-  max-width: min(640px, 70%);
+  max-width: min(640px, 85%);
   width: fit-content;
   padding: 0.7rem 1rem;
   border-radius: 14px;
   background: #ffffff;
   border: 1px solid #e2e8f0;
-  box-shadow: 0 4px 8px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
   word-break: break-word;
   overflow-wrap: anywhere;
 }
@@ -654,10 +746,17 @@ onMounted(() => {
 
 .system-message {
   display: flex;
-  gap: 0.85rem;
+  flex-direction: column;
+  gap: 0.5rem;
   align-items: flex-start;
-  background: var(--blue-100);
-  border-color: var(--blue-200);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  max-width: 100%;
+  padding: 0.5rem 0;
+  border-radius: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* Document summary messages should use full width */
@@ -666,31 +765,26 @@ onMounted(() => {
 }
 
 .message-icon {
-  font-size: 1.4rem;
   flex-shrink: 0;
-  background: transparent; /* Remove background as image provides it */
-  color: transparent; /* Remove color as image provides it */
-  width: 2.25rem;
-  height: 2.25rem;
-  border-radius: 50%;
+  width: 1.5rem;
+  height: 1.5rem;
   display: flex;
   align-items: center;
   justify-content: center;
+  opacity: 0.6;
 }
 
 .message-content {
   flex: 1;
+  min-width: 0;
 }
 
 .message-content p {
-  margin: 0 0 0.6rem 0;
-  line-height: 1.5;
-  color: #334155;
-  font-size: 0.95rem;
-}
-
-.system-message .message-content p {
-  color: #334155;
+  margin: 0 0 0.75rem 0;
+  line-height: 1.65;
+  color: #1e293b;
+  font-size: 0.92rem;
+  letter-spacing: -0.01em;
 }
 
 .message-content p:last-child {
@@ -726,15 +820,16 @@ onMounted(() => {
 }
 
 .user-message {
-  background: #10b981;
-  color: #ffffff;
-  border: none;
-  box-shadow: 0 8px 16px rgba(45, 122, 138, 0.25);
+  background: #f1f5f9;
+  color: #1e293b;
+  border: 1px solid #e2e8f0;
+  box-shadow: none;
+  border-radius: 18px 18px 4px 18px;
 }
 
 .user-message p {
   margin: 0;
-  color: #ffffff;
+  color: #1e293b;
 }
 
 .action-buttons {
@@ -879,6 +974,89 @@ onMounted(() => {
   margin: 0;
   font-family: 'Roboto Mono', monospace;
   white-space: pre-wrap;
+}
+
+/* Title link styling */
+.message-text h3 a:hover {
+  text-decoration: underline !important;
+  color: #2563EB !important;
+}
+
+/* Source reference with info button */
+:deep(.source-ref) {
+  white-space: normal;
+  display: inline;
+}
+
+:deep(.source-info-btn) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.2rem;
+  height: 1.2rem;
+  margin-left: 0.2rem;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #e0f2fe;
+  color: #0284c7;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background 0.15s, color 0.15s;
+  font-size: 0.75rem;
+}
+
+:deep(.source-info-btn:hover) {
+  background: #0284c7;
+  color: #ffffff;
+}
+
+:deep(.source-info-btn i) {
+  font-size: 0.7rem;
+}
+
+/* Scroll-to-bottom button */
+.chat-messages-wrapper {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.scroll-to-bottom-btn {
+  position: absolute;
+  bottom: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 50%;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  transition: all 0.2s;
+}
+
+.scroll-to-bottom-btn:hover {
+  background: #f1f5f9;
+  color: #334155;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.18);
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>
 

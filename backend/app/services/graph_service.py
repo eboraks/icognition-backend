@@ -146,9 +146,17 @@ class GraphService:
         limit = min(limit, 100)
 
         rels_sql = text("""
-            SELECT id, from_entity_id, to_entity_id, relationship_type, source_document_id
-            FROM entity_relationships
-            WHERE from_entity_id = :entity_id OR to_entity_id = :entity_id
+            SELECT r.id, r.from_entity_id, r.to_entity_id, r.relationship_type, r.source_document_id
+            FROM entity_relationships r
+            JOIN entities e ON e.id = CASE
+                WHEN r.from_entity_id = :entity_id THEN r.to_entity_id
+                ELSE r.from_entity_id
+            END
+            WHERE r.from_entity_id = :entity_id OR r.to_entity_id = :entity_id
+            ORDER BY (
+                SELECT COUNT(*) FROM entity_relationships r2
+                WHERE r2.from_entity_id = e.id OR r2.to_entity_id = e.id
+            ) DESC
             LIMIT :limit
         """)
         rels_result = await self.session.execute(
@@ -395,6 +403,121 @@ class GraphService:
                 "documents": docs,
             })
         return result
+
+    async def get_discovery_graph(
+        self, user_id: str, source: Optional[str] = None, limit: int = 30
+    ) -> dict:
+        """
+        Return a discovery graph for the hub landing page:
+        popular entities (by relationship + document count) and recent entities,
+        plus relationships between them.
+        Optionally filter by document source domain (site_name).
+        """
+        limit = min(limit, 50)
+        half = limit // 2
+
+        source_filter = ""
+        params: dict = {"user_id": user_id, "half": half, "limit": limit}
+        if source:
+            source_filter = """
+                AND e.id IN (
+                    SELECT ed2.entity_id FROM entity_documents ed2
+                    JOIN document d2 ON d2.id = ed2.document_id
+                    WHERE d2.user_id = :user_id
+                      AND (d2.site_name = :source
+                           OR CASE WHEN d2.url IS NOT NULL
+                              THEN substring(d2.url from '://([^/]+)')
+                              ELSE NULL END = :source)
+                )
+            """
+            params["source"] = source
+
+        # Popular entities: most relationships + document links
+        popular_sql = text(f"""
+            SELECT e.id, e.name, e.type FROM entities e
+            LEFT JOIN entity_documents ed ON ed.entity_id = e.id
+            LEFT JOIN entity_relationships er ON er.from_entity_id = e.id OR er.to_entity_id = e.id
+            WHERE (e.user_id = :user_id OR e.user_id IS NULL)
+              {source_filter}
+            GROUP BY e.id, e.name, e.type
+            ORDER BY COUNT(DISTINCT er.id) + COUNT(DISTINCT ed.document_id) DESC
+            LIMIT :half
+        """)
+        popular_result = await self.session.execute(popular_sql, params)
+        popular = [dict(r) for r in popular_result.mappings().all()]
+
+        popular_ids = {e["id"] for e in popular}
+
+        # Recent entities: from most recently created documents
+        recent_sql = text(f"""
+            SELECT e.id, e.name, e.type FROM entities e
+            JOIN entity_documents ed ON ed.entity_id = e.id
+            JOIN document d ON d.id = ed.document_id
+            WHERE d.user_id = :user_id
+              {source_filter}
+            GROUP BY e.id, e.name, e.type
+            ORDER BY MAX(d.created_at) DESC
+            LIMIT :half
+        """)
+        recent_result = await self.session.execute(recent_sql, params)
+        recent = [dict(r) for r in recent_result.mappings().all()]
+
+        # Merge, dedup
+        all_entities = list(popular)
+        for e in recent:
+            if e["id"] not in popular_ids:
+                all_entities.append(e)
+
+        entity_ids = [e["id"] for e in all_entities]
+        if not entity_ids:
+            return {"entities": [], "relationships": [], "documents": [], "center_entity_id": None}
+
+        # Get relationships between these entities
+        rels_sql = text("""
+            SELECT id, from_entity_id, to_entity_id, relationship_type, source_document_id
+            FROM entity_relationships
+            WHERE from_entity_id = ANY(:ids) AND to_entity_id = ANY(:ids)
+        """)
+        rels_result = await self.session.execute(rels_sql, {"ids": entity_ids})
+        rels = [dict(r) for r in rels_result.mappings().all()]
+
+        # Get documents linked to these entities
+        docs_sql = text("""
+            SELECT DISTINCT d.id, d.title
+            FROM document d
+            JOIN entity_documents ed ON ed.document_id = d.id
+            WHERE ed.entity_id = ANY(:ids) AND d.user_id = :user_id
+        """)
+        docs_result = await self.session.execute(docs_sql, {"ids": entity_ids, "user_id": user_id})
+        documents = [dict(r) for r in docs_result.mappings().all()]
+
+        return {
+            "entities": all_entities,
+            "relationships": rels,
+            "documents": documents,
+            "center_entity_id": None,
+        }
+
+    async def get_document_sources(self, user_id: str) -> list[dict]:
+        """
+        Return document sources grouped by site_name / domain, with counts.
+        Falls back to extracting domain from URL when site_name is null.
+        """
+        sql = text("""
+            SELECT
+                COALESCE(
+                    NULLIF(site_name, ''),
+                    substring(url from '://([^/]+)'),
+                    'Other'
+                ) AS source_name,
+                COUNT(*) AS doc_count
+            FROM document
+            WHERE user_id = :user_id
+            GROUP BY source_name
+            ORDER BY doc_count DESC
+        """)
+        result = await self.session.execute(sql, {"user_id": user_id})
+        return [{"site_name": r["source_name"], "count": r["doc_count"]} for r in result.mappings().all()]
 
     async def get_document_subgraph(self, document_id: int) -> dict:
         """Fetch full subgraph for a document."""

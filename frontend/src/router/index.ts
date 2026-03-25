@@ -46,24 +46,24 @@ const routes: Array<RouteRecordRaw> = [
   {
     path: '/library',
     name: 'library',
-    component: () => import("../views/DocumentContainer.vue")
+    component: () => import("../views/DiscoveryHub.vue")
   },
+  // Legacy routes redirect to unified hub
   {
     path: '/chats/:id?',
-    name: 'chats',
-    component: () => import("../views/library/LearningQA.vue")
+    redirect: (to) => ({
+      name: 'library',
+      query: to.params.id ? { chat: to.params.id as string } : {},
+    }),
   },
-  // Redirect legacy URL
   {
     path: '/learning-qa',
-    redirect: { name: 'chats' }
+    redirect: { name: 'library' }
   },
   {
     path: '/knowledge-explorer',
-    name: 'knowledge-explorer',
-    component: () => import("@/components/knowledge_explorer/GraphExplorer.vue"),
+    redirect: { name: 'library' }
   },
-  // Legacy docxray URL redirects to library
   {
     path: '/docxray/:id',
     redirect: { name: 'library' }

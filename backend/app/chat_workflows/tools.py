@@ -66,8 +66,8 @@ def create_retrieve_documents_tool(user_id: str, scope_type: str, scope_id: Opti
                 doc = doc_data['document']
                 chunks = doc_data['chunks']
                 best_score = doc_data['best_score']
-                
-                result_parts.append(f"\\n{i}. **{doc.title}**")
+
+                result_parts.append(f"\\n{i}. **{doc.title}** (doc_id={doc.id})")
                 if doc.url:
                     result_parts.append(f"   URL: {doc.url}")
                 

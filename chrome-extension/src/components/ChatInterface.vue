@@ -576,14 +576,21 @@ const sendMessage = async () => {
   justify-content: flex-start;
 }
 
+.message-wrapper.system + .message-wrapper.user,
+.message-wrapper.user + .message-wrapper.system {
+  margin-top: 0.35rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--surface-border);
+}
+
 .message {
-  max-width: 90%; /* Increased from 85% */
+  max-width: 90%;
   width: fit-content;
-  padding: 0.5rem 0.75rem; /* Reduced from 0.75rem 1rem */
-  border-radius: 8px; /* Slightly tighter corner */
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
   background: var(--surface-card);
   border: 1px solid var(--surface-border);
-  box-shadow: 0 2px 4px rgba(0,0,0,0.05); /* Lighter shadow */
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
   word-break: break-word;
   overflow-wrap: anywhere;
 }
@@ -622,19 +629,25 @@ const sendMessage = async () => {
 
 .system-message {
   display: flex;
-  gap: 0.5rem; /* Reduced from 0.75rem */
+  flex-direction: column;
+  gap: 0.35rem;
   align-items: flex-start;
-  background: var(--surface-50); 
-  border-color: var(--surface-200);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  max-width: 100%;
+  padding: 0.4rem 0;
+  border-radius: 0;
 }
 
 .message-icon {
   flex-shrink: 0;
-  width: 2rem;
-  height: 2rem;
+  width: 1.25rem;
+  height: 1.25rem;
   display: flex;
   align-items: center;
   justify-content: center;
+  opacity: 0.5;
 }
 .message-icon img {
     width: 100% !important;
@@ -643,7 +656,7 @@ const sendMessage = async () => {
 
 .message-content {
   flex: 1;
-  min-width: 0; /* Prevent overflow */
+  min-width: 0;
 }
 
 .message-spinner {
@@ -663,15 +676,16 @@ const sendMessage = async () => {
 }
 
 .user-message {
-  background: var(--primary-color, #3497BE);
-  color: #fff; /* Explicit white for user message text */
-  border: none;
-  margin-right: 1rem; /* Added padding/margin on the right */
+  background: #f1f5f9;
+  color: #1e293b;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px 12px 2px 12px;
+  box-shadow: none;
 }
 
-:deep(.user-message .message-text), 
+:deep(.user-message .message-text),
 :deep(.user-message .message-text p) {
-  color: #fff;
+  color: #1e293b;
 }
 
 
@@ -743,6 +757,39 @@ const sendMessage = async () => {
   padding-left: 1rem;
   font-size: 0.95rem;
   font-family: 'Roboto Mono', monospace;
+}
+
+/* Source reference with info button */
+:deep(.source-ref) {
+  white-space: normal;
+  display: inline;
+}
+
+:deep(.source-info-btn) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  margin-left: 0.15rem;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #e0f2fe;
+  color: #0284c7;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background 0.15s;
+  font-size: 0.7rem;
+}
+
+:deep(.source-info-btn:hover) {
+  background: #0284c7;
+  color: #ffffff;
+}
+
+:deep(.source-info-btn i) {
+  font-size: 0.65rem;
 }
 
 /* Comment option cards (Phase 6.2) */

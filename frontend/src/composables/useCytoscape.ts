@@ -18,12 +18,26 @@ export interface UseCytoscapeOptions {
 export function useCytoscape(options: UseCytoscapeOptions) {
   const cy = ref<Core | null>(null)
 
-  // Build per-type shape selectors from shared config
-  const typeShapeStyles: cytoscape.Stylesheet[] = Object.entries(NODE_STYLES).map(
-    ([type, { shape }]) => ({
-      selector: `node[type = "${type}"]`,
-      style: { 'shape': shape } as any,
-    })
+  // Build per-type shape + icon selectors from shared config
+  const typeShapeStyles: cytoscape.Stylesheet[] = Object.entries(NODE_STYLES).flatMap(
+    ([type, { shape, icon }]) => {
+      const base: cytoscape.Stylesheet = {
+        selector: `node[type = "${type}"]`,
+        style: {
+          'shape': shape,
+          ...(icon ? {
+            'background-image': icon,
+            'background-fit': 'contain',
+            'background-clip': 'none',
+            'background-width': '70%',
+            'background-height': '70%',
+            'background-image-opacity': 0.9,
+            'background-opacity': 0,
+          } : {}),
+        } as any,
+      }
+      return [base]
+    }
   )
 
   const graphStyle: cytoscape.Stylesheet[] = [
@@ -72,7 +86,15 @@ export function useCytoscape(options: UseCytoscapeOptions) {
       selector: ':selected',
       style: {
         'border-width': 3,
-        'border-color': '#2563EB',
+        'border-color': '#3B82F6',
+        'overlay-color': '#3B82F6',
+        'overlay-padding': 6,
+        'overlay-opacity': 0.15,
+        'shadow-blur': 12,
+        'shadow-color': '#3B82F6',
+        'shadow-offset-x': 0,
+        'shadow-offset-y': 0,
+        'shadow-opacity': 0.6,
       },
     },
     {
@@ -82,6 +104,40 @@ export function useCytoscape(options: UseCytoscapeOptions) {
         'border-width': 2,
         'border-color': '#D97706',
       },
+    },
+    {
+      selector: 'node.dimmed',
+      style: {
+        'opacity': 0.15,
+      },
+    },
+    {
+      selector: 'edge.dimmed',
+      style: {
+        'opacity': 0.08,
+      },
+    },
+    {
+      selector: 'edge.highlighted',
+      style: {
+        'line-color': '#3B82F6',
+        'target-arrow-color': '#3B82F6',
+        'width': 3,
+        'opacity': 1,
+        'z-index': 10,
+        'font-size': '11px',
+        'font-weight': 'bold',
+        'color': '#1E40AF',
+        'text-background-color': '#DBEAFE',
+        'text-background-opacity': 0.9,
+        'text-background-padding': '3px',
+        'text-background-shape': 'roundrectangle',
+        'shadow-blur': 8,
+        'shadow-color': '#93C5FD',
+        'shadow-offset-x': 0,
+        'shadow-offset-y': 0,
+        'shadow-opacity': 0.5,
+      } as any,
     },
   ]
 
@@ -103,9 +159,17 @@ export function useCytoscape(options: UseCytoscapeOptions) {
       wheelSensitivity: 0.3,
     })
 
-    cy.value.on('tap', 'node', (evt) => {
-      const nodeId = evt.target.id()
-      const nodeKind = evt.target.data('nodeKind')
+    // Use tapstart (fires on mousedown) so selection happens immediately,
+    // even if the user drags the node afterwards.
+    cy.value.on('tapstart', 'node', (evt) => {
+      const node = evt.target
+      const nodeId = node.id()
+      const nodeKind = node.data('nodeKind')
+
+      // Highlight connected edges
+      cy.value!.edges().removeClass('highlighted')
+      node.connectedEdges().addClass('highlighted')
+
       if (nodeKind === 'document') {
         options.onDocumentSelect?.(nodeId)
       } else {
@@ -129,6 +193,9 @@ export function useCytoscape(options: UseCytoscapeOptions) {
 
     cy.value.on('tap', (evt) => {
       if (evt.target === cy.value) {
+        cy.value!.edges().removeClass('highlighted')
+        cy.value!.elements().removeClass('dimmed')
+        lastFocusedId = null
         options.onEntitySelect?.('')
       }
     })
@@ -141,25 +208,146 @@ export function useCytoscape(options: UseCytoscapeOptions) {
   }
 
   function runLayout() {
-    cy.value?.layout({
+    runLayoutWithFocus({
       name: 'cose-bilkent',
       animate: 'end',
       animationDuration: 500,
       fit: true,
       nodeDimensionsIncludeLabels: true,
-    } as any).run()
+    })
   }
+
+  // Queue a focus after any running layout completes
+  let pendingFocus: string | null = null
+  let layoutRunning = false
+  let lastFocusedId: string | null = null
 
   function focusEntity(entityId: string) {
     if (!cy.value) return
     const node = cy.value.getElementById(entityId)
     if (node.length === 0) return
-    cy.value.animate({
-      center: { eles: node },
-      zoom: 2,
-    }, { duration: 400 })
-    node.select()
+
+    lastFocusedId = entityId
+
+    if (layoutRunning) {
+      pendingFocus = entityId
+      return
+    }
+
+    focusNodeRadial(entityId)
   }
+
+  /**
+   * Re-layout the graph concentrically around a selected node.
+   * Center = selected node, ring 1 = direct neighbors, ring 2+ = further out.
+   * Nodes beyond ring 2 are dimmed to reduce visual noise.
+   */
+  function focusNodeRadial(nodeId: string) {
+    if (!cy.value) return
+    const root = cy.value.getElementById(nodeId)
+    if (root.length === 0) return
+
+    // BFS to compute distance from root
+    const distMap = new Map<string, number>()
+    const bfs = cy.value.elements().bfs({
+      roots: root,
+      visit: (v, e, u, i, depth) => {
+        distMap.set(v.id(), depth)
+      },
+      directed: false,
+    })
+
+    // Assign distance to unreachable nodes
+    cy.value.nodes().forEach((n) => {
+      if (!distMap.has(n.id())) {
+        distMap.set(n.id(), 999)
+      }
+    })
+
+    const maxVisibleDepth = 3
+
+    // Dim far-away nodes, restore close ones
+    cy.value.batch(() => {
+      cy.value!.nodes().forEach((n) => {
+        const dist = distMap.get(n.id()) ?? 999
+        if (dist > maxVisibleDepth) {
+          n.addClass('dimmed')
+        } else {
+          n.removeClass('dimmed')
+        }
+      })
+      cy.value!.edges().forEach((e) => {
+        const sDist = distMap.get(e.source().id()) ?? 999
+        const tDist = distMap.get(e.target().id()) ?? 999
+        if (sDist > maxVisibleDepth || tDist > maxVisibleDepth) {
+          e.addClass('dimmed')
+        } else {
+          e.removeClass('dimmed')
+        }
+      })
+    })
+
+    // Run concentric layout centered on the selected node
+    runLayoutWithFocus({
+      name: 'concentric',
+      concentric: (node: any) => {
+        const dist = distMap.get(node.id()) ?? 999
+        return dist <= maxVisibleDepth ? (maxVisibleDepth + 1 - dist) * 10 : -10
+      },
+      levelWidth: () => 1,
+      animate: true,
+      animationDuration: 500,
+      fit: true,
+      padding: 60,
+      minNodeSpacing: 40,
+      startAngle: (3 / 2) * Math.PI,  // top
+    })
+
+    root.select()
+  }
+
+  function runLayoutWithFocus(layoutOptions: any) {
+    if (!cy.value) return
+    layoutRunning = true
+    const layout = cy.value.layout(layoutOptions)
+    layout.on('layoutstop', () => {
+      layoutRunning = false
+      if (pendingFocus) {
+        const id = pendingFocus
+        pendingFocus = null
+        focusEntity(id)
+      }
+    })
+    layout.run()
+  }
+
+  function zoomBy(factor: number) {
+    if (!cy.value) return
+
+    // Prefer last focused entity, then selected node, then viewport center
+    let centerPos: { x: number; y: number }
+    if (lastFocusedId) {
+      const focused = cy.value.getElementById(lastFocusedId)
+      if (focused.length > 0) {
+        centerPos = focused.renderedPosition()
+      } else {
+        centerPos = { x: cy.value.width() / 2, y: cy.value.height() / 2 }
+      }
+    } else {
+      const selected = cy.value.nodes(':selected')
+      centerPos = selected.length > 0
+        ? selected.first().renderedPosition()
+        : { x: cy.value.width() / 2, y: cy.value.height() / 2 }
+    }
+
+    const newZoom = Math.min(5, Math.max(0.2, cy.value.zoom() * factor))
+    cy.value.animate({
+      zoom: { level: newZoom, renderedPosition: centerPos },
+    }, { duration: 200 })
+  }
+
+  function zoomIn() { zoomBy(1.3) }
+  function zoomOut() { zoomBy(1 / 1.3) }
 
   function resetView() {
     cy.value?.fit(undefined, 50)
@@ -169,17 +357,103 @@ export function useCytoscape(options: UseCytoscapeOptions) {
     cy.value?.elements().remove()
   }
 
-  watch(options.elements, (newElements) => {
+  watch(options.elements, (newElements, oldElements) => {
     if (!cy.value) return
-    cy.value.elements().remove()
-    if (newElements.length > 0) {
-      cy.value.add(newElements)
-      runLayout()
+
+    const currentIds = new Set(cy.value.elements().map((ele) => ele.id()))
+    const newIds = new Set(newElements.map((e) => e.data?.id).filter(Boolean))
+
+    // Full reset: if most elements changed (e.g. source filter switch)
+    const isFullReset = !oldElements || oldElements.length === 0 || newElements.length === 0
+      || (currentIds.size > 0 && [...currentIds].filter((id) => !newIds.has(id)).length > currentIds.size * 0.5)
+
+    if (isFullReset) {
+      cy.value.elements().remove()
+      if (newElements.length > 0) {
+        cy.value.add(newElements)
+        runLayoutWithFocus({
+          name: 'cose-bilkent',
+          animate: 'end',
+          animationDuration: 500,
+          fit: true,
+          nodeDimensionsIncludeLabels: true,
+        })
+      }
+      return
+    }
+
+    // Incremental update: only add new elements, position near neighbors
+    const toAdd = newElements.filter((e) => e.data?.id && !currentIds.has(e.data.id))
+    const toRemove = [...currentIds].filter((id) => !newIds.has(id))
+
+    if (toRemove.length > 0) {
+      cy.value.remove(cy.value.collection(toRemove.map((id) => cy.value!.getElementById(id))))
+    }
+    if (toAdd.length > 0) {
+      const edgesToAdd = toAdd.filter((e) => e.group === 'edges')
+      const nodesToAdd = toAdd.filter((e) => e.group === 'nodes')
+
+      // Use startBatch/endBatch so styles are applied after all mutations
+      cy.value.startBatch()
+
+      const addedNodes = nodesToAdd.length > 0 ? cy.value.add(nodesToAdd) : cy.value.collection()
+      if (edgesToAdd.length > 0) {
+        cy.value.add(edgesToAdd)
+      }
+
+      // Position new nodes near an existing connected neighbor
+      addedNodes.forEach((added) => {
+        const nodeId = added.id()
+        const connectedEdge = newElements.find(
+          (e) => e.group === 'edges' && (e.data?.source === nodeId || e.data?.target === nodeId)
+        )
+        if (connectedEdge) {
+          const neighborId = connectedEdge.data?.source === nodeId
+            ? connectedEdge.data?.target
+            : connectedEdge.data?.source
+          const neighbor = cy.value!.getElementById(neighborId as string)
+          if (neighbor.length > 0) {
+            const pos = neighbor.position()
+            const angle = Math.random() * Math.PI * 2
+            const dist = 60 + Math.random() * 40
+            added.position({
+              x: pos.x + Math.cos(angle) * dist,
+              y: pos.y + Math.sin(angle) * dist,
+            })
+          }
+        }
+      })
+
+      cy.value.endBatch()
+
+      // Force style recalculation on ALL nodes — covers nodes added in
+      // previous watch invocations that may still have stale default styles
+      cy.value.nodes().forEach((node) => {
+        const color = node.data('color')
+        if (color && node.style('background-color') === 'rgb(153,153,153)') {
+          node.style('background-color', color)
+        }
+      })
     }
   }, { deep: true })
 
-  onMounted(() => init())
+  function onKeydown(e: KeyboardEvent) {
+    const ctrl = e.ctrlKey || e.metaKey
+    if (ctrl && (e.key === '=' || e.key === '+')) {
+      e.preventDefault()
+      zoomIn()
+    } else if (ctrl && e.key === '-') {
+      e.preventDefault()
+      zoomOut()
+    }
+  }
+
+  onMounted(() => {
+    init()
+    window.addEventListener('keydown', onKeydown)
+  })
   onBeforeUnmount(() => {
+    window.removeEventListener('keydown', onKeydown)
     cy.value?.destroy()
     cy.value = null
   })
@@ -188,6 +462,9 @@ export function useCytoscape(options: UseCytoscapeOptions) {
     cy,
     addElements,
     focusEntity,
+    focusNodeRadial,
+    zoomIn,
+    zoomOut,
     resetView,
     runLayout,
     clearGraph,
