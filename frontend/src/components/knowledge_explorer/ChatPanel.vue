@@ -370,63 +370,19 @@ const loadInitialMessage = async () => {
       messages.value = [];
     }
 
-    // Determine the effective document scope — from props or from the session itself
-    const effectiveDocumentId = props.selectedDocumentId
-      || (chatStore.activeSession?.scope_type === 'document' ? chatStore.activeSession.scope_id : null);
-
-    // For document-scoped sessions, always prepend the document summary as the first message
-    if (effectiveDocumentId) {
-      try {
-        const doc = await documentService.getDocument(effectiveDocumentId);
-        if (doc && doc.ai_markdown_content) {
-          const titleHtml = doc.title
-            ? (doc.url
-              ? `<h3><a href="${doc.url}" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:none;">${escapeHtml(doc.title)}</a></h3>`
-              : `<h3>${escapeHtml(doc.title)}</h3>`)
-            : '';
-          const contentHtml = marked.parse(doc.ai_markdown_content) as string;
-          messages.value.unshift({
-            type: 'system',
-            content: `${titleHtml}${contentHtml}`,
-          });
-        }
-      } catch (err) {
-        console.warn('Failed to load document summary for chat:', err);
-      }
-
-      // Sync backend session scope if needed
-      if (chatStore.activeSession &&
-          (chatStore.activeSession.scope_type !== 'document' || chatStore.activeSession.scope_id !== effectiveDocumentId)) {
-        await chatStore.updateSessionScope(props.chatSessionId, 'document', effectiveDocumentId);
-      }
-    }
-
-    // Only show a greeting if there are no messages at all (no chat history, no document summary)
+    // Show a greeting if no messages yet
     if (messages.value.length === 0) {
-      if (props.selectedEntityId) {
-        messages.value.push({
-          type: 'system',
-          content: toParagraphHtml('Entity context active. How can I help you explore this topic?'),
-          actions: [],
-        });
-      } else {
-        // General chat — no document scope
-        if (chatStore.activeSession && chatStore.activeSession.scope_type !== 'all_library') {
-          await chatStore.updateSessionScope(props.chatSessionId, 'all_library', null);
-        }
-        messages.value.push({
-          type: 'system',
-          content: toParagraphHtml('How can I help you today?'),
-          actions: [],
-        });
-      }
+      messages.value.push({
+        type: 'system',
+        content: toParagraphHtml('How can I help you explore your knowledge?'),
+        actions: [],
+      });
     }
   } finally {
     isLoadingInitialMessage.value = false;
   }
 
-  // Scroll to top so user sees the document title/summary first
-  scrollToTop();
+  scrollToBottom();
 };
 
 

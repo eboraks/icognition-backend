@@ -38,6 +38,11 @@ export const useHubStore = defineStore('hub', () => {
       graphStore.entities.push(...data.entities)
       graphStore.relationships.push(...data.relationships)
       graphStore.documents.push(...(data.documents || []))
+      graphStore.entityDocumentLinks.push(
+        ...(data.entity_document_links || []).map(
+          (l: any) => ({ entityId: l.entity_id, documentId: l.document_id })
+        )
+      )
     } catch (err) {
       console.error('Failed to load discovery graph:', err)
     } finally {

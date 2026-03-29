@@ -18,6 +18,42 @@ export interface UseCytoscapeOptions {
 export function useCytoscape(options: UseCytoscapeOptions) {
   const cy = ref<Core | null>(null)
 
+  // Font size presets
+  type FontSize = 'small' | 'medium' | 'large'
+  const fontSizeConfig = { small: 9, medium: 11, large: 14 }
+  const edgeFontSizeConfig = { small: 7, medium: 9, large: 11 }
+  const currentFontSize = ref<FontSize>('medium')
+
+  function setFontSize(size: FontSize) {
+    currentFontSize.value = size
+    if (!cy.value) return
+    cy.value.style()
+      .selector('node')
+      .style('font-size', `${fontSizeConfig[size]}px`)
+      .selector('node[type = "document"]')
+      .style('font-size', `${fontSizeConfig[size] - 1}px`)
+      .selector('edge')
+      .style('font-size', `${edgeFontSizeConfig[size]}px`)
+      .update()
+  }
+
+  // Default cose-bilkent layout options with good spacing
+  const coseBilkentDefaults = {
+    name: 'cose-bilkent',
+    animate: 'end',
+    animationDuration: 500,
+    nodeDimensionsIncludeLabels: true,
+    idealEdgeLength: 120,
+    nodeRepulsion: 8000,
+    edgeElasticity: 0.45,
+    nestingFactor: 0.1,
+    gravity: 0.2,
+    numIter: 2500,
+    tile: true,
+    fit: true,
+    padding: 30,
+  }
+
   // Build per-type shape + icon selectors from shared config
   const typeShapeStyles: cytoscape.Stylesheet[] = Object.entries(NODE_STYLES).flatMap(
     ([type, { shape, icon }]) => {
@@ -148,12 +184,7 @@ export function useCytoscape(options: UseCytoscapeOptions) {
       container: options.container.value,
       elements: options.elements.value,
       style: graphStyle,
-      layout: {
-        name: 'cose-bilkent',
-        animate: 'end',
-        animationDuration: 500,
-        nodeDimensionsIncludeLabels: true,
-      } as any,
+      layout: coseBilkentDefaults as any,
       minZoom: 0.2,
       maxZoom: 5,
       wheelSensitivity: 0.3,
@@ -208,13 +239,7 @@ export function useCytoscape(options: UseCytoscapeOptions) {
   }
 
   function runLayout() {
-    runLayoutWithFocus({
-      name: 'cose-bilkent',
-      animate: 'end',
-      animationDuration: 500,
-      fit: true,
-      nodeDimensionsIncludeLabels: true,
-    })
+    runLayoutWithFocus({ ...coseBilkentDefaults })
   }
 
   // Queue a focus after any running layout completes
@@ -371,13 +396,7 @@ export function useCytoscape(options: UseCytoscapeOptions) {
       cy.value.elements().remove()
       if (newElements.length > 0) {
         cy.value.add(newElements)
-        runLayoutWithFocus({
-          name: 'cose-bilkent',
-          animate: 'end',
-          animationDuration: 500,
-          fit: true,
-          nodeDimensionsIncludeLabels: true,
-        })
+        runLayoutWithFocus({ ...coseBilkentDefaults })
       }
       return
     }
@@ -458,6 +477,48 @@ export function useCytoscape(options: UseCytoscapeOptions) {
     cy.value = null
   })
 
+  function applyChatContextFilter(entityIds: Set<number>, documentIds: Set<number>) {
+    if (!cy.value) return
+    const contextNodeIds = new Set<string>()
+    for (const id of entityIds) contextNodeIds.add(String(id))
+    for (const id of documentIds) contextNodeIds.add(`doc-${id}`)
+
+    // 1-hop bridge: add direct neighbors of context nodes
+    const bridgeIds = new Set<string>()
+    for (const nodeId of contextNodeIds) {
+      const node = cy.value.getElementById(nodeId)
+      if (node.length > 0) {
+        node.neighborhood().nodes().forEach((n: any) => bridgeIds.add(n.id()))
+      }
+    }
+
+    const visibleIds = new Set([...contextNodeIds, ...bridgeIds])
+
+    cy.value.batch(() => {
+      cy.value!.nodes().forEach((n: any) => {
+        if (visibleIds.has(n.id())) {
+          n.removeClass('dimmed')
+        } else {
+          n.addClass('dimmed')
+        }
+      })
+      cy.value!.edges().forEach((e: any) => {
+        const srcVisible = visibleIds.has(e.source().id())
+        const tgtVisible = visibleIds.has(e.target().id())
+        if (srcVisible && tgtVisible) {
+          e.removeClass('dimmed')
+        } else {
+          e.addClass('dimmed')
+        }
+      })
+    })
+  }
+
+  function clearChatContextFilter() {
+    if (!cy.value) return
+    cy.value.elements().removeClass('dimmed')
+  }
+
   return {
     cy,
     addElements,
@@ -468,5 +529,9 @@ export function useCytoscape(options: UseCytoscapeOptions) {
     resetView,
     runLayout,
     clearGraph,
+    setFontSize,
+    currentFontSize,
+    applyChatContextFilter,
+    clearChatContextFilter,
   }
 }

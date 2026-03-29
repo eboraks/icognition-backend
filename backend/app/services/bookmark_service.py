@@ -5,12 +5,12 @@ Bookmark service for managing bookmark operations with automatic user creation
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, func
+from sqlalchemy import select, update, delete, func, text
 from sqlalchemy.exc import IntegrityError
 import logging
 
 from app.services.user_service import UserService
-from app.models import Bookmark, User, Document, ChatSession, ChatMessage, EntityDocument, EntityRelationship
+from app.models import Bookmark, User, Document, ChatSession, ChatMessage, EntityDocument, EntityRelationship, RelationshipDocument
 from app.services.base_service import UserIsolatedService, DataIsolationValidator
 from app.utils.logging import get_logger
 
@@ -210,10 +210,15 @@ class BookmarkService(UserIsolatedService[Bookmark]):
                         delete(EntityDocument).where(EntityDocument.document_id == document_id)
                     )
 
-                    # C. Delete EntityRelationship rows sourced from this document
+                    # C. Delete relationship-document links for this document, then orphaned relationships
                     await session.execute(
-                        delete(EntityRelationship).where(EntityRelationship.source_document_id == document_id)
+                        delete(RelationshipDocument).where(RelationshipDocument.document_id == document_id)
                     )
+                    # Clean up relationships with no remaining document links
+                    await session.execute(text("""
+                        DELETE FROM entity_relationships
+                        WHERE id NOT IN (SELECT relationship_id FROM relationship_documents)
+                    """))
 
                     # D. Delete the Document itself
                     await session.execute(

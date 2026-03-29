@@ -40,9 +40,9 @@ COUNT_LEGACY = text("""
 
 # Count dependent rows for reporting
 COUNT_QUERIES = {
-    "entity_relationships": text("""
-        SELECT COUNT(*) FROM entity_relationships
-        WHERE source_document_id = ANY(:ids)
+    "relationship_documents": text("""
+        SELECT COUNT(*) FROM relationship_documents
+        WHERE document_id = ANY(:ids)
     """),
     "entity_documents": text("""
         SELECT COUNT(*) FROM entity_documents
@@ -72,9 +72,13 @@ COUNT_QUERIES = {
 
 # Delete statements — order matters (child rows first)
 DELETE_QUERIES = [
-    ("entity_relationships", text("""
+    ("relationship_documents", text("""
+        DELETE FROM relationship_documents
+        WHERE document_id = ANY(:ids)
+    """)),
+    ("orphan_relationships", text("""
         DELETE FROM entity_relationships
-        WHERE source_document_id = ANY(:ids)
+        WHERE id NOT IN (SELECT relationship_id FROM relationship_documents)
     """)),
     ("entity_documents", text("""
         DELETE FROM entity_documents

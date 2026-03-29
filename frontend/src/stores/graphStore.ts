@@ -65,8 +65,10 @@ export const useGraphStore = defineStore('graph', () => {
       // Direct assignment — single reactive change per array, no intermediate empty state
       entities.value = neighborhood.entities
       relationships.value = neighborhood.relationships
-      documents.value = []
-      entityDocumentLinks.value = []
+      documents.value = neighborhood.documents || []
+      entityDocumentLinks.value = (neighborhood.entity_document_links || []).map(
+        (l: any) => ({ entityId: l.entity_id, documentId: l.document_id })
+      )
       expandedNodeIds.value = new Set([entityId])
       clearSelection()
     } finally {
@@ -98,23 +100,15 @@ export const useGraphStore = defineStore('graph', () => {
       const newDocs = (neighborhood.documents || []).filter((d) => !existingDocIds.has(d.id))
       documents.value.push(...newDocs)
 
-      // Build entity-document links from the neighborhood entities
+      // Add entity-document links from the API response
       const existingLinkKeys = new Set(
         entityDocumentLinks.value.map((l) => `${l.entityId}-${l.documentId}`)
       )
-      const allEntityIds = neighborhood.entities.map((e) => e.id)
-      const allDocIds = (neighborhood.documents || []).map((d) => d.id)
-
-      // Link center entity to all its documents
-      for (const docId of allDocIds) {
-        for (const eId of allEntityIds) {
-          if (eId === Number(entityId)) {
-            const key = `${eId}-${docId}`
-            if (!existingLinkKeys.has(key)) {
-              entityDocumentLinks.value.push({ entityId: eId, documentId: docId })
-              existingLinkKeys.add(key)
-            }
-          }
+      for (const link of (neighborhood.entity_document_links || [])) {
+        const key = `${link.entity_id}-${link.document_id}`
+        if (!existingLinkKeys.has(key)) {
+          entityDocumentLinks.value.push({ entityId: link.entity_id, documentId: link.document_id })
+          existingLinkKeys.add(key)
         }
       }
 
@@ -154,14 +148,14 @@ export const useGraphStore = defineStore('graph', () => {
         const newDocs = (subgraph.documents || []).filter((d) => !existingDocIds.has(d.id))
         documents.value.push(...newDocs)
 
-        // Build entity-document links
+        // Add entity-document links from the API response
         const existingLinkKeys = new Set(
           entityDocumentLinks.value.map((l) => `${l.entityId}-${l.documentId}`)
         )
-        for (const entity of subgraph.entities) {
-          const key = `${entity.id}-${id}`
+        for (const link of (subgraph.entity_document_links || [])) {
+          const key = `${link.entity_id}-${link.document_id}`
           if (!existingLinkKeys.has(key)) {
-            entityDocumentLinks.value.push({ entityId: entity.id, documentId: id })
+            entityDocumentLinks.value.push({ entityId: link.entity_id, documentId: link.document_id })
             existingLinkKeys.add(key)
           }
         }

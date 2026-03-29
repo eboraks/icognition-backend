@@ -860,28 +860,39 @@ class EntityDocument(SQLModel, table=True):
 
 
 class EntityRelationship(SQLModel, table=True):
-    """Directed relationship between two entities, sourced from a document."""
+    """Directed relationship between two entities. Documents that source this
+    relationship are tracked via the RelationshipDocument junction table."""
 
     __tablename__ = "entity_relationships"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     from_entity_id: int = Field(foreign_key="entities.id", index=True)
     to_entity_id: int = Field(foreign_key="entities.id", index=True)
-    # Relationship type examples: works_for, authored, mentions, opposes, located_in, part_of, acquired
     relationship_type: str = Field(max_length=100, index=True)
-    source_document_id: Optional[int] = Field(default=None, foreign_key="document.id", index=True)
     created_at: Optional[datetime] = Field(
         default_factory=datetime.utcnow,
         sa_column=Column(DateTime(timezone=True), server_default=func.now())
     )
 
     __table_args__ = (
-        # Unique constraint: one relationship type per entity pair per document
         Index(
             "ix_entity_rel_unique",
-            "from_entity_id", "to_entity_id", "relationship_type", "source_document_id",
+            "from_entity_id", "to_entity_id", "relationship_type",
             unique=True
         ),
+    )
+
+
+class RelationshipDocument(SQLModel, table=True):
+    """Many-to-many: which documents evidence a given relationship."""
+
+    __tablename__ = "relationship_documents"
+
+    relationship_id: int = Field(foreign_key="entity_relationships.id", primary_key=True)
+    document_id: int = Field(foreign_key="document.id", primary_key=True)
+    created_at: Optional[datetime] = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), server_default=func.now())
     )
 
 

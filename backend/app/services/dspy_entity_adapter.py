@@ -2,7 +2,7 @@ from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
 
-from app.models import Entity, EntityDocument, EntityRelationship
+from app.models import Entity, EntityDocument, EntityRelationship, RelationshipDocument
 from app.services.user_service import UserService
 from app.services.embedding_service import get_embedding_service
 from app.services.wikidata_service import get_wikidata_service
@@ -264,27 +264,41 @@ class DspyEntityAdapter:
             if not from_id or not to_id or from_id == to_id:
                 continue  # Skip if either entity wasn't stored or self-referential
 
-            # Upsert: skip if this exact relationship already exists for this document
+            # Upsert relationship: find or create by (from, to, type)
             existing = await self.session.execute(
                 select(EntityRelationship).where(
                     and_(
                         EntityRelationship.from_entity_id == from_id,
                         EntityRelationship.to_entity_id == to_id,
                         EntityRelationship.relationship_type == rel["relationship_type"],
-                        EntityRelationship.source_document_id == document_id,
                     )
                 )
             )
-            if existing.scalar_one_or_none():
-                continue
+            relationship = existing.scalar_one_or_none()
+            if not relationship:
+                relationship = EntityRelationship(
+                    from_entity_id=from_id,
+                    to_entity_id=to_id,
+                    relationship_type=rel["relationship_type"],
+                )
+                self.session.add(relationship)
+                await self.session.flush()  # get the ID
+                stored += 1
 
-            self.session.add(EntityRelationship(
-                from_entity_id=from_id,
-                to_entity_id=to_id,
-                relationship_type=rel["relationship_type"],
-                source_document_id=document_id,
-            ))
-            stored += 1
+            # Link this document to the relationship (skip if already linked)
+            existing_link = await self.session.execute(
+                select(RelationshipDocument).where(
+                    and_(
+                        RelationshipDocument.relationship_id == relationship.id,
+                        RelationshipDocument.document_id == document_id,
+                    )
+                )
+            )
+            if not existing_link.scalar_one_or_none():
+                self.session.add(RelationshipDocument(
+                    relationship_id=relationship.id,
+                    document_id=document_id,
+                ))
 
         await self.session.flush()
         logger.info(f"Stored {stored} entity relationships for document {document_id}")

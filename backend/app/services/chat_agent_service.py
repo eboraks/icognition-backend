@@ -1,12 +1,25 @@
 import asyncio
+import re
 
 from app.utils.logging import get_logger
 from app.core.config import settings
 from app.utils.langsmith_tracing import enable_langsmith_tracing
-from typing import Optional
+from typing import Optional, List
 import uuid
 from bs4 import BeautifulSoup
 from contextlib import AbstractAsyncContextManager
+
+
+def _build_chat_context_event(chunk: dict, response_text: str) -> dict:
+    """Extract entity IDs from graph state and doc IDs from source tags in the response."""
+    entity_ids = list(set(chunk.get("context_entity_ids", [])))
+    # Extract doc IDs from <source doc_id="N"> tags in the raw response
+    doc_ids = list(set(int(m) for m in re.findall(r'<source\s+doc_id=["\'](\d+)["\']>', response_text)))
+    return {
+        "type": "chat_context",
+        "entity_ids": entity_ids,
+        "document_ids": doc_ids,
+    }
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
@@ -461,6 +474,8 @@ class ChatAgentService:
                                     content_type = type(pending_ai_message.content).__name__
                                     logger.info(f"[Session {session_id}] Message verified satisfactory. Yielding. Content type={content_type}, length={len(text)}")
                                     yield {"type": "content", "content": text}
+                                    # Yield chat context (entity + doc IDs) for graph filtering
+                                    yield _build_chat_context_event(chunk, text)
                                     pending_ai_message = None # Flushed
                                     return # End stream, we are done
                                 elif chunk.get("is_satisfactory") and not text:
@@ -472,6 +487,7 @@ class ChatAgentService:
                      logger.info(f"[Session {session_id}] Yielding final buffered message (Max reflections or End of Stream).")
                      text = extract_text_from_content(pending_ai_message.content)
                      yield {"type": "content", "content": text}
+                     yield _build_chat_context_event(chunk, text)
                 elif chunk_count == 0:
                      # Graph produced zero chunks — something went wrong silently
                      logger.error(f"[Session {session_id}] Stream completed with ZERO chunks — graph likely crashed silently")

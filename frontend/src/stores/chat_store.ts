@@ -41,6 +41,11 @@ export const useChatStore = defineStore('chat', () => {
   const messages = ref<ChatMessage[]>([]);
   const isLoading = ref(false);
   const error = ref<string | null>(null);
+
+  // Chat context for graph filtering
+  const chatContextEntityIds = ref<Set<number>>(new Set());
+  const chatContextDocumentIds = ref<Set<number>>(new Set());
+  const chatFilterActive = ref(false);
   const authStore = useAuthStore();
   let eventSource: EventSource | null = null;
   let streamingMessageId: string | null = null;
@@ -417,6 +422,13 @@ export const useChatStore = defineStore('chat', () => {
           activeMessage.statusText = content;
         }
       }
+    } else if (type === "chat_context") {
+      // Accumulate entity/doc IDs from the chat agent's context
+      const entityIds = (messageData as any).entity_ids || [];
+      const documentIds = (messageData as any).document_ids || [];
+      for (const id of entityIds) chatContextEntityIds.value.add(id);
+      for (const id of documentIds) chatContextDocumentIds.value.add(id);
+      log(`chat_context received: ${entityIds.length} entities, ${documentIds.length} documents`);
     } else if (type === "error") {
       log(`ERROR event received: ${content}`);
       console.error(`[${new Date().toISOString()}] [SSE Handler] Backend SSE error:`, content);
@@ -453,6 +465,16 @@ export const useChatStore = defineStore('chat', () => {
     streamingMessageId = null;
   }
 
+  function toggleChatFilter() {
+    chatFilterActive.value = !chatFilterActive.value;
+  }
+
+  function clearChatContext() {
+    chatContextEntityIds.value = new Set();
+    chatContextDocumentIds.value = new Set();
+    chatFilterActive.value = false;
+  }
+
   async function switchActiveSession(sessionId: number) {
     console.log(`Attempting to switch to session ${sessionId}`);
     if (activeSession.value?.id === sessionId) {
@@ -461,6 +483,7 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     disconnectSSE();
+    clearChatContext();
 
     const newSession = sessions.value.find(s => s.id === sessionId);
     if (newSession) {
@@ -501,6 +524,18 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  async function renameSession(sessionId: number, title: string) {
+    try {
+      await chatService.updateSessionTitle(sessionId, title);
+      const session = sessions.value.find(s => s.id === sessionId);
+      if (session) {
+        session.title = title;
+      }
+    } catch (err) {
+      console.error('Failed to rename session:', err);
+    }
+  }
+
   async function getOrCreateDocumentSession(documentId: number, documentTitle: string): Promise<ChatSession | null> {
     /**
      * Find or create a chat session scoped to a specific document.
@@ -525,9 +560,11 @@ export const useChatStore = defineStore('chat', () => {
   return {
     sessions,
     activeSession,
-    // messages, // No longer needed as messages are session-specific
     isLoading,
     error,
+    chatContextEntityIds,
+    chatContextDocumentIds,
+    chatFilterActive,
     loadSessions,
     createSession,
     loadMessages,
@@ -536,6 +573,9 @@ export const useChatStore = defineStore('chat', () => {
     deleteSession,
     switchActiveSession,
     updateSessionScope,
+    renameSession,
     getOrCreateDocumentSession,
+    toggleChatFilter,
+    clearChatContext,
   };
 });

@@ -601,16 +601,18 @@ class DocumentService(UserIsolatedService[Document]):
 
         doc_int_id = document.id
 
-        # 1. Delete relationships sourced from this document
-        await self.session.execute(
-            select(EntityRelationship)
-            .where(EntityRelationship.source_document_id == doc_int_id)
-        )
+        # 1. Delete relationship-document links for this document, then orphaned relationships
         from sqlalchemy import delete as sql_delete
+        from app.models import RelationshipDocument
         await self.session.execute(
-            sql_delete(EntityRelationship)
-            .where(EntityRelationship.source_document_id == doc_int_id)
+            sql_delete(RelationshipDocument)
+            .where(RelationshipDocument.document_id == doc_int_id)
         )
+        from sqlalchemy import text as sa_text
+        await self.session.execute(sa_text("""
+            DELETE FROM entity_relationships
+            WHERE id NOT IN (SELECT relationship_id FROM relationship_documents)
+        """))
 
         # 2. Find entities linked ONLY to this document (orphans after removal)
         entity_ids_for_doc = select(EntityDocument.entity_id).where(

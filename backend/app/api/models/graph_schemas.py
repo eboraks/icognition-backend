@@ -45,7 +45,6 @@ class RelationshipSummary(BaseModel):
     from_entity_id: int
     to_entity_id: int
     relationship_type: str
-    source_document_id: Optional[int] = None
 
 
 class RelationshipRead(BaseModel):
@@ -54,7 +53,7 @@ class RelationshipRead(BaseModel):
     from_entity: EntitySummary
     to_entity: EntitySummary
     relationship_type: str
-    source_document: Optional[DocumentSummary] = None
+    source_documents: list[DocumentSummary] = []
 
 
 # ── Search ────────────────────────────────────────
@@ -93,11 +92,18 @@ class SearchResponse(BaseModel):
 
 # ── Graph / Neighborhood ──────────────────────────
 
+class EntityDocumentLink(BaseModel):
+    """Link between an entity and a document for graph edge rendering."""
+    entity_id: int
+    document_id: int
+
+
 class NeighborhoodResponse(BaseModel):
     """Everything needed to render a subgraph in Cytoscape.js."""
     entities: list[EntitySummary]
     relationships: list[RelationshipSummary]
     documents: list[DocumentSummary] = []
+    entity_document_links: list[EntityDocumentLink] = []
     center_entity_id: Optional[int] = None
 
 

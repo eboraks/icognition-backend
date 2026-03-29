@@ -37,7 +37,6 @@ export function transformToCytoscapeElements(
       source: String(r.from_entity_id),
       target: String(r.to_entity_id),
       relationship_type: r.relationship_type,
-      source_document_id: r.source_document_id,
     },
   }))
 

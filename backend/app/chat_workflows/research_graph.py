@@ -29,6 +29,8 @@ class AgentState(TypedDict):
     skill: str
     extracted_entities: List[str]
     kg_context: str
+    context_entity_ids: List[int]
+    context_document_ids: List[int]
 
 # --- Structured Outputs ---
 
@@ -54,14 +56,13 @@ async def resolve_entities_from_query(
     db_session: AsyncSession,
     similarity_threshold: float = 0.3,
     max_entities: int = 10,
-) -> str:
+) -> tuple:
     """
     Resolve a list of entity names against the knowledge graph using fuzzy matching.
-    Returns a formatted string with matched entities and their relationships,
-    ready to be injected into the LLM context.
+    Returns (formatted_context_string, matched_entity_ids).
     """
     if not entity_names:
-        return ""
+        return ("", [])
 
     all_entity_ids = []
     entity_map: Dict[int, dict] = {}
@@ -95,7 +96,7 @@ async def resolve_entities_from_query(
                 all_entity_ids.append(eid)
 
     if not all_entity_ids:
-        return ""
+        return ("", [])
 
     # Fetch relationships between/involving matched entities
     rels_sql = text("""
@@ -146,7 +147,7 @@ async def resolve_entities_from_query(
         for ed in entity_docs:
             parts.append(f"  * {ed['entity_name']} -> \"{ed['doc_title']}\"")
 
-    return "\n".join(parts)
+    return ("\n".join(parts), list(all_entity_ids))
 
 
 # --- Graph Builder Helper ---
@@ -317,20 +318,20 @@ def build_research_graph(
         """Resolves extracted entity names against the knowledge graph and builds context."""
         entities = state.get("extracted_entities", [])
         if not entities or not db_session or not user_id:
-            return {"kg_context": ""}
+            return {"kg_context": "", "context_entity_ids": []}
 
         try:
-            kg_context = await resolve_entities_from_query(
+            kg_context, entity_ids = await resolve_entities_from_query(
                 entity_names=entities,
                 user_id=user_id,
                 db_session=db_session,
             )
             if kg_context:
-                logger.info(f"KG enrichment found context for entities: {entities}")
-            return {"kg_context": kg_context}
+                logger.info(f"KG enrichment found context for entities: {entities} (IDs: {entity_ids})")
+            return {"kg_context": kg_context, "context_entity_ids": entity_ids}
         except Exception as e:
             logger.warning(f"KG enrichment failed (non-fatal): {e}")
-            return {"kg_context": ""}
+            return {"kg_context": "", "context_entity_ids": []}
 
     async def _run_generate(state: AgentState, system_msg: str, run_name: str) -> dict:
         """Shared generation logic: injects intent + KG context and calls the LLM with tools."""

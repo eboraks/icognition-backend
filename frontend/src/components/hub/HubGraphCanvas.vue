@@ -12,10 +12,17 @@
     <!-- Controls overlay -->
     <div class="graph-controls-overlay">
       <GraphControls
+        :can-expand="canExpandSelected"
+        :font-size="currentFontSize"
+        :chat-filter-active="chatStore.chatFilterActive"
         @zoom-in="zoomIn"
         @zoom-out="zoomOut"
         @fit="resetView"
+        @expand="onExpandSelected"
+        @font-size-change="setFontSize"
         @relayout="runLayout"
+        @toggle-chat-filter="onToggleChatFilter"
+        @toggle-chat="hubStore.chatPanelOpen ? hubStore.closeChatPanel() : hubStore.openChatPanel()"
         @reset="onReset"
       />
     </div>
@@ -24,17 +31,6 @@
     <div v-if="graphStore.loading || hubStore.initialLoading" class="graph-loading">
       <ProgressSpinner strokeWidth="4" style="width: 48px; height: 48px;" />
     </div>
-
-    <!-- Expand "+" button overlay for unexpanded entity nodes -->
-    <button
-      v-if="expandBtnPos"
-      class="expand-btn"
-      :style="{ left: expandBtnPos.x + 'px', top: expandBtnPos.y + 'px' }"
-      @click="onExpandClick"
-      title="Expand this node's connections"
-    >
-      <i class="pi pi-plus" />
-    </button>
 
     <!-- Empty state -->
     <div v-if="!hubStore.initialLoading && elements.length === 0" class="graph-empty">
@@ -67,52 +63,48 @@ const hubStore = useHubStore()
 const chatStore = useChatStore()
 const cyContainer = ref<HTMLElement | null>(null)
 
-// Expand button overlay state
-const expandBtnPos = ref<{ x: number; y: number } | null>(null)
-const expandBtnEntityId = ref<string | null>(null)
+// Track selected entity for expand button
+const selectedEntityId = ref<string | null>(null)
 
-function updateExpandBtnPosition() {
-  if (!expandBtnEntityId.value || !cy.value) {
-    expandBtnPos.value = null
-    return
-  }
-  const node = cy.value.getElementById(expandBtnEntityId.value)
-  if (node.length === 0 || node.removed()) {
-    expandBtnPos.value = null
-    return
-  }
-  const pos = node.renderedPosition()
-  // Offset to top-right of the node
-  const container = cyContainer.value
-  if (!container) return
-  expandBtnPos.value = { x: pos.x + 24, y: pos.y - 24 }
-}
+const canExpandSelected = computed(() => {
+  if (!selectedEntityId.value) return false
+  return !graphStore.isNodeExpanded(selectedEntityId.value)
+})
 
-function showExpandBtn(entityId: string) {
-  // Only show for non-expanded entity nodes
-  if (graphStore.isNodeExpanded(entityId)) {
-    expandBtnPos.value = null
-    expandBtnEntityId.value = null
-    return
-  }
-  expandBtnEntityId.value = entityId
-  // Delay to ensure node is rendered and positioned
-  nextTick(() => updateExpandBtnPosition())
-}
-
-function hideExpandBtn() {
-  expandBtnPos.value = null
-  expandBtnEntityId.value = null
-}
-
-function onExpandClick() {
-  if (!expandBtnEntityId.value) return
-  const entityId = expandBtnEntityId.value
-  hideExpandBtn()
+function onExpandSelected() {
+  if (!selectedEntityId.value || !canExpandSelected.value) return
+  const entityId = selectedEntityId.value
   graphStore.expandEntity(entityId).then(() => {
     focusEntity(entityId)
   })
 }
+
+function onToggleChatFilter() {
+  chatStore.toggleChatFilter()
+  if (chatStore.chatFilterActive) {
+    const entityIds = chatStore.chatContextEntityIds
+    const docIds = chatStore.chatContextDocumentIds
+    if (entityIds.size > 0 || docIds.size > 0) {
+      applyChatContextFilter(entityIds, docIds)
+    }
+  } else {
+    clearChatContextFilter()
+  }
+}
+
+// Auto-apply filter when new context arrives from a chat response
+watch(
+  () => [chatStore.chatContextEntityIds.size, chatStore.chatContextDocumentIds.size],
+  ([entityCount, docCount]) => {
+    if (entityCount > 0 || docCount > 0) {
+      // Auto-activate filter when context first arrives
+      if (!chatStore.chatFilterActive) {
+        chatStore.chatFilterActive = true
+      }
+      applyChatContextFilter(chatStore.chatContextEntityIds, chatStore.chatContextDocumentIds)
+    }
+  }
+)
 
 const elements = computed(() =>
   transformToCytoscapeElements(
@@ -131,40 +123,37 @@ const {
   resetView,
   runLayout,
   clearGraph,
+  setFontSize,
+  currentFontSize,
+  applyChatContextFilter,
+  clearChatContextFilter,
 } = useCytoscape({
   container: cyContainer,
   elements,
   onEntitySelect: (entityId: string) => {
     if (!entityId) {
       hubStore.clearSelection()
-      hideExpandBtn()
+      selectedEntityId.value = null
       return
     }
-    showExpandBtn(entityId)
+    selectedEntityId.value = entityId
     hubStore.selectEntity(Number(entityId))
   },
   onDocumentSelect: (docId: string) => {
-    hideExpandBtn()
+    selectedEntityId.value = null
     const numericId = Number(docId.replace('doc-', ''))
     hubStore.selectDocument(numericId)
-    focusEntity(docId)
   },
   onRelationshipSelect: (relId: string) => {
     graphStore.selectRelationship(relId)
   },
   onEntityExpand: (entityId: string) => {
-    hideExpandBtn()
     graphStore.expandEntity(entityId).then(() => {
       focusEntity(entityId)
     })
   },
 })
 
-// Keep expand button position in sync with graph viewport changes
-watch(() => cy.value, (instance) => {
-  if (!instance) return
-  instance.on('zoom pan', () => updateExpandBtnPosition())
-}, { immediate: true })
 
 async function onSearchSelect(id: number, type: 'entity' | 'relationship' | 'document') {
   if (type === 'entity') {
@@ -172,12 +161,11 @@ async function onSearchSelect(id: number, type: 'entity' | 'relationship' | 'doc
     chatStore.activeSession = null
 
     await graphStore.handleSearchSelect(id, type, () => {})
+    selectedEntityId.value = String(id)
     // Wait for Vue reactivity + Cytoscape watcher + layout to settle
     await nextTick()
     setTimeout(() => {
       focusEntity(String(id))
-      // Show expand button after radial layout settles
-      setTimeout(() => showExpandBtn(String(id)), 600)
     }, 100)
     hubStore.selectEntity(id)
   } else if (type === 'document') {
@@ -254,30 +242,4 @@ onMounted(() => {
   margin-top: 0.75rem;
 }
 
-/* Expand "+" button overlay */
-.expand-btn {
-  position: absolute;
-  z-index: 15;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  border: 2px solid #3B82F6;
-  background: white;
-  color: #3B82F6;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  font-size: 12px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
-  transition: transform 0.15s, background 0.15s;
-  transform: translate(-50%, -50%);
-}
-
-.expand-btn:hover {
-  background: #3B82F6;
-  color: white;
-  transform: translate(-50%, -50%) scale(1.15);
-}
 </style>

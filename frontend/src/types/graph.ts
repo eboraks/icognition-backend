@@ -25,7 +25,6 @@ export interface RelationshipSummary {
   from_entity_id: number
   to_entity_id: number
   relationship_type: string
-  source_document_id?: number | null
 }
 
 export interface RelationshipRead {
@@ -33,7 +32,7 @@ export interface RelationshipRead {
   from_entity: EntitySummary
   to_entity: EntitySummary
   relationship_type: string
-  source_document?: DocumentSummary | null
+  source_documents: DocumentSummary[]
 }
 
 export interface SearchHit {
@@ -58,9 +57,15 @@ export interface DocumentRead {
   entities: EntitySummary[]
 }
 
+export interface EntityDocumentLink {
+  entity_id: number
+  document_id: number
+}
+
 export interface NeighborhoodResponse {
   entities: EntitySummary[]
   relationships: RelationshipSummary[]
   documents: DocumentSummary[]
+  entity_document_links: EntityDocumentLink[]
   center_entity_id?: number | null
 }

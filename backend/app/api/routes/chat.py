@@ -266,6 +266,16 @@ async def stream_chat_response(
                         }
                         yield f"event: agent_status\ndata: {json.dumps(event_data)}\n\n"
                         
+                    elif chunk_type == "chat_context":
+                        # Send context IDs for graph filtering
+                        context_data = {
+                            "type": "chat_context",
+                            "entity_ids": chunk.get("entity_ids", []),
+                            "document_ids": chunk.get("document_ids", []),
+                            "message_id": response_message_id
+                        }
+                        yield f"event: chat_context\ndata: {json.dumps(context_data)}\n\n"
+
                     elif chunk_type == "error":
                         # Send error event
                         error_data = {

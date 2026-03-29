@@ -146,7 +146,7 @@ class GraphService:
         limit = min(limit, 100)
 
         rels_sql = text("""
-            SELECT r.id, r.from_entity_id, r.to_entity_id, r.relationship_type, r.source_document_id
+            SELECT r.id, r.from_entity_id, r.to_entity_id, r.relationship_type
             FROM entity_relationships r
             JOIN entities e ON e.id = CASE
                 WHEN r.from_entity_id = :entity_id THEN r.to_entity_id
@@ -181,37 +181,44 @@ class GraphService:
         )
         entities = [dict(r) for r in entities_result.mappings().all()]
 
-        # Only include documents that are direct sources of the displayed relationships
-        source_doc_ids = list({r["source_document_id"] for r in rels if r["source_document_id"]})
-        documents = []
-        if source_doc_ids:
-            docs_sql = text("""
-                SELECT DISTINCT d.id, d.title
-                FROM document d
-                WHERE d.id = ANY(:ids)
-                ORDER BY d.title
-            """)
-            docs_result = await self.session.execute(docs_sql, {"ids": source_doc_ids})
-            documents = [dict(r) for r in docs_result.mappings().all()]
+        # Fetch documents linked to the neighborhood entities
+        entity_id_list = list(entity_ids)
+        docs_sql = text("""
+            SELECT DISTINCT d.id, d.title
+            FROM document d
+            JOIN entity_documents ed ON ed.document_id = d.id
+            WHERE ed.entity_id = ANY(:entity_ids)
+            ORDER BY d.title
+        """)
+        docs_result = await self.session.execute(docs_sql, {"entity_ids": entity_id_list})
+        documents = [dict(r) for r in docs_result.mappings().all()]
+
+        # Fetch entity-document links for edges
+        links_sql = text("""
+            SELECT ed.entity_id, ed.document_id
+            FROM entity_documents ed
+            WHERE ed.entity_id = ANY(:entity_ids)
+        """)
+        links_result = await self.session.execute(links_sql, {"entity_ids": entity_id_list})
+        entity_document_links = [dict(r) for r in links_result.mappings().all()]
 
         return {
             "entities": entities,
             "relationships": rels,
             "documents": documents,
+            "entity_document_links": entity_document_links,
             "center_entity_id": entity_id,
         }
 
     async def get_relationship(self, relationship_id: int) -> Optional[dict]:
-        """Fetch full relationship detail with endpoint entities and source document."""
+        """Fetch full relationship detail with endpoint entities and source documents."""
         sql = text("""
-            SELECT r.id, r.relationship_type, r.source_document_id,
+            SELECT r.id, r.relationship_type,
                    e1.id AS from_id, e1.name AS from_name, e1.type AS from_type,
-                   e2.id AS to_id, e2.name AS to_name, e2.type AS to_type,
-                   d.id AS doc_id, d.title AS doc_title
+                   e2.id AS to_id, e2.name AS to_name, e2.type AS to_type
             FROM entity_relationships r
             JOIN entities e1 ON e1.id = r.from_entity_id
             JOIN entities e2 ON e2.id = r.to_entity_id
-            LEFT JOIN document d ON d.id = r.source_document_id
             WHERE r.id = :relationship_id
         """)
         result = await self.session.execute(sql, {"relationship_id": relationship_id})
@@ -219,16 +226,24 @@ class GraphService:
         if not row:
             return None
 
-        resp = {
+        # Fetch all source documents via junction table
+        docs_sql = text("""
+            SELECT d.id, d.title
+            FROM document d
+            JOIN relationship_documents rd ON rd.document_id = d.id
+            WHERE rd.relationship_id = :relationship_id
+            ORDER BY d.title
+        """)
+        docs_result = await self.session.execute(docs_sql, {"relationship_id": relationship_id})
+        source_documents = [dict(r) for r in docs_result.mappings().all()]
+
+        return {
             "id": row["id"],
             "relationship_type": row["relationship_type"],
             "from_entity": {"id": row["from_id"], "name": row["from_name"], "type": row["from_type"]},
             "to_entity": {"id": row["to_id"], "name": row["to_name"], "type": row["to_type"]},
-            "source_document": None,
+            "source_documents": source_documents,
         }
-        if row["doc_id"]:
-            resp["source_document"] = {"id": row["doc_id"], "title": row["doc_title"]}
-        return resp
 
     async def get_entity_relationships(
         self,
@@ -248,7 +263,7 @@ class GraphService:
 
         sql = text(f"""
             SELECT r.id, r.from_entity_id, r.to_entity_id,
-                   r.relationship_type, r.source_document_id
+                   r.relationship_type
             FROM entity_relationships r
             WHERE {where}
             ORDER BY r.relationship_type
@@ -313,7 +328,7 @@ class GraphService:
         rels = []
         if include_relationships and entity_ids:
             rels_sql = text("""
-                SELECT id, from_entity_id, to_entity_id, relationship_type, source_document_id
+                SELECT id, from_entity_id, to_entity_id, relationship_type
                 FROM entity_relationships
                 WHERE from_entity_id = ANY(:ids) AND to_entity_id = ANY(:ids)
             """)
@@ -330,7 +345,19 @@ class GraphService:
         docs_result = await self.session.execute(docs_sql, {"ids": entity_ids})
         documents = [dict(r) for r in docs_result.mappings().all()]
 
-        return {"entities": entities, "relationships": rels, "documents": documents, "center_entity_id": None}
+        # Entity-document links for graph edges
+        doc_ids = [d["id"] for d in documents]
+        entity_document_links = []
+        if doc_ids:
+            links_sql = text("""
+                SELECT ed.entity_id, ed.document_id
+                FROM entity_documents ed
+                WHERE ed.entity_id = ANY(:entity_ids) AND ed.document_id = ANY(:doc_ids)
+            """)
+            links_result = await self.session.execute(links_sql, {"entity_ids": entity_ids, "doc_ids": doc_ids})
+            entity_document_links = [dict(r) for r in links_result.mappings().all()]
+
+        return {"entities": entities, "relationships": rels, "documents": documents, "entity_document_links": entity_document_links, "center_entity_id": None}
 
     async def get_entity_kg_context(self, entity_ids: list[int]) -> list[dict]:
         """
@@ -474,7 +501,7 @@ class GraphService:
 
         # Get relationships between these entities
         rels_sql = text("""
-            SELECT id, from_entity_id, to_entity_id, relationship_type, source_document_id
+            SELECT id, from_entity_id, to_entity_id, relationship_type
             FROM entity_relationships
             WHERE from_entity_id = ANY(:ids) AND to_entity_id = ANY(:ids)
         """)
@@ -491,10 +518,24 @@ class GraphService:
         docs_result = await self.session.execute(docs_sql, {"ids": entity_ids, "user_id": user_id})
         documents = [dict(r) for r in docs_result.mappings().all()]
 
+        # Get entity-document links for graph edges
+        doc_ids = [d["id"] for d in documents]
+        entity_document_links = []
+        if doc_ids:
+            links_sql = text("""
+                SELECT ed.entity_id, ed.document_id
+                FROM entity_documents ed
+                WHERE ed.entity_id = ANY(:entity_ids)
+                  AND ed.document_id = ANY(:doc_ids)
+            """)
+            links_result = await self.session.execute(links_sql, {"entity_ids": entity_ids, "doc_ids": doc_ids})
+            entity_document_links = [dict(r) for r in links_result.mappings().all()]
+
         return {
             "entities": all_entities,
             "relationships": rels,
             "documents": documents,
+            "entity_document_links": entity_document_links,
             "center_entity_id": None,
         }
 
@@ -531,9 +572,10 @@ class GraphService:
         entities = [dict(r) for r in entities_result.mappings().all()]
 
         rels_sql = text("""
-            SELECT id, from_entity_id, to_entity_id, relationship_type, source_document_id
-            FROM entity_relationships
-            WHERE source_document_id = :document_id
+            SELECT r.id, r.from_entity_id, r.to_entity_id, r.relationship_type
+            FROM entity_relationships r
+            JOIN relationship_documents rd ON rd.relationship_id = r.id
+            WHERE rd.document_id = :document_id
         """)
         rels_result = await self.session.execute(rels_sql, {"document_id": document_id})
         rels = [dict(r) for r in rels_result.mappings().all()]
@@ -543,4 +585,8 @@ class GraphService:
         doc_row = doc_result.mappings().first()
         documents = [dict(doc_row)] if doc_row else []
 
-        return {"entities": entities, "relationships": rels, "documents": documents, "center_entity_id": None}
+        # Entity-document links
+        entity_ids = [e["id"] for e in entities]
+        entity_document_links = [{"entity_id": eid, "document_id": document_id} for eid in entity_ids]
+
+        return {"entities": entities, "relationships": rels, "documents": documents, "entity_document_links": entity_document_links, "center_entity_id": None}
