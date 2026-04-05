@@ -6,6 +6,7 @@ read from ``backend/agent/prompts/*.yaml`` at first access and cached in memory
 for the lifetime of the process.
 """
 
+import numpy as np
 import yaml
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,6 +28,7 @@ _prompts: Dict[str, SimpleNamespace] = {}
 _skills: Dict[str, SimpleNamespace] = {}
 _default_skill: str = "qa"
 _loaded: bool = False
+_skill_embeddings: Dict[str, List[float]] = {}  # skill_key → embedding vector
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +130,79 @@ def get_default_skill() -> str:
     """Return the default skill key (e.g. ``"qa"``)."""
     _load_all()
     return _default_skill
+
+
+# ---------------------------------------------------------------------------
+# Embedding-based skill matching
+# ---------------------------------------------------------------------------
+
+def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+    """Calculate cosine similarity between two vectors."""
+    if not vec1 or not vec2 or len(vec1) != len(vec2):
+        return 0.0
+    a = np.array(vec1)
+    b = np.array(vec2)
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return float(np.dot(a, b) / (norm_a * norm_b))
+
+
+async def _compute_skill_embeddings() -> None:
+    """Pre-compute and cache embeddings for all skill descriptions."""
+    from app.services.embedding_service import get_embedding_service
+
+    _load_all()
+    svc = get_embedding_service()
+
+    for key, skill in _skills.items():
+        text = f"{skill.description}. {skill.slash_instruction}"
+        result = await svc.generate_embedding(
+            text=text,
+            task_type="SEMANTIC_SIMILARITY",
+        )
+        if result.success:
+            _skill_embeddings[key] = result.embedding
+            logger.debug(f"Cached embedding for skill '{key}'")
+        else:
+            logger.warning(f"Failed to compute embedding for skill '{key}': {result.error}")
+
+    logger.info(f"Computed embeddings for {len(_skill_embeddings)}/{len(_skills)} skills")
+
+
+async def match_skill(user_message: str, threshold: float = 0.5) -> str:
+    """
+    Find the best matching skill for a user message via embedding similarity.
+
+    Returns the skill key with the highest cosine similarity above *threshold*,
+    or the default skill if no match is found.
+    """
+    if not _skill_embeddings:
+        await _compute_skill_embeddings()
+
+    from app.services.embedding_service import get_embedding_service
+
+    svc = get_embedding_service()
+    msg_result = await svc.generate_embedding(
+        text=user_message,
+        task_type="SEMANTIC_SIMILARITY",
+    )
+    if not msg_result.success:
+        logger.warning(f"Failed to embed user message for skill matching: {msg_result.error}")
+        return get_default_skill()
+
+    best_skill = get_default_skill()
+    best_score = threshold
+
+    for key, skill_vec in _skill_embeddings.items():
+        score = _cosine_similarity(msg_result.embedding, skill_vec)
+        if score > best_score:
+            best_score = score
+            best_skill = key
+
+    logger.info(f"Skill match: '{best_skill}' (score={best_score:.3f}) for message: '{user_message[:80]}...'")
+    return best_skill
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ from sqlalchemy import text
 
 from app.core.config import settings
 from app.chat_workflows.tools import get_google_search_tool, create_retrieve_documents_tool, create_fetch_social_post_tool, create_world_context_tool
-from app.services.prompt_service import get_prompt, get_all_skills, get_skill, get_default_skill
+from app.services.prompt_service import get_prompt, get_all_skills, get_skill, get_default_skill, match_skill
 from app.services.prompt_utils import PromptType
 from app.utils.logging import get_logger
 
@@ -23,7 +23,6 @@ class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
     intent_description: str
     reflection_count: int
-    search_needed: bool
     latest_query: str
     is_satisfactory: bool
     skill: str
@@ -38,7 +37,6 @@ class IntentClassification(TypedDict):
     describe_the_user_message_intent: str
     refined_query: str
     reasoning: str
-    skill: Annotated[str, "One of: qa, write_social_media_post, write_social_media_comment, email_draft, summary, fact_check"]
     key_entities: List[str]
 
 class ReflectionOutput(TypedDict):
@@ -249,7 +247,7 @@ def build_research_graph(
     # 2. Nodes
 
     async def intent_node(state: AgentState):
-        """Classifies the user's intent from the last message."""
+        """Classifies the user's intent and matches the best skill via embedding similarity."""
         messages = state["messages"]
         last_message = messages[-1].content
 
@@ -259,18 +257,7 @@ def build_research_graph(
                 logger.warning("Intent classification prompt not found — using defaults")
                 raise ValueError("Missing intent prompt")
 
-            # Build a skill reference so the LLM knows the valid skill values
-            skill_list = "\n".join(
-                f'  - "{key}": {cfg.description}'
-                for key, cfg in skills.items()
-            )
-            skill_guidance = (
-                f"\n\nYou MUST classify the `skill` field as one of these exact values:\n"
-                f"{skill_list}\n"
-                f'If the message does not clearly match a specific skill, use "{default_skill}".'
-            )
-
-            system_prompt = intent_prompt.system_prompt + skill_guidance
+            system_prompt = intent_prompt.system_prompt
             user_template = intent_prompt.user_prompt or "{input}"
 
             prompt = ChatPromptTemplate.from_messages([
@@ -285,23 +272,18 @@ def build_research_graph(
             )
         except Exception as e:
             logger.error(f"Intent classification failed: {e}", exc_info=True)
-            # Fallback: use skill_override if available, otherwise default
             result = {
                 "refined_query": str(last_message),
                 "describe_the_user_message_intent": "",
-                "skill": skill_override or default_skill,
                 "key_entities": [],
             }
 
-        # Use skill_override if provided (from slash commands), otherwise use classified skill
+        # Skill selection: slash command override > embedding similarity match
         if skill_override and skill_override in skills:
             skill = skill_override
             logger.info(f"Using skill override: '{skill}'")
         else:
-            raw_skill = result.get("skill", default_skill)
-            skill = raw_skill if raw_skill in skills else default_skill
-            if raw_skill != skill:
-                logger.warning(f"Unknown skill '{raw_skill}' from intent classification, falling back to '{default_skill}'")
+            skill = await match_skill(str(last_message))
 
         return {
             "latest_query": result["refined_query"],
@@ -311,14 +293,13 @@ def build_research_graph(
             # Reset per-turn state so previous turn's values don't carry over
             "is_satisfactory": False,
             "reflection_count": 0,
-            "search_needed": False,
         }
 
-    async def enrich_kg_node(state: AgentState):
-        """Resolves extracted entity names against the knowledge graph and builds context."""
+    async def _enrich_kg(state: AgentState) -> tuple:
+        """Resolve extracted entities against the knowledge graph. Returns (kg_context, entity_ids)."""
         entities = state.get("extracted_entities", [])
         if not entities or not db_session or not user_id:
-            return {"kg_context": "", "context_entity_ids": []}
+            return ("", [])
 
         try:
             kg_context, entity_ids = await resolve_entities_from_query(
@@ -328,10 +309,10 @@ def build_research_graph(
             )
             if kg_context:
                 logger.info(f"KG enrichment found context for entities: {entities} (IDs: {entity_ids})")
-            return {"kg_context": kg_context, "context_entity_ids": entity_ids}
+            return (kg_context, entity_ids)
         except Exception as e:
             logger.warning(f"KG enrichment failed (non-fatal): {e}")
-            return {"kg_context": "", "context_entity_ids": []}
+            return ("", [])
 
     async def _run_generate(state: AgentState, system_msg: str, run_name: str) -> dict:
         """Shared generation logic: injects intent + KG context and calls the LLM with tools."""
@@ -405,28 +386,42 @@ def build_research_graph(
 
         return {"messages": [response]}
 
-    def _make_skill_generate_node(skill_key: str):
-        """Factory: creates a generate node for a given skill key."""
-        skill_config = skills[skill_key]
+    async def generate_node(state: AgentState):
+        """Unified generation: enriches KG context, resolves skill prompt, calls LLM."""
+        # --- Phase 1: KG Enrichment (runs once per turn) ---
+        kg_context = state.get("kg_context", "")
+        context_entity_ids = state.get("context_entity_ids", [])
 
-        async def skill_generate_node(state: AgentState):
-            # First check if there's a prompt in the YAML prompt files (via prompt_type)
-            yaml_prompt = prompts.get(skill_config.prompt_type)
-            if yaml_prompt:
-                system_msg = yaml_prompt.system_prompt or ""
-                if yaml_prompt.user_prompt:
-                    system_msg += f"\n\n{yaml_prompt.user_prompt}"
-            elif skill_config.prompt_text:
-                # Use the inline prompt_text from skills.yaml
-                system_msg = skill_config.prompt_text
-            else:
-                logger.error(f"No prompt available for skill '{skill_key}' — returning error message")
-                return {"messages": [AIMessage(content=f"I'm sorry, the '{skill_key}' skill is not properly configured. Please contact support.")]}
-            return await _run_generate(state, system_msg, run_name=skill_config.prompt_type)
+        # Only run KG enrichment on the first pass (kg_context still empty and entities exist)
+        entities = state.get("extracted_entities", [])
+        if entities and not kg_context:
+            kg_context, context_entity_ids = await _enrich_kg(state)
 
-        skill_generate_node.__name__ = skill_config.node_name
-        skill_generate_node.__qualname__ = skill_config.node_name
-        return skill_generate_node
+        # --- Phase 2: Resolve skill prompt ---
+        skill_key = state.get("skill", default_skill)
+        skill_config = skills.get(skill_key, skills[default_skill])
+
+        yaml_prompt = prompts.get(skill_config.prompt_type)
+        if yaml_prompt:
+            system_msg = yaml_prompt.system_prompt or ""
+            if yaml_prompt.user_prompt:
+                system_msg += f"\n\n{yaml_prompt.user_prompt}"
+        elif skill_config.prompt_text:
+            system_msg = skill_config.prompt_text
+        else:
+            logger.error(f"No prompt available for skill '{skill_key}' — returning error message")
+            return {
+                "messages": [AIMessage(content=f"I'm sorry, the '{skill_key}' skill is not properly configured. Please contact support.")],
+                "kg_context": kg_context,
+                "context_entity_ids": context_entity_ids,
+            }
+
+        # --- Phase 3: Call LLM (pass enriched state so _run_generate sees KG context) ---
+        enriched_state = {**state, "kg_context": kg_context}
+        result = await _run_generate(enriched_state, system_msg, run_name=skill_config.prompt_type)
+        result["kg_context"] = kg_context
+        result["context_entity_ids"] = context_entity_ids
+        return result
 
     async def reflect_node(state: AgentState):
         """Critiques the answer and decides if search is needed."""
@@ -435,7 +430,7 @@ def build_research_graph(
 
         # If the last message was a tool call (not text), we skip reflection and go back to generate
         if hasattr(last_ai_msg, 'tool_calls') and last_ai_msg.tool_calls:
-             return {"search_needed": False, "reflection_count": state.get("reflection_count", 0)}
+             return {"reflection_count": state.get("reflection_count", 0)}
 
         try:
             # Extract only the latest exchange: last human question + last AI response.
@@ -466,8 +461,7 @@ def build_research_graph(
             if not last_ai_response:
                 logger.warning("reflect_node: no AI response found to evaluate — accepting as-is")
                 return {
-                    "search_needed": False,
-                    "reflection_count": state.get("reflection_count", 0) + 1,
+                            "reflection_count": state.get("reflection_count", 0) + 1,
                     "is_satisfactory": True,
                 }
 
@@ -482,8 +476,7 @@ def build_research_graph(
             if not reflect_prompt:
                 logger.warning("Reflection prompt not found — skipping reflection, accepting answer as-is")
                 return {
-                    "search_needed": False,
-                    "reflection_count": state.get("reflection_count", 0) + 1,
+                            "reflection_count": state.get("reflection_count", 0) + 1,
                     "is_satisfactory": True,
                 }
 
@@ -511,62 +504,31 @@ def build_research_graph(
             logger.error(f"Reflection node failed: {e}", exc_info=True)
             # On reflection failure, accept the current answer rather than crashing
             return {
-                "search_needed": False,
-                "reflection_count": state.get("reflection_count", 0) + 1,
+                    "reflection_count": state.get("reflection_count", 0) + 1,
                 "is_satisfactory": True,
             }
 
         return {
-            "search_needed": result["needs_search"],
-            "latest_query": result["search_query"],
             "reflection_count": state.get("reflection_count", 0) + 1,
             "is_satisfactory": result["is_satisfactory"],
             "messages": [HumanMessage(content=result["critique"])] if not result["is_satisfactory"] else []
         }
 
-    async def google_search_node(state: AgentState):
-        """Executes Google Search."""
-        query = state["latest_query"]
-        if not google_tool:
-            return {"messages": [AIMessage(content="Search tool not available.")]}
-
-        try:
-            res = await google_tool.ainvoke({"query": query})
-        except Exception:
-            # Fallback to sync if ainvoke isn't available
-            import asyncio
-            res = await asyncio.to_thread(google_tool.func, query) if hasattr(google_tool, 'func') else "Search failed."
-        return {"messages": [HumanMessage(content=f"SYSTEM NOTE: Google Search Results for '{query}':\n{res}")]}
-
     # 3. Graph Construction
     from langgraph.prebuilt import ToolNode
-
-    def route_by_skill(state: AgentState) -> str:
-        """Route to the appropriate generate node based on the classified skill."""
-        skill = state.get("skill", default_skill)
-        skill_cfg = skills.get(skill, skills[default_skill])
-        return skill_cfg.node_name
 
     graph = StateGraph(AgentState)
 
     graph.add_node("intent_node", intent_node)
-    graph.add_node("enrich_kg_node", enrich_kg_node)
+    graph.add_node("generate_node", generate_node)
     graph.add_node("reflect_node", reflect_node)
-    graph.add_node("google_search_node", google_search_node)
-
-    # Register a generate node for each skill in the registry
-    skill_node_names = []
-    for skill_key in skills:
-        node_name = skills[skill_key].node_name
-        graph.add_node(node_name, _make_skill_generate_node(skill_key))
-        skill_node_names.append(node_name)
 
     tools_node = ToolNode(tools, handle_tool_errors=True)
     graph.add_node("tools", tools_node)
 
+    # Edges
     graph.add_edge(START, "intent_node")
-    graph.add_edge("intent_node", "enrich_kg_node")
-    graph.add_conditional_edges("enrich_kg_node", route_by_skill)
+    graph.add_edge("intent_node", "generate_node")
 
     def route_after_generate(state: AgentState) -> str:
         """Route to tools if tool_calls present, otherwise reflect."""
@@ -575,25 +537,17 @@ def build_research_graph(
             return "tools"
         return "reflect_node"
 
-    # Each skill generate node routes the same way after generation
-    for node_name in skill_node_names:
-        graph.add_conditional_edges(node_name, route_after_generate)
-
-    # Tools loop back to the correct skill's generate node
-    graph.add_conditional_edges("tools", route_by_skill)
+    graph.add_conditional_edges("generate_node", route_after_generate)
+    graph.add_edge("tools", "generate_node")
 
     def route_after_reflect(state: AgentState) -> str:
-        """Route to google search, retry generate, or END."""
+        """Retry generate with critique or END."""
         if state["reflection_count"] > 3:
             return END
         if state.get("is_satisfactory"):
             return END
-        if state["search_needed"]:
-            return "google_search_node"
-        # Not satisfactory: retry via skill router
-        return route_by_skill(state)
+        return "generate_node"
 
     graph.add_conditional_edges("reflect_node", route_after_reflect)
-    graph.add_conditional_edges("google_search_node", route_by_skill)
 
     return graph.compile(checkpointer=checkpointer)

@@ -396,8 +396,11 @@ class ChatAgentService:
                         "user_id": str(user_id),
                         "thread_id": thread_id,
                         "scope_type": chat_session.scope_type,
-                        "scope_id": str(chat_session.scope_id) if chat_session.scope_id else None
+                        "scope_id": str(chat_session.scope_id) if chat_session.scope_id else None,
+                        "skill_override": skill_override,
                     }
+                    if skill_override:
+                        run_config["tags"] = [f"skill:{skill_override}"]
 
                 pending_ai_message = None
                 
@@ -411,7 +414,7 @@ class ChatAgentService:
                     logger.info(f"[Session {session_id}] Received chunk #{chunk_count}")
                     
                     # --- Status Feedback Logic ---
-                    current_intent = chunk.get("intent")
+                    current_intent = chunk.get("intent_description")
                     current_message_list = chunk.get("messages", [])
                     
                     # 1. Intent Classified
@@ -423,6 +426,16 @@ class ChatAgentService:
                             "content": f"analyzing request ({current_intent})"
                         }
                         last_intent = current_intent
+
+                    # Track classified skill in Langfuse trace
+                    classified_skill = chunk.get("skill")
+                    if classified_skill and lf_handler:
+                        run_config.setdefault("tags", [])
+                        skill_tag = f"skill:{classified_skill}"
+                        if skill_tag not in run_config["tags"]:
+                            run_config["tags"].append(skill_tag)
+                            run_config["metadata"]["classified_skill"] = classified_skill
+                            logger.info(f"[Session {session_id}] Skill classified: {classified_skill}")
  
                     # 2. Check for Reflection Outcome (Did we just reject a message?)
                     # If we had a pending message, and the new state has a critique (HumanMessage) 
