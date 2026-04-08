@@ -23,6 +23,7 @@ from app.services.document_service import DocumentService
 from app.services.entity_extraction_task_manager import get_entity_extraction_task_manager
 from app.services.dspy_entity_service import get_dspy_entity_service
 from app.services.dspy_entity_adapter import DspyEntityAdapter
+from app.services.kg_pipeline import process_document_kg_background
 from app.services.embedding_service import get_embedding_service
 from app.services.x_api_service import get_x_api_service
 from app.core.config import settings
@@ -334,6 +335,7 @@ async def _process_document_entities(
             logger.info(f"DSPy entity extraction completed for document {doc_id}: {result.get('entities_processed', 0)} entities processed")
 
             # Extract and store entity relationships
+            relationships = []
             if entities and len(entities) >= 2:
                 entity_names = [e['name'] for e in entities]
                 relationships = await dspy_entity_service.extract_relationships_from_entities(
@@ -348,6 +350,9 @@ async def _process_document_entities(
                 )
                 await session.commit()
                 logger.info(f"Stored {rel_count} entity relationships for document {doc_id}")
+
+            # KG pipeline runs as a separate background task — see kg_pipeline.py
+            # It no longer blocks entity extraction or content processing.
             
     except Exception as e:
         logger.error(f"Error in DSPy entity extraction for document {document_id}: {str(e)}")
@@ -488,15 +493,21 @@ async def _process_html_content_to_document(
             create_task(_process_document_content(
                 document.id, title, url, user_id, image_urls=bm_image_urls
             ))
-            
-            # Task 2: Entity Extraction (for filtering)
+
+            # Task 2: Entity Extraction (legacy entities for filtering)
             create_task(_process_document_entities(
                 document.id, user_id
             ))
-            
+
             # Task 3: Embedding Generation (for search)
             create_task(_process_document_embeddings(
                 document.id
+            ))
+
+            # Task 4: KG Pipeline (schema.org aligned knowledge graph)
+            # Runs independently — does its own entity/relationship extraction
+            create_task(process_document_kg_background(
+                document.id, user_id
             ))
             
     except Exception as e:

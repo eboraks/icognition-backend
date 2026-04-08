@@ -30,12 +30,15 @@ Return a valid JSON object with a list of entities.
 
 1.  **Focus on Main Entities:**
     - Extract only entities CENTRAL to understanding the content
-    - IGNORE: photographers, bylines, publication details, photo credits, dates
+    - IGNORE: photographers, photo credits, dates, publication mastheads
     - INCLUDE: Main people, organizations, locations, events, concepts, products, technologies
+    - INCLUDE article authors:
+      - Individual authors (e.g. "Jane Smith") → type: person
+      - Editorial boards, newsroom groups, collective bylines (e.g. "The Editorial Board", "WSJ Staff") → type: organization
 
 2.  **Entity Types:**
-    - person: Key individuals mentioned (not authors/photographers)
-    - organization: Companies, institutions, government bodies
+    - person: Key individuals mentioned, including individual article authors
+    - organization: Companies, institutions, government bodies, editorial boards, collective author groups
     - institution: Academic or governmental institutions
     - location: Important places
     - event: Specific events or happenings
@@ -77,12 +80,24 @@ and the original document text, identify meaningful directed relationships betwe
 
 ### Rules:
 1. Only use entity names from the provided list — do not invent new entities.
-2. Each relationship must be grounded in the document text.
-3. Use short snake_case labels (e.g. works_for, founded, authored, acquired, opposes, located_in,
-   collaborated_with, part_of, invested_in, regulated_by, responded_to).
-4. Extract up to 20 relationships. Prefer high-confidence, clearly-stated relationships.
-5. Avoid trivial or overly generic relationships (e.g. "mentions" should only be used when no
-   stronger relationship applies).
+2. **Factual accuracy is critical.** Each relationship must be EXPLICITLY stated or directly implied
+   in the document text. Do NOT infer, assume, or hallucinate relationships. If the text says
+   "Elon Musk made a deal with Samsung for chips", the relationship is "made_deal_with" — NOT "acquired".
+3. Use short, NEUTRAL snake_case labels. Avoid editorialized or sensational language.
+   - GOOD: advocates_military_action, seeks_to_undermine, competes_with, trades_with
+   - BAD: wants_to_bomb, goal_to_destroy, opposes_helping
+4. **Direction matters.** The from_entity is the SUBJECT performing the action; the to_entity is the OBJECT.
+   - "Pete Hegseth briefed President Trump" → from: Pete Hegseth, to: President Trump, type: briefed
+   - NOT the reverse.
+5. Use general, reusable relationship types that could apply across documents:
+   - GOOD: leads, member_of, headquartered_in, author_of, competes_with, allied_with, trades_with
+   - BAD: commented_on, mentioned, part_of (when meaning "citizen of" or "works for government of")
+6. If the article has an identifiable author or editorial board among the entities, create an
+   "author_of" relationship from the author entity to the main subject/topic entity.
+7. Do NOT create redundant bidirectional edges. If A trades_with B, do not also add B trades_with A.
+   Pick the more natural direction.
+8. Extract up to 20 relationships. Prefer high-confidence, clearly-stated relationships.
+   Skip weak or trivial connections — quality over quantity.
 """
 
     entity_names: str = dspy.InputField(

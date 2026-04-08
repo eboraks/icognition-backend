@@ -18,6 +18,14 @@ class WikidataEntity(BaseModel):
     url: Optional[str] = None
     aliases: List[str] = []
 
+class WikidataProperty(BaseModel):
+    """Data model for a Wikidata property"""
+    property_id: str  # e.g. "P69"
+    label: Optional[str] = None
+    description: Optional[str] = None
+    url: Optional[str] = None
+
+
 class WikidataService:
     """
     Service for interacting with Wikidata API.
@@ -73,6 +81,53 @@ class WikidataService:
                 
         except Exception as e:
             logger.error(f"Error searching Wikidata for '{query}': {e}")
+            return []
+
+    async def search_properties(self, query: str, limit: int = 5) -> List["WikidataProperty"]:
+        """
+        Search for properties on Wikidata by label.
+
+        Args:
+            query: Search string (e.g. "educated at", "employer")
+            limit: Maximum number of results
+
+        Returns:
+            List of WikidataProperty objects
+        """
+        if not query or not query.strip():
+            return []
+
+        params = {
+            "action": "wbsearchentities",
+            "format": "json",
+            "language": "en",
+            "search": query,
+            "type": "property",
+            "limit": limit,
+        }
+
+        headers = {"User-Agent": self.user_agent}
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(self.api_url, params=params, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+
+                results = []
+                for item in data.get("search", []):
+                    prop = WikidataProperty(
+                        property_id=item["id"],
+                        label=item.get("label"),
+                        description=item.get("description"),
+                        url=item.get("url") or f"https://www.wikidata.org/wiki/Property:{item['id']}",
+                    )
+                    results.append(prop)
+
+                return results
+
+        except Exception as e:
+            logger.error(f"Error searching Wikidata properties for '{query}': {e}")
             return []
 
     async def get_entity_details(self, wikidata_id: str) -> Optional[WikidataEntity]:

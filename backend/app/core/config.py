@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     # Google AI Configuration
     GOOGLE_API_KEY: Optional[str] = os.getenv("GOOGLE_API_KEY")
     GCP_AI_KEY: Optional[str] = os.getenv("GCP_AI_KEY")
-    GEMINI_FLASH_MODEL: str = os.getenv("GEMINI_FLASH_MODEL", "models/gemini-2.0-flash")
+    GEMINI_FLASH_MODEL: str = os.getenv("GEMINI_FLASH_MODEL", "models/gemini-2.5-flash")
     GEMINI_FLASH_LITE_MODEL: str = os.getenv("GEMINI_FLASH_LITE", "models/gemini-2.5-flash-lite")
     GEMINI_EMBEDDING_MODEL: str = os.getenv("GEMINI_EMBEDDING_MODEL", "models/text-embedding-004")
     
@@ -85,6 +85,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-here")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
     DISABLE_AUTH: bool = os.getenv("DISABLE_AUTH", "false").lower() == "true"
+    KG_EXTRACTION_ENABLED: bool = os.getenv("KG_EXTRACTION_ENABLED", "false").lower() == "true"
     
     # Firebase Configuration
     FIREBASE_SERVICE_ACCOUNT_PATH: Optional[str] = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH")

@@ -14,6 +14,8 @@ export function transformToCytoscapeElements(
       id: String(e.id),
       name: e.name,
       type: e.type,
+      canonicalType: e.canonical_type || null,
+      wikidataId: e.wikidata_id || null,
       nodeKind: 'entity',
       color: getNodeColor(e.type),
     },

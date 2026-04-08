@@ -10,9 +10,21 @@
       <div class="flex align-items-center gap-2 mb-3">
         <i class="pi pi-circle-fill" :style="{ color: getNodeColor(entityData.type) }" />
         <span class="font-semibold text-color">{{ entityData.name }}</span>
-        <Tag :value="entityData.type" severity="secondary" class="text-xs" />
+        <Tag :value="entityData.canonical_type || entityData.type" severity="secondary" class="text-xs" />
       </div>
       <p v-if="entityData.description" class="text-color-secondary text-sm mb-3">{{ entityData.description }}</p>
+
+      <!-- Wikidata link -->
+      <a
+        v-if="entityData.wikidata_id"
+        :href="`https://www.wikidata.org/wiki/${entityData.wikidata_id}`"
+        target="_blank"
+        rel="noopener"
+        class="text-sm text-primary mb-3 block"
+      >
+        <i class="pi pi-external-link text-xs mr-1" />
+        Wikidata ({{ entityData.wikidata_id }})
+      </a>
 
       <!-- Source Documents -->
       <div v-if="entityData.documents && entityData.documents.length > 0" class="mb-3">
@@ -39,12 +51,26 @@
         </div>
       </div>
 
-      <div v-if="relationshipData.source_document" class="mb-3">
-        <p class="section-label">Source Document</p>
-        <p class="text-sm text-color">
-          <i class="pi pi-file text-xs mr-1" />
-          {{ relationshipData.source_document.title }}
-        </p>
+      <!-- Property URI -->
+      <a
+        v-if="relationshipData.property_uri"
+        :href="relationshipData.property_uri"
+        target="_blank"
+        rel="noopener"
+        class="text-xs text-color-secondary mb-3 block"
+      >
+        <i class="pi pi-link text-xs mr-1" />
+        {{ relationshipData.property_uri }}
+      </a>
+
+      <div v-if="relationshipData.source_documents && relationshipData.source_documents.length > 0" class="mb-3">
+        <p class="section-label">Source Documents</p>
+        <ul class="list-none p-0 m-0 flex flex-column gap-1">
+          <li v-for="doc in relationshipData.source_documents" :key="doc.id" class="text-sm text-color">
+            <i class="pi pi-file text-xs mr-1" />
+            {{ doc.title }}
+          </li>
+        </ul>
       </div>
     </template>
 

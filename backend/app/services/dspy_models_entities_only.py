@@ -46,7 +46,7 @@ class EntityRelationship(BaseModel):
     relationship_type: str = Field(
         description=(
             "Short snake_case label for the relationship. "
-            "Examples: works_for, founded, authored, mentions, opposes, located_in, part_of, acquired, "
+            "Examples: works_for, founded, author_of, mentions, opposes, located_in, part_of, acquired, "
             "collaborated_with, invested_in, regulated_by, responded_to."
         )
     )

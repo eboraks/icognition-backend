@@ -1,6 +1,10 @@
 # iCognition data
 data/
 
+# Log files
+*.log
+backend/logs/
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

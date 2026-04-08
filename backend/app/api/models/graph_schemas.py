@@ -1,5 +1,6 @@
 """
 Pydantic schemas for graph exploration API endpoints.
+Uses KG tables (kg_node, kg_edge, kg_node_document).
 """
 
 from pydantic import BaseModel, Field
@@ -19,7 +20,9 @@ class EntitySummary(BaseModel):
     """Lightweight entity for graph rendering (Cytoscape node data)."""
     id: int
     name: str
-    type: str
+    type: str  # raw_type from extraction (person, organization, location, etc.)
+    canonical_type: Optional[str] = None  # schema.org class label (Person, Country, City)
+    wikidata_id: Optional[str] = None
 
 
 class DocumentSummary(BaseModel):
@@ -32,6 +35,9 @@ class EntityRead(BaseModel):
     id: int
     name: str
     type: str
+    canonical_type: Optional[str] = None
+    schema_type_uri: Optional[str] = None
+    wikidata_id: Optional[str] = None
     description: Optional[str] = None
     document_count: int = 0
     documents: list[DocumentSummary] = []
@@ -44,7 +50,8 @@ class RelationshipSummary(BaseModel):
     id: int
     from_entity_id: int
     to_entity_id: int
-    relationship_type: str
+    relationship_type: str  # property_label (canonical or raw)
+    property_uri: Optional[str] = None
 
 
 class RelationshipRead(BaseModel):
@@ -53,6 +60,8 @@ class RelationshipRead(BaseModel):
     from_entity: EntitySummary
     to_entity: EntitySummary
     relationship_type: str
+    property_uri: Optional[str] = None
+    raw_relationship_type: Optional[str] = None
     source_documents: list[DocumentSummary] = []
 
 

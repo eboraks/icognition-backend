@@ -95,6 +95,7 @@ dependencies = [
     "langsmith",
     "langchain-google-community>=3.0.4",
     "langfuse>=3.13.0",
+    "rdflib>=7.0.0",
     "openinference-instrumentation-dspy>=0.1.0",
 
     "opentelemetry-sdk>=1.22.0",

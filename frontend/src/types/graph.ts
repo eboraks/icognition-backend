@@ -1,9 +1,12 @@
 // Graph exploration TypeScript types — mirrors backend graph_schemas.py
+// Backend reads from KG tables (kg_node, kg_edge, kg_node_document)
 
 export interface EntitySummary {
   id: number
   name: string
-  type: string
+  type: string // raw_type from extraction (person, organization, location, etc.)
+  canonical_type?: string | null // schema.org class label (Person, Country, City)
+  wikidata_id?: string | null
 }
 
 export interface DocumentSummary {
@@ -15,6 +18,9 @@ export interface EntityRead {
   id: number
   name: string
   type: string
+  canonical_type?: string | null
+  schema_type_uri?: string | null
+  wikidata_id?: string | null
   description?: string | null
   document_count: number
   documents: DocumentSummary[]
@@ -24,7 +30,8 @@ export interface RelationshipSummary {
   id: number
   from_entity_id: number
   to_entity_id: number
-  relationship_type: string
+  relationship_type: string // property_label (canonical or raw)
+  property_uri?: string | null
 }
 
 export interface RelationshipRead {
@@ -32,6 +39,8 @@ export interface RelationshipRead {
   from_entity: EntitySummary
   to_entity: EntitySummary
   relationship_type: string
+  property_uri?: string | null
+  raw_relationship_type?: string | null
   source_documents: DocumentSummary[]
 }
 
