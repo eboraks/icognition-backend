@@ -15,7 +15,7 @@ from sqlmodel import select as sqlmodel_select
 from pgvector.sqlalchemy import Vector
 
 from app.services.gemini_service import GeminiService, GeminiModel, get_gemini_service
-from app.models import Document, User, Embedding, Entity
+from app.models import Document, User, Embedding
 from app.utils.logging import get_logger
 from app.utils.text_utils import extract_text_from_html
 from app.core.config import settings
@@ -492,55 +492,34 @@ class EmbeddingService:
     async def generate_and_store_entity_embeddings(
         self,
         session: AsyncSession,
-        entity: Entity,
+        entity,
         user_id: str,
         force_regenerate: bool = False
     ) -> bool:
         """
-        Generate embeddings for an entity and store them in the Embedding table.
-        Creates embeddings for entity name and description.
-        
+        Generate embeddings for a KG node and store on its vector column.
+        Also stores in the Embedding table for backward compatibility.
+
         Args:
             session: Database session
-            entity: Entity to embed
+            entity: KGNode instance
             user_id: User ID
-            force_regenerate: If True, delete existing embeddings first
-            
+            force_regenerate: If True, regenerate even if vector exists
+
         Returns:
             True if successful, False otherwise
         """
         try:
-            # Delete existing embeddings if regenerating
-            if force_regenerate:
-                stmt = select(Embedding).where(
-                    Embedding.source_type == "entity",
-                    Embedding.source_id == entity.id,
-                    Embedding.user_id == user_id
-                )
-                result = await session.execute(stmt)
-                existing_embeddings = result.scalars().all()
-                for emb in existing_embeddings:
-                    await session.delete(emb)
-                await session.flush()
-            
-            # Check if embeddings already exist
-            if not force_regenerate:
-                stmt = select(Embedding).where(
-                    Embedding.source_type == "entity",
-                    Embedding.source_id == entity.id,
-                    Embedding.user_id == user_id
-                )
-                result = await session.execute(stmt)
-                if result.scalar_one_or_none():
-                    logger.info(f"Entity {entity.id} already has embeddings")
-                    return True
-            
-            embeddings_to_create = []
-            
-            # Combine name and description for embedding
+            # KGNode stores vector directly — check if already populated
+            if not force_regenerate and entity.vector is not None:
+                logger.info(f"KG node {entity.id} already has embedding")
+                return True
+
+            # Combine label and description for embedding
             text_parts = []
-            if entity.name:
-                text_parts.append(entity.name.strip())
+            name = getattr(entity, 'label', None) or getattr(entity, 'name', '')
+            if name:
+                text_parts.append(name.strip())
             if entity.description:
                 text_parts.append(entity.description.strip())
             
@@ -551,27 +530,14 @@ class EmbeddingService:
                     dimensions=self.embedding_dimensions
                 )
                 if embedding_result.success:
-                    embeddings_to_create.append(Embedding(
-                        user_id=user_id,
-                        source_type="entity",
-                        source_id=entity.id,
-                        field="name_description",
-                        text=entity_text,
-                        vector=embedding_result.embedding,
-                        version=1
-                    ))
-                    logger.info(f"Generated embedding for entity {entity.id}")
-            
-            # Store embedding
-            if embeddings_to_create:
-                for emb in embeddings_to_create:
-                    session.add(emb)
-                await session.flush()
-                logger.info(f"Created {len(embeddings_to_create)} embeddings for entity {entity.id}")
-                return True
-            else:
-                logger.warning(f"No embeddings created for entity {entity.id} (no name or description)")
-                return False
+                    # Store on the KGNode vector column directly
+                    entity.vector = embedding_result.embedding
+                    await session.flush()
+                    logger.info(f"Generated embedding for KG node {entity.id}")
+                    return True
+
+            logger.warning(f"No embedding created for KG node {entity.id} (no name or description)")
+            return False
                 
         except Exception as e:
             logger.error(f"Error generating embeddings for entity {entity.id}: {str(e)}")

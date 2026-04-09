@@ -91,11 +91,6 @@ class KGNode(SQLModel, table=True):
     # Embedding for semantic dedup (encodes "name - description")
     vector: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(1536)))
 
-    # Legacy mapping for migration
-    legacy_entity_id: Optional[int] = Field(
-        default=None, foreign_key="entities.id", index=True
-    )
-
     user_id: Optional[str] = Field(
         default=None, foreign_key="users.id", index=True, nullable=True
     )

@@ -10,7 +10,8 @@ import logging
 import json
 import re
 
-from app.models import Entity, Document, EntityDocument, EntityRelationship
+from app.models import Document
+from app.models_kg import KGNode, KGEdge, KGNodeDocument
 from app.services.document_service import DocumentService
 from app.services.prompt_service import get_prompt
 from app.services.gemini_service import get_gemini_service, GeminiModel, GeminiConfig
@@ -320,28 +321,27 @@ class KnowledgeService:
 
             doc_ids = [d.id for d in documents]
 
-            # 2. Get all entities linked to these documents
-            # This handles both local and global entities correctly
-            entity_join_stmt = (
-                select(Entity)
-                .join(EntityDocument, Entity.id == EntityDocument.entity_id)
-                .where(EntityDocument.document_id.in_(doc_ids))
+            # 2. Get all KG nodes linked to these documents
+            node_join_stmt = (
+                select(KGNode)
+                .join(KGNodeDocument, KGNode.id == KGNodeDocument.node_id)
+                .where(KGNodeDocument.document_id.in_(doc_ids))
                 .distinct()
             )
-            
-            entity_result = await self.session.execute(entity_join_stmt)
-            entities = entity_result.scalars().all()
+
+            node_result = await self.session.execute(node_join_stmt)
+            entities = node_result.scalars().all()
             entities_dict = {e.id: e for e in entities}
             entity_ids = list(entities_dict.keys())
 
-            # 3. Get entity-document relationships for these specific entities and documents
+            # 3. Get node-document relationships for these specific nodes and documents
             if entity_ids:
                 ed_stmt = (
-                    select(EntityDocument.entity_id, EntityDocument.document_id)
+                    select(KGNodeDocument.node_id, KGNodeDocument.document_id)
                     .where(
                         and_(
-                            EntityDocument.entity_id.in_(entity_ids),
-                            EntityDocument.document_id.in_(doc_ids)
+                            KGNodeDocument.node_id.in_(entity_ids),
+                            KGNodeDocument.document_id.in_(doc_ids)
                         )
                     )
                     .distinct()
@@ -397,7 +397,7 @@ class KnowledgeService:
                     if entity_id not in entities_dict:
                         continue
                     entity = entities_dict[entity_id]
-                    entity_type = entity.type or "Other"
+                    entity_type = entity.raw_type or "Other"
                     type_info = type_mapping.get(
                         entity_type,
                         {
@@ -421,17 +421,17 @@ class KnowledgeService:
                     
                     # Use entity name as key to ensure uniqueness within each group
                     # If same name appears, keep the first one (or you could merge them)
-                    entity_key = f"{entity.name.lower()}-{entity.id}"
+                    entity_key = f"{entity.label.lower()}-{entity.id}"
 
                     if entity_key not in group_entry["entities"]:
                         group_entry["entities"][entity_key] = {
                             "key": f"entity-{entity.id}",
-                            "label": entity.name,
+                            "label": entity.label,
                             "data": {
                                 "type": "entity",
                                 "id": entity.id,
-                                "name": entity.name,
-                                "entity_type": entity.type,
+                                "name": entity.label,
+                                "entity_type": entity.raw_type,
                             }
                         }
 
@@ -491,7 +491,7 @@ class KnowledgeService:
             if entity_id:
                 # Get entity information - we don't filter by user_id on Entity anymore
                 # instead we ensure it's linked to a document the user owns (below)
-                entity_stmt = select(Entity).where(Entity.id == entity_id)
+                entity_stmt = select(KGNode).where(KGNode.id == entity_id)
                 entity_result = await self.session.execute(entity_stmt)
                 entity = entity_result.scalar_one_or_none()
 
@@ -502,7 +502,7 @@ class KnowledgeService:
                     raise ValueError(entity_not_found_msg)
 
                 # Get documents related to this entity
-                ed_stmt = select(EntityDocument).where(EntityDocument.entity_id == entity_id)
+                ed_stmt = select(KGNodeDocument).where(KGNodeDocument.node_id == entity_id)
                 ed_result = await self.session.execute(ed_stmt)
                 entity_docs = ed_result.scalars().all()
 
@@ -515,11 +515,11 @@ class KnowledgeService:
 
                 # Generate contextual message
                 doc_count = len(documents)
-                message = f"You've selected '{entity.name}'. I found {doc_count} document{'s' if doc_count != 1 else ''} related to {'him' if entity.type == 'Person' else 'it'} in your library. What would you like to explore next?"
+                message = f"You've selected '{entity.label}'. I found {doc_count} document{'s' if doc_count != 1 else ''} related to {'him' if entity.raw_type == 'Person' else 'it'} in your library. What would you like to explore next?"
 
                 # Generate suggested actions
                 actions = [
-                    {"id": "learn_more", "label": f"Learn more about {entity.name}"},
+                    {"id": "learn_more", "label": f"Learn more about {entity.label}"},
                     {"id": "latest_news", "label": f"Show me latest news"},
                     {"id": "summarize", "label": "Summarize documents"},
                 ]
@@ -532,8 +532,8 @@ class KnowledgeService:
                     "actions": actions,
                     "entity": {
                         "id": entity.id,
-                        "name": entity.name,
-                        "type": entity.type,
+                        "name": entity.label,
+                        "type": entity.raw_type,
                         "description": entity_info,
                     },
                     "document_count": doc_count,
@@ -724,7 +724,7 @@ class KnowledgeService:
             
             if action_id == "learn_more" and entity_id:
                 # Get entity information
-                entity_stmt = select(Entity).where(Entity.id == entity_id)
+                entity_stmt = select(KGNode).where(KGNode.id == entity_id)
                 entity_result = await self.session.execute(entity_stmt)
                 entity = entity_result.scalar_one_or_none()
 
@@ -732,7 +732,7 @@ class KnowledgeService:
                     raise ValueError(f"Entity {entity_id} not found")
 
                 # Get related documents
-                ed_stmt = select(EntityDocument).where(EntityDocument.entity_id == entity_id)
+                ed_stmt = select(KGNodeDocument).where(KGNodeDocument.node_id == entity_id)
                 ed_result = await self.session.execute(ed_stmt)
                 entity_docs = ed_result.scalars().all()
 
@@ -749,7 +749,7 @@ class KnowledgeService:
                     description = entity.description or entity.wikidata_description
                     response_parts.append(description)
                 else:
-                    response_parts.append(f"{entity.name} is a {entity.type or 'entity'} in your knowledge graph.")
+                    response_parts.append(f"{entity.label} is a {entity.raw_type or 'entity'} in your knowledge graph.")
 
                 if documents:
                     doc_titles = [doc.title or "Untitled" for doc in documents]
@@ -782,7 +782,7 @@ class KnowledgeService:
                     }
                 elif entity_id:
                     # Summarize all documents related to the entity
-                    ed_stmt = select(EntityDocument).where(EntityDocument.entity_id == entity_id)
+                    ed_stmt = select(KGNodeDocument).where(KGNodeDocument.node_id == entity_id)
                     ed_result = await self.session.execute(ed_stmt)
                     entity_docs = ed_result.scalars().all()
 
@@ -826,13 +826,13 @@ class KnowledgeService:
 
             elif action_id == "entities" and document_id:
                 # Get entities related to this document
-                ed_stmt = select(EntityDocument).where(EntityDocument.document_id == document_id)
+                ed_stmt = select(KGNodeDocument).where(KGNodeDocument.document_id == document_id)
                 ed_result = await self.session.execute(ed_stmt)
                 entity_docs = ed_result.scalars().all()
 
                 entity_ids = [ed.entity_id for ed in entity_docs]
-                entity_stmt = select(Entity).where(
-                    and_(Entity.id.in_(entity_ids), Entity.user_id == user_id)
+                entity_stmt = select(KGNode).where(
+                    and_(KGNode.id.in_(entity_ids), KGNode.user_id == user_id)
                 )
                 entity_result = await self.session.execute(entity_stmt)
                 entities = entity_result.scalars().all()
@@ -856,55 +856,55 @@ class KnowledgeService:
         Return an entity and all its directed relationships (as from or to).
         """
         entity_result = await self.session.execute(
-            select(Entity).where(Entity.id == entity_id)
+            select(KGNode).where(KGNode.id == entity_id)
         )
         entity = entity_result.scalar_one_or_none()
         if not entity:
             raise ValueError(f"Entity {entity_id} not found")
 
-        rel_result = await self.session.execute(
-            select(EntityRelationship)
+        edge_result = await self.session.execute(
+            select(KGEdge)
             .where(
                 or_(
-                    EntityRelationship.from_entity_id == entity_id,
-                    EntityRelationship.to_entity_id == entity_id,
+                    KGEdge.from_node_id == entity_id,
+                    KGEdge.to_node_id == entity_id,
                 )
             )
             .limit(50)
         )
-        relationships = rel_result.scalars().all()
+        relationships = edge_result.scalars().all()
 
-        # Fetch all referenced entities in one query
+        # Fetch all referenced nodes in one query
         related_ids: set[int] = set()
         for r in relationships:
-            related_ids.add(r.from_entity_id)
-            related_ids.add(r.to_entity_id)
+            related_ids.add(r.from_node_id)
+            related_ids.add(r.to_node_id)
         related_ids.discard(entity_id)
 
-        entity_map: Dict[int, Entity] = {entity.id: entity}
+        node_map: Dict[int, KGNode] = {entity.id: entity}
         if related_ids:
             extra_result = await self.session.execute(
-                select(Entity).where(Entity.id.in_(related_ids))
+                select(KGNode).where(KGNode.id.in_(related_ids))
             )
             for e in extra_result.scalars().all():
-                entity_map[e.id] = e
+                node_map[e.id] = e
 
         formatted = []
         for r in relationships:
-            from_e = entity_map.get(r.from_entity_id)
-            to_e = entity_map.get(r.to_entity_id)
+            from_e = node_map.get(r.from_node_id)
+            to_e = node_map.get(r.to_node_id)
             if from_e and to_e:
                 formatted.append({
-                    "from_entity": {"id": from_e.id, "name": from_e.name, "type": from_e.type},
-                    "relationship_type": r.relationship_type,
-                    "to_entity": {"id": to_e.id, "name": to_e.name, "type": to_e.type},
+                    "from_entity": {"id": from_e.id, "name": from_e.label, "type": from_e.raw_type},
+                    "relationship_type": r.property_label,
+                    "to_entity": {"id": to_e.id, "name": to_e.label, "type": to_e.raw_type},
                 })
 
         return {
             "entity": {
                 "id": entity.id,
-                "name": entity.name,
-                "type": entity.type,
+                "name": entity.label,
+                "type": entity.raw_type,
                 "description": entity.description,
             },
             "relationships": formatted,

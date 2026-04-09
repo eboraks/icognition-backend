@@ -14,7 +14,8 @@ import uuid
 from app.core.config import settings
 from app.core.user_context import get_active_user_context, UserContext
 from app.db.database import get_session, async_session
-from app.models import Document, Entity, EntityDocument, Embedding
+from app.models import Document, Embedding
+from app.models_kg import KGNode, KGNodeDocument
 from app.utils.logging import get_logger
 from app.api.routes.bookmarks import _process_document_entities, _process_document_embeddings, _process_document_content, _process_document_entities_batch, _process_document_embeddings_batch
 from app.core.config import settings
@@ -83,8 +84,8 @@ async def get_document_processing_stats(
         total_documents = total_docs_result.scalar() or 0
         
         # Get documents with entities
-        docs_with_entities_query = select(func.count(func.distinct(EntityDocument.document_id))).join(
-            Document, EntityDocument.document_id == Document.id
+        docs_with_entities_query = select(func.count(func.distinct(KGNodeDocument.document_id))).join(
+            Document, KGNodeDocument.document_id == Document.id
         ).where(Document.user_id == user_context.user.id)
         docs_with_entities_result = await session.execute(docs_with_entities_query)
         documents_with_entities = docs_with_entities_result.scalar() or 0
@@ -123,7 +124,7 @@ async def get_document_processing_stats(
                 Document.content != "",
                 func.length(Document.content) >= 10,
                 ~Document.id.in_(
-                    select(EntityDocument.document_id).distinct()
+                    select(KGNodeDocument.document_id).distinct()
                 ),
                 ~Document.id.in_(
                     select(Embedding.source_id).where(
@@ -186,7 +187,7 @@ async def get_documents_missing_processing(
         if missing_entities:
             missing_conditions.append(
                 ~Document.id.in_(
-                    select(EntityDocument.document_id).distinct()
+                    select(KGNodeDocument.document_id).distinct()
                 )
             )
         
@@ -226,8 +227,8 @@ async def get_documents_missing_processing(
             
             if missing_entities:
                 entity_check = await session.execute(
-                    select(func.count(EntityDocument.document_id)).where(
-                        EntityDocument.document_id == doc.id
+                    select(func.count(KGNodeDocument.document_id)).where(
+                        KGNodeDocument.document_id == doc.id
                     )
                 )
                 has_entities = entity_check.scalar() > 0
@@ -377,7 +378,7 @@ async def trigger_document_processing(
             if request.process_entities:
                 missing_conditions.append(
                     ~Document.id.in_(
-                        select(EntityDocument.document_id).distinct()
+                        select(KGNodeDocument.document_id).distinct()
                     )
                 )
             
@@ -474,7 +475,7 @@ async def process_missing_entities(
             Document.content != "",
             func.length(Document.content) >= 10,
             ~Document.id.in_(
-                select(EntityDocument.document_id).distinct()
+                select(KGNodeDocument.document_id).distinct()
             )
         ]
         
@@ -610,9 +611,9 @@ async def generate_all_embeddings(
         doc_result = await session.execute(doc_query)
         documents = doc_result.scalars().all()
         
-        # Get all entities for the user
-        entity_query = select(Entity).where(
-            Entity.user_id == user_context.user.id
+        # Get all KG nodes for the user
+        entity_query = select(KGNode).where(
+            KGNode.user_id == user_context.user.id
         )
         entity_result = await session.execute(entity_query)
         entities = entity_result.scalars().all()
@@ -770,7 +771,7 @@ async def _process_all_entity_embeddings(
                 for entity_id in entity_ids:
                     try:
                         result = await session.execute(
-                            select(Entity).where(Entity.id == entity_id)
+                            select(KGNode).where(KGNode.id == entity_id)
                         )
                         entity = result.scalar_one_or_none()
                         

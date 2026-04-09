@@ -20,9 +20,6 @@ from app.services.content_analysis_service import get_content_analysis_service
 from app.services.dspy_content_service import get_dspy_content_service
 from app.models import Document, Bookmark
 from app.services.document_service import DocumentService
-from app.services.entity_extraction_task_manager import get_entity_extraction_task_manager
-from app.services.dspy_entity_service import get_dspy_entity_service
-from app.services.dspy_entity_adapter import DspyEntityAdapter
 from app.services.kg_pipeline import process_document_kg_background
 from app.services.embedding_service import get_embedding_service
 from app.services.x_api_service import get_x_api_service
@@ -264,102 +261,12 @@ async def _process_document_entities(
     user_id: str
 ):
     """
-    Background task to extract entities from document content using DSPy
-    
-    Args:
-        document_id: ID of the document to process
-        user_id: User ID for entity extraction
+    Background task for entity extraction.
+    Delegates to the KG pipeline which handles extraction, alignment, and persistence.
+    This function is kept as a thin wrapper because it's imported by documents.py and system.py.
     """
-    try:
-        logger.info(f"Starting DSPy entity extraction for document {document_id}")
-        
-        # Get database session via async with context manager for proper cleanup
-        async with async_session() as session:
-            # Convert document_id to int if it's a string (Document.id is an integer)
-            doc_id = int(document_id) if isinstance(document_id, str) else document_id
-            
-            # Get the document
-            result = await session.execute(
-                select(Document).where(Document.id == doc_id)
-            )
-            document = result.scalar_one_or_none()
-            
-            if not document:
-                logger.warning(f"Document {doc_id} not found for entity extraction")
-                return
-            
-            # Check if content is available
-            content_unavailable = False
-            
-            # Check if content is empty
-            if not document.content or not document.content.strip():
-                content_unavailable = True
-            
-            # Check content_type
-            if document.content_type in ["not_available", "fetch_failed"]:
-                content_unavailable = True
-            
-            # Check content_availability metadata
-            if document.document_metadata and document.document_metadata.get('content_availability'):
-                content_status = document.document_metadata['content_availability']
-                if not content_status.get('content_available', True):
-                    content_unavailable = True
-                elif content_status.get('content_status') == 'unavailable':
-                    content_unavailable = True
-            
-            if content_unavailable:
-                logger.info(f"Skipping entity extraction for document {doc_id} - content is NOT_AVAILABLE, empty, or unavailable")
-                return
-            
-            # Get DSPy entity service
-            dspy_entity_service = get_dspy_entity_service()
-            
-            # Extract entities using DSPy
-            entities = await dspy_entity_service.extract_entities_from_content(
-                content=document.content,
-                document_id=doc_id,
-                session=session
-            )
-            
-            # Process and store entities using adapter
-            adapter = DspyEntityAdapter(session)
-            result = await adapter.process_document_entities(
-                firebase_uid=user_id,
-                document_id=doc_id,
-                entities=entities
-            )
-
-            # Commit entity changes before relationship extraction
-            await session.commit()
-
-            logger.info(f"DSPy entity extraction completed for document {doc_id}: {result.get('entities_processed', 0)} entities processed")
-
-            # Extract and store entity relationships
-            relationships = []
-            if entities and len(entities) >= 2:
-                entity_names = [e['name'] for e in entities]
-                relationships = await dspy_entity_service.extract_relationships_from_entities(
-                    entity_names=entity_names,
-                    content=document.content,
-                    document_id=doc_id,
-                )
-                rel_count = await adapter.process_document_relationships(
-                    document_id=doc_id,
-                    relationships=relationships,
-                    entity_names=entity_names,
-                )
-                await session.commit()
-                logger.info(f"Stored {rel_count} entity relationships for document {doc_id}")
-
-            # KG pipeline runs as a separate background task — see kg_pipeline.py
-            # It no longer blocks entity extraction or content processing.
-            
-    except Exception as e:
-        logger.error(f"Error in DSPy entity extraction for document {document_id}: {str(e)}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        
-        # Don't re-raise to avoid breaking the background task
+    doc_id = int(document_id) if isinstance(document_id, str) else document_id
+    await process_document_kg_background(doc_id, user_id)
 
 
 async def _process_html_content_to_document(
@@ -494,7 +401,7 @@ async def _process_html_content_to_document(
                 document.id, title, url, user_id, image_urls=bm_image_urls
             ))
 
-            # Task 2: Entity Extraction (legacy entities for filtering)
+            # Task 2: KG Pipeline (entity extraction + schema.org alignment)
             create_task(_process_document_entities(
                 document.id, user_id
             ))
@@ -502,12 +409,6 @@ async def _process_html_content_to_document(
             # Task 3: Embedding Generation (for search)
             create_task(_process_document_embeddings(
                 document.id
-            ))
-
-            # Task 4: KG Pipeline (schema.org aligned knowledge graph)
-            # Runs independently — does its own entity/relationship extraction
-            create_task(process_document_kg_background(
-                document.id, user_id
             ))
             
     except Exception as e:
@@ -673,61 +574,18 @@ async def _process_document_entities_batch(
     user_id: str
 ):
     """
-    Background task to extract entities from multiple documents
-    
-    Args:
-        document_ids: List of document IDs to process
-        user_id: User ID for entity extraction
+    Background task to extract entities from multiple documents.
+    Delegates to KG pipeline for each document.
     """
-    try:
-        logger.info(f"Starting batch entity extraction for {len(document_ids)} documents")
-        
-        # Get database session via async with context manager for proper cleanup
-        async with async_session() as session:
-            # Get entity extraction task manager
-            task_manager = get_entity_extraction_task_manager()
-            
-            total_entities_processed = 0
-            successful_docs = 0
-            
-            for document_id in document_ids:
-                try:
-                    # Convert document_id to int if it's a string (Document.id is an integer)
-                    doc_id = int(document_id) if isinstance(document_id, str) else document_id
-                    
-                    # Get the document
-                    result = await session.execute(
-                        select(Document).where(Document.id == doc_id)
-                    )
-                    document = result.scalar_one_or_none()
-                    
-                    if not document or not document.content:
-                        logger.warning(f"Document {doc_id} not found or has no content for entity extraction")
-                        continue
-                    
-                    # Extract entities from document content
-                    result = await task_manager.extract_entities_async(
-                        firebase_uid=user_id,
-                        document_id=document.id,  # Use document.id directly (already a UUID)
-                        content=document.content
-                    )
-                    
-                    entities_processed = result.get('entities_processed', 0)
-                    total_entities_processed += entities_processed
-                    successful_docs += 1
-                    
-                    logger.info(f"Entity extraction completed for document {doc_id}: {entities_processed} entities processed")
-                    
-                except Exception as e:
-                    logger.error(f"Error processing document {document_id} in batch: {str(e)}")
-                    continue
-            
-            logger.info(f"Batch entity extraction completed: {successful_docs}/{len(document_ids)} documents processed, {total_entities_processed} total entities")
-            
-    except Exception as e:
-        logger.error(f"Error in batch entity extraction: {str(e)}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
+    logger.info(f"Starting batch KG extraction for {len(document_ids)} documents")
+    for document_id in document_ids:
+        try:
+            doc_id = int(document_id) if isinstance(document_id, str) else document_id
+            await process_document_kg_background(doc_id, user_id)
+        except Exception as e:
+            logger.error(f"KG batch: error processing document {document_id}: {e}")
+            continue
+    logger.info(f"Batch KG extraction completed for {len(document_ids)} documents")
 
 
 async def _process_document_embeddings_batch(

@@ -6,7 +6,7 @@ from sqlalchemy import select, or_
 from langchain_core.tools import Tool, tool
 from langchain_google_community import GoogleSearchAPIWrapper
 from app.core.config import settings
-from app.models import Entity, EntityDocument, EntityRelationship
+from app.models_kg import KGNode, KGEdge, KGNodeDocument
 from app.services.document_service import DocumentService
 from app.utils.logging import get_logger
 
@@ -303,70 +303,66 @@ def create_knowledge_graph_tool(user_id: str, db_session: AsyncSession):
             A formatted description of matching entities and their relationships.
         """
         try:
-            # 1. Find entities matching the query (name contains query, case-insensitive)
-            entity_result = await db_session.execute(
-                select(Entity)
-                .join(EntityDocument, EntityDocument.entity_id == Entity.id)
+            # 1. Find KG nodes matching the query
+            node_result = await db_session.execute(
+                select(KGNode)
                 .where(
-                    or_(
-                        Entity.user_id == user_id,
-                        Entity.user_id.is_(None),  # global entities
-                    ),
-                    Entity.name.ilike(f"%{query}%"),
+                    KGNode.user_id == user_id,
+                    KGNode.label.ilike(f"%{query}%"),
                 )
                 .limit(10)
             )
-            entities = entity_result.scalars().all()
+            nodes = node_result.scalars().all()
 
-            if not entities:
+            if not nodes:
                 return f"No entities found matching '{query}' in your knowledge graph."
 
-            entity_ids = [e.id for e in entities]
-            entity_map = {e.id: e for e in entities}
+            node_ids = [n.id for n in nodes]
+            node_map = {n.id: n for n in nodes}
 
-            # 2. Find relationships involving these entities
-            rel_result = await db_session.execute(
-                select(EntityRelationship)
+            # 2. Find edges involving these nodes
+            edge_result = await db_session.execute(
+                select(KGEdge)
                 .where(
                     or_(
-                        EntityRelationship.from_entity_id.in_(entity_ids),
-                        EntityRelationship.to_entity_id.in_(entity_ids),
+                        KGEdge.from_node_id.in_(node_ids),
+                        KGEdge.to_node_id.in_(node_ids),
                     )
                 )
                 .limit(50)
             )
-            relationships = rel_result.scalars().all()
+            edges = edge_result.scalars().all()
 
-            # 3. Collect all referenced entity IDs not yet in entity_map
+            # 3. Collect all referenced node IDs not yet in node_map
             all_ids = set()
-            for r in relationships:
-                all_ids.add(r.from_entity_id)
-                all_ids.add(r.to_entity_id)
-            missing_ids = all_ids - set(entity_map.keys())
+            for e in edges:
+                all_ids.add(e.from_node_id)
+                all_ids.add(e.to_node_id)
+            missing_ids = all_ids - set(node_map.keys())
 
             if missing_ids:
                 extra_result = await db_session.execute(
-                    select(Entity).where(Entity.id.in_(missing_ids))
+                    select(KGNode).where(KGNode.id.in_(missing_ids))
                 )
-                for e in extra_result.scalars().all():
-                    entity_map[e.id] = e
+                for n in extra_result.scalars().all():
+                    node_map[n.id] = n
 
             # 4. Format output
             parts = [f"Knowledge graph results for '{query}':\n"]
 
             parts.append("**Entities:**")
-            for e in entities:
-                desc = f" — {e.description}" if e.description else ""
-                wiki = f" ({e.wikidata_url})" if e.wikidata_url else ""
-                parts.append(f"  • [{e.type}] {e.name}{desc}{wiki}")
+            for n in nodes:
+                desc = f" — {n.description}" if n.description else ""
+                wiki = f" (wikidata:{n.wikidata_id})" if n.wikidata_id else ""
+                parts.append(f"  • [{n.raw_type}] {n.label}{desc}{wiki}")
 
-            if relationships:
+            if edges:
                 parts.append("\n**Relationships:**")
-                for r in relationships:
-                    from_e = entity_map.get(r.from_entity_id)
-                    to_e = entity_map.get(r.to_entity_id)
-                    if from_e and to_e:
-                        parts.append(f"  • {from_e.name} --[{r.relationship_type}]--> {to_e.name}")
+                for e in edges:
+                    from_n = node_map.get(e.from_node_id)
+                    to_n = node_map.get(e.to_node_id)
+                    if from_n and to_n:
+                        parts.append(f"  • {from_n.label} --[{e.property_label}]--> {to_n.label}")
             else:
                 parts.append("\nNo relationships found for these entities.")
 

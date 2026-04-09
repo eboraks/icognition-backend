@@ -67,13 +67,13 @@ async def resolve_entities_from_query(
 
     for name in entity_names[:5]:  # cap at 5 to avoid slow queries
         sql = text("""
-            SELECT DISTINCT ON (e.name, e.type)
-                   e.id, e.name, e.type, e.description,
-                   similarity(e.name, :q) AS sim
-            FROM entities e
-            WHERE similarity(e.name, :q) >= :threshold
-              AND (e.user_id = :user_id OR e.user_id IS NULL)
-            ORDER BY e.name, e.type, sim DESC
+            SELECT DISTINCT ON (n.label, n.raw_type)
+                   n.id, n.label AS name, n.raw_type AS type, n.description,
+                   similarity(n.label, :q) AS sim
+            FROM kg_node n
+            WHERE similarity(n.label, :q) >= :threshold
+              AND n.user_id = :user_id
+            ORDER BY n.label, n.raw_type, sim DESC
             LIMIT 5
         """)
         result = await db_session.execute(sql, {
@@ -96,28 +96,28 @@ async def resolve_entities_from_query(
     if not all_entity_ids:
         return ("", [])
 
-    # Fetch relationships between/involving matched entities
+    # Fetch edges between/involving matched nodes
     rels_sql = text("""
-        SELECT r.relationship_type,
-               e1.name AS from_name, e1.type AS from_type,
-               e2.name AS to_name, e2.type AS to_type
-        FROM entity_relationships r
-        JOIN entities e1 ON e1.id = r.from_entity_id
-        JOIN entities e2 ON e2.id = r.to_entity_id
-        WHERE r.from_entity_id = ANY(:ids) OR r.to_entity_id = ANY(:ids)
+        SELECT e.property_label AS relationship_type,
+               n1.label AS from_name, n1.raw_type AS from_type,
+               n2.label AS to_name, n2.raw_type AS to_type
+        FROM kg_edge e
+        JOIN kg_node n1 ON n1.id = e.from_node_id
+        JOIN kg_node n2 ON n2.id = e.to_node_id
+        WHERE e.from_node_id = ANY(:ids) OR e.to_node_id = ANY(:ids)
         LIMIT 30
     """)
     rels_result = await db_session.execute(rels_sql, {"ids": all_entity_ids})
     relationships = rels_result.mappings().all()
 
-    # Fetch documents linked to these entities
+    # Fetch documents linked to these nodes
     docs_sql = text("""
-        SELECT DISTINCT e.name AS entity_name, d.title AS doc_title
-        FROM entity_documents ed
-        JOIN entities e ON e.id = ed.entity_id
-        JOIN document d ON d.id = ed.document_id
-        WHERE ed.entity_id = ANY(:ids)
-        ORDER BY e.name, d.title
+        SELECT DISTINCT n.label AS entity_name, d.title AS doc_title
+        FROM kg_node_document nd
+        JOIN kg_node n ON n.id = nd.node_id
+        JOIN document d ON d.id = nd.document_id
+        WHERE nd.node_id = ANY(:ids)
+        ORDER BY n.label, d.title
         LIMIT 20
     """)
     docs_result = await db_session.execute(docs_sql, {"ids": all_entity_ids})

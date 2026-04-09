@@ -226,6 +226,8 @@ export function useCytoscape(options: UseCytoscapeOptions) {
       if (evt.target === cy.value) {
         cy.value!.edges().removeClass('highlighted')
         cy.value!.elements().removeClass('dimmed')
+        // Restore any hidden elements from radial focus
+        cy.value!.elements().style('display', 'element')
         lastFocusedId = null
         options.onEntitySelect?.('')
       }
@@ -291,13 +293,14 @@ export function useCytoscape(options: UseCytoscapeOptions) {
 
     const maxVisibleDepth = 3
 
-    // Dim far-away nodes, restore close ones
+    // Hide far-away nodes, show close ones
     cy.value.batch(() => {
       cy.value!.nodes().forEach((n) => {
         const dist = distMap.get(n.id()) ?? 999
         if (dist > maxVisibleDepth) {
-          n.addClass('dimmed')
+          n.style('display', 'none')
         } else {
+          n.style('display', 'element')
           n.removeClass('dimmed')
         }
       })
@@ -305,8 +308,9 @@ export function useCytoscape(options: UseCytoscapeOptions) {
         const sDist = distMap.get(e.source().id()) ?? 999
         const tDist = distMap.get(e.target().id()) ?? 999
         if (sDist > maxVisibleDepth || tDist > maxVisibleDepth) {
-          e.addClass('dimmed')
+          e.style('display', 'none')
         } else {
+          e.style('display', 'element')
           e.removeClass('dimmed')
         }
       })
@@ -497,26 +501,37 @@ export function useCytoscape(options: UseCytoscapeOptions) {
     cy.value.batch(() => {
       cy.value!.nodes().forEach((n: any) => {
         if (visibleIds.has(n.id())) {
+          n.style('display', 'element')
           n.removeClass('dimmed')
         } else {
-          n.addClass('dimmed')
+          n.style('display', 'none')
         }
       })
       cy.value!.edges().forEach((e: any) => {
         const srcVisible = visibleIds.has(e.source().id())
         const tgtVisible = visibleIds.has(e.target().id())
         if (srcVisible && tgtVisible) {
+          e.style('display', 'element')
           e.removeClass('dimmed')
         } else {
-          e.addClass('dimmed')
+          e.style('display', 'none')
         }
       })
     })
+
+    // Re-layout visible nodes to use the full canvas
+    runLayoutWithFocus({ ...coseBilkentDefaults })
   }
 
   function clearChatContextFilter() {
     if (!cy.value) return
-    cy.value.elements().removeClass('dimmed')
+    // Restore all hidden elements
+    cy.value.batch(() => {
+      cy.value!.elements().style('display', 'element')
+      cy.value!.elements().removeClass('dimmed')
+    })
+    // Re-layout to show full graph
+    runLayoutWithFocus({ ...coseBilkentDefaults })
   }
 
   return {

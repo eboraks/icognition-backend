@@ -10,7 +10,7 @@ import logging
 import html
 from datetime import datetime, timezone
 
-from app.models import Document, User, ContentExtraction, PageType, Entity, EntityDocument, EntityRelationship
+from app.models import Document, User, ContentExtraction, PageType
 from app.services.base_service import UserIsolatedService
 from app.services.web_fetcher import WebPageFetcher, fetch_web_page
 from app.services.html_content_service import HtmlContentService
@@ -601,58 +601,37 @@ class DocumentService(UserIsolatedService[Document]):
 
         doc_int_id = document.id
 
-        # 1. Delete relationship-document links for this document, then orphaned relationships
-        from sqlalchemy import delete as sql_delete
-        from app.models import RelationshipDocument
-        await self.session.execute(
-            sql_delete(RelationshipDocument)
-            .where(RelationshipDocument.document_id == doc_int_id)
-        )
+        # 1. Delete KG edges sourced from this document
         from sqlalchemy import text as sa_text
-        await self.session.execute(sa_text("""
-            DELETE FROM entity_relationships
-            WHERE id NOT IN (SELECT relationship_id FROM relationship_documents)
-        """))
+        await self.session.execute(sa_text(
+            "DELETE FROM kg_edge WHERE source_document_id = :doc_id"
+        ), {"doc_id": doc_int_id})
 
-        # 2. Find entities linked ONLY to this document (orphans after removal)
-        entity_ids_for_doc = select(EntityDocument.entity_id).where(
-            EntityDocument.document_id == doc_int_id
-        )
-        # Entities that also appear in other documents should be kept
-        entities_in_other_docs = (
-            select(EntityDocument.entity_id)
-            .where(
-                EntityDocument.document_id != doc_int_id,
-                EntityDocument.entity_id.in_(entity_ids_for_doc),
-            )
-        )
-        orphan_entity_ids_result = await self.session.execute(
-            select(EntityDocument.entity_id)
-            .where(
-                EntityDocument.document_id == doc_int_id,
-                EntityDocument.entity_id.notin_(entities_in_other_docs),
-            )
-        )
-        orphan_entity_ids = [row[0] for row in orphan_entity_ids_result.all()]
+        # 2. Find KG nodes linked ONLY to this document (orphans after removal)
+        orphan_result = await self.session.execute(sa_text("""
+            SELECT nd.node_id FROM kg_node_document nd
+            WHERE nd.document_id = :doc_id
+              AND nd.node_id NOT IN (
+                  SELECT nd2.node_id FROM kg_node_document nd2
+                  WHERE nd2.document_id != :doc_id
+              )
+        """), {"doc_id": doc_int_id})
+        orphan_node_ids = [row[0] for row in orphan_result.all()]
 
-        # 3. Delete entity_documents links for this document
-        await self.session.execute(
-            sql_delete(EntityDocument).where(EntityDocument.document_id == doc_int_id)
-        )
+        # 3. Delete node-document links for this document
+        await self.session.execute(sa_text(
+            "DELETE FROM kg_node_document WHERE document_id = :doc_id"
+        ), {"doc_id": doc_int_id})
 
-        # 4. Delete orphaned entities and their remaining relationships
-        if orphan_entity_ids:
-            # Delete any relationships where orphan entities are endpoints
-            await self.session.execute(
-                sql_delete(EntityRelationship).where(
-                    (EntityRelationship.from_entity_id.in_(orphan_entity_ids))
-                    | (EntityRelationship.to_entity_id.in_(orphan_entity_ids))
-                )
-            )
-            await self.session.execute(
-                sql_delete(Entity).where(Entity.id.in_(orphan_entity_ids))
-            )
-            logger.info(f"Cleaned up {len(orphan_entity_ids)} orphaned entities for document {document_id}")
+        # 4. Delete orphaned nodes and their remaining edges
+        if orphan_node_ids:
+            await self.session.execute(sa_text(
+                "DELETE FROM kg_edge WHERE from_node_id = ANY(:ids) OR to_node_id = ANY(:ids)"
+            ), {"ids": orphan_node_ids})
+            await self.session.execute(sa_text(
+                "DELETE FROM kg_node WHERE id = ANY(:ids)"
+            ), {"ids": orphan_node_ids})
+            logger.info(f"Cleaned up {len(orphan_node_ids)} orphaned KG nodes for document {document_id}")
 
         # 5. Delete the document itself
         await self.session.delete(document)
@@ -1075,31 +1054,29 @@ class DocumentService(UserIsolatedService[Document]):
         if not user:
             return []
         
-        # Query entities with their document relationships
-        # Get all entity-document mappings first
+        # Query KG nodes with their document relationships
+        from sqlalchemy import text as sa_text
+        from app.models_kg import KGNode, KGNodeDocument
+
         query = (
             select(
-                Entity.id,
-                Entity.name,
-                Entity.type,
-                EntityDocument.document_id
+                KGNode.id,
+                KGNode.label,
+                KGNode.raw_type,
+                KGNodeDocument.document_id
             )
-            .join(EntityDocument, Entity.id == EntityDocument.entity_id)
-            .join(Document, EntityDocument.document_id == Document.id)  # Join with Document to check ownership
+            .join(KGNodeDocument, KGNode.id == KGNodeDocument.node_id)
+            .join(Document, KGNodeDocument.document_id == Document.id)
         )
-        
+
         if not settings.DISABLE_AUTH:
-            # No need to get User object again, we have the ID from existing context check or param
-            # But to be safe and consistent with existing code:
             user = await UserService.get_user_by_firebase_uid(self.session, user_id)
             if not user:
                 return []
-                
-            # Filter by documents owned by the user
             query = query.where(Document.user_id == user.id)
-            
-        query = query.order_by(Entity.type, Entity.name, Entity.id)
-        
+
+        query = query.order_by(KGNode.raw_type, KGNode.label, KGNode.id)
+
         result = await self.session.execute(query)
         entity_doc_mappings = result.all()
         

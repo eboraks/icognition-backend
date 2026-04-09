@@ -81,34 +81,6 @@ class TreeNode(BaseModel):
 
 
 
-class Document_Entity_Link(SQLModel, table=True):
-    """
-    Represents a link between a document and an entity.
-    """
-    __table_args__ = {'extend_existing': True}
-
-    document_id: Optional[int] = Field(
-        default=None, foreign_key="document.id", primary_key=True
-    )
-    entity_id: Optional[int] = Field(
-        default=None, foreign_key="entities.id", primary_key=True
-    )
-
-
-class Entity_User_Link(SQLModel, table=True):
-    """
-    Represents a link between a document and an entity.
-    """
-
-    entity_id: Optional[int] = Field(
-        default=None, foreign_key="entities.id", primary_key=True
-    )
-    user_id: Optional[str] = Field(
-        default=None, foreign_key="users.id", primary_key=True
-    )
-
-
-
 class Document(SQLModel, table=True):
     """
     Consolidated Document model with AI analysis capabilities and user isolation.
@@ -555,15 +527,6 @@ class Content_Type(SQLModel, table=True):
     follow_up_questions: List[str] = Field(default=[], sa_column=Column(JSON))
 
 
-class Entity_Type(SQLModel, table=True):
-    id: int = Field(default=None, primary_key=True)
-    name: str = Field(nullable=False)
-    description: str = Field(nullable=False)
-    follow_up_questions: List[str] = Field(default=[], sa_column=Column(JSON))
-    
-
-
-
 class EventName(Enum):
     """Enum for event names used in event listeners"""
     ERROR = "error"
@@ -813,87 +776,6 @@ class Bookmark(SQLModel, table=True):
     # Status
     is_processed: bool = Field(default=False)
     processing_status: Optional[str] = Field(max_length=50, default="pending")
-
-
-# New Entity model (from app.db.models)
-class Entity(SQLModel, table=True):
-    """Entity model for extracted entities from documents"""
-    
-    __tablename__ = "entities"
-    
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str = Field(index=True, max_length=255)
-    type: str = Field(index=True, max_length=50)  # Person, Product, Company, Location, Event, Technology, Topic
-    description: Optional[str] = Field(default=None, sa_column=Column(Text))
-    wikidata_id: Optional[str] = Field(default=None, index=True, max_length=50)
-    wikidata_label: Optional[str] = Field(default=None, max_length=255)
-    wikidata_description: Optional[str] = Field(default=None, sa_column=Column(Text))
-    wikidata_url: Optional[str] = Field(default=None, max_length=500)
-    aliases: Optional[List[str]] = Field(default=None, sa_column=Column(ARRAY(Text)))
-    # vector removed - embeddings now stored in centralized Embedding table
-    
-    # user_id is now optional for global shared entities
-    user_id: Optional[str] = Field(default=None, foreign_key="users.id", index=True, nullable=True)
-    
-    created_at: Optional[datetime] = Field(
-        default_factory=datetime.now,   
-        sa_column=Column(DateTime(timezone=True), server_default=func.now())
-    )
-    updated_at: Optional[datetime] = Field(
-        default_factory=datetime.utcnow,
-        sa_column=Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    )
-
-
-class EntityDocument(SQLModel, table=True):
-    """Many-to-many relationship between entities and documents"""
-    
-    __tablename__ = "entity_documents"
-    
-    entity_id: int = Field(foreign_key="entities.id", primary_key=True)
-    document_id: int = Field(foreign_key="document.id", primary_key=True)  # Changed to reference document table
-    relevance: float = Field(default=0.0)
-    created_at: Optional[datetime] = Field(
-        default_factory=datetime.utcnow,
-        sa_column=Column(DateTime(timezone=True), server_default=func.now())
-    )
-
-
-class EntityRelationship(SQLModel, table=True):
-    """Directed relationship between two entities. Documents that source this
-    relationship are tracked via the RelationshipDocument junction table."""
-
-    __tablename__ = "entity_relationships"
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    from_entity_id: int = Field(foreign_key="entities.id", index=True)
-    to_entity_id: int = Field(foreign_key="entities.id", index=True)
-    relationship_type: str = Field(max_length=100, index=True)
-    created_at: Optional[datetime] = Field(
-        default_factory=datetime.utcnow,
-        sa_column=Column(DateTime(timezone=True), server_default=func.now())
-    )
-
-    __table_args__ = (
-        Index(
-            "ix_entity_rel_unique",
-            "from_entity_id", "to_entity_id", "relationship_type",
-            unique=True
-        ),
-    )
-
-
-class RelationshipDocument(SQLModel, table=True):
-    """Many-to-many: which documents evidence a given relationship."""
-
-    __tablename__ = "relationship_documents"
-
-    relationship_id: int = Field(foreign_key="entity_relationships.id", primary_key=True)
-    document_id: int = Field(foreign_key="document.id", primary_key=True)
-    created_at: Optional[datetime] = Field(
-        default_factory=datetime.utcnow,
-        sa_column=Column(DateTime(timezone=True), server_default=func.now())
-    )
 
 
 class ChatSession(SQLModel, table=True):

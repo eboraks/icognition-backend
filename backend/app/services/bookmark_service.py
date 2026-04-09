@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 import logging
 
 from app.services.user_service import UserService
-from app.models import Bookmark, User, Document, ChatSession, ChatMessage, EntityDocument, EntityRelationship, RelationshipDocument
+from app.models import Bookmark, User, Document, ChatSession, ChatMessage
 from app.services.base_service import UserIsolatedService, DataIsolationValidator
 from app.utils.logging import get_logger
 
@@ -205,20 +205,15 @@ class BookmarkService(UserIsolatedService[Bookmark]):
                         )
                         logger.info(f"Deleted {len(session_ids)} chat sessions for document {document_id}")
                     
-                    # B. Delete EntityDocument links
-                    await session.execute(
-                        delete(EntityDocument).where(EntityDocument.document_id == document_id)
-                    )
+                    # B. Delete KG edges sourced from this document
+                    await session.execute(text(
+                        "DELETE FROM kg_edge WHERE source_document_id = :doc_id"
+                    ), {"doc_id": document_id})
 
-                    # C. Delete relationship-document links for this document, then orphaned relationships
-                    await session.execute(
-                        delete(RelationshipDocument).where(RelationshipDocument.document_id == document_id)
-                    )
-                    # Clean up relationships with no remaining document links
-                    await session.execute(text("""
-                        DELETE FROM entity_relationships
-                        WHERE id NOT IN (SELECT relationship_id FROM relationship_documents)
-                    """))
+                    # C. Delete KG node-document links for this document
+                    await session.execute(text(
+                        "DELETE FROM kg_node_document WHERE document_id = :doc_id"
+                    ), {"doc_id": document_id})
 
                     # D. Delete the Document itself
                     await session.execute(
