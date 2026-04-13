@@ -11,7 +11,10 @@ from app.api.models.graph_schemas import (
     SearchResponse, EntityRead, NeighborhoodResponse,
     RelationshipRead, RelationshipSummary, DocumentSummary,
     EntitySummary, SubgraphRequest, DocumentRead,
+    ThemeSummary, ThemeListResponse, ReassignRequest,
+    ThemeUpdateRequest, ReclusterResponse,
 )
+from app.services.theme_service import ThemeService
 import logging
 
 logger = logging.getLogger(__name__)
@@ -131,6 +134,8 @@ async def handle_action(
 @router.get("/graph/discovery", response_model=NeighborhoodResponse)
 async def graph_discovery(
     source: Optional[str] = Query(None, description="Filter by document source domain"),
+    theme: Optional[int] = Query(None, description="Filter by theme ID"),
+    research: Optional[int] = Query(None, description="Filter by research session ID"),
     limit: int = Query(30, ge=1, le=50),
     user_context: UserContext = Depends(get_authenticated_user_context),
     session: AsyncSession = Depends(get_session),
@@ -138,8 +143,23 @@ async def graph_discovery(
     """Return popular + recent entities for the discovery hub landing page."""
     svc = GraphService(session)
     return await svc.get_discovery_graph(
-        user_id=user_context.user.id, source=source, limit=limit
+        user_id=user_context.user.id,
+        source=source,
+        theme_id=theme,
+        research_session_id=research,
+        limit=limit,
     )
+
+
+@router.get("/research-sessions")
+async def list_research_sessions(
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """List all research sessions for the authenticated user."""
+    svc = GraphService(session)
+    sessions = await svc.get_research_sessions(user_context.user.id)
+    return {"research_sessions": sessions}
 
 
 @router.get("/graph/sources")
@@ -284,4 +304,78 @@ async def graph_get_document_subgraph(
     """Fetch full subgraph for a document."""
     svc = GraphService(session)
     return await svc.get_document_subgraph(document_id)
+
+
+# ── Theme endpoints ──────────────────────────────────
+
+@router.get("/themes", response_model=ThemeListResponse)
+async def list_themes(
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """List all active themes for the authenticated user."""
+    svc = ThemeService(session)
+    themes = await svc.get_themes(user_context.user.id)
+    return {"themes": themes}
+
+
+@router.get("/themes/{theme_id}/documents", response_model=list[DocumentSummary])
+async def get_theme_documents(
+    theme_id: int,
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Get documents belonging to a theme."""
+    svc = ThemeService(session)
+    return await svc.get_theme_documents(theme_id, user_context.user.id)
+
+
+@router.post("/themes/{theme_id}/reassign")
+async def reassign_document_theme(
+    theme_id: int,
+    request: ReassignRequest,
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Move a document from this theme to another."""
+    svc = ThemeService(session)
+    success = await svc.reassign_document(
+        document_id=request.document_id,
+        from_theme_id=theme_id,
+        to_theme_id=request.to_theme_id,
+        user_id=user_context.user.id,
+    )
+    if not success:
+        raise HTTPException(status_code=400, detail="Reassignment failed")
+    return {"ok": True}
+
+
+@router.post("/themes/recluster", response_model=ReclusterResponse)
+async def recluster_themes(
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Trigger full theme re-clustering for the authenticated user."""
+    svc = ThemeService(session)
+    return await svc.recluster_themes(user_context.user.id)
+
+
+@router.put("/themes/{theme_id}")
+async def update_theme(
+    theme_id: int,
+    request: ThemeUpdateRequest,
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Rename or recolor a theme."""
+    svc = ThemeService(session)
+    success = await svc.update_theme(
+        theme_id=theme_id,
+        user_id=user_context.user.id,
+        label=request.label,
+        color=request.color,
+    )
+    if not success:
+        raise HTTPException(status_code=404, detail="Theme not found")
+    return {"ok": True}
 

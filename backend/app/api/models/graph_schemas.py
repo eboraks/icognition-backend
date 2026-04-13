@@ -128,3 +128,34 @@ class DocumentRead(BaseModel):
 class SubgraphRequest(BaseModel):
     entity_ids: list[int] = Field(..., max_length=50)
     include_relationships: bool = True
+
+
+# ── Themes ───────────────────────────────────────
+
+class ThemeSummary(BaseModel):
+    """Theme summary for sidebar display."""
+    id: int
+    label: str
+    description: Optional[str] = None
+    doc_count: int = 0
+    color: Optional[str] = None
+
+
+class ThemeListResponse(BaseModel):
+    themes: list[ThemeSummary]
+
+
+class ReassignRequest(BaseModel):
+    document_id: int
+    to_theme_id: int
+
+
+class ThemeUpdateRequest(BaseModel):
+    label: Optional[str] = None
+    color: Optional[str] = None
+
+
+class ReclusterResponse(BaseModel):
+    themes_created: int
+    themes_updated: int
+    documents_assigned: int

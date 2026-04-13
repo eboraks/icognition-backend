@@ -378,6 +378,20 @@ export function useCytoscape(options: UseCytoscapeOptions) {
   function zoomIn() { zoomBy(1.3) }
   function zoomOut() { zoomBy(1 / 1.3) }
 
+  /**
+   * Zoom and pan to center on a specific entity, fitting it and its
+   * direct neighbors within the viewport.
+   */
+  function zoomToEntity(entityId: string) {
+    if (!cy.value) return
+    const node = cy.value.getElementById(entityId)
+    if (node.length === 0) return
+    const neighborhood = node.closedNeighborhood()
+    cy.value.animate({
+      fit: { eles: neighborhood, padding: 80 },
+    }, { duration: 400 })
+  }
+
   function resetView() {
     cy.value?.fit(undefined, 50)
   }
@@ -541,6 +555,7 @@ export function useCytoscape(options: UseCytoscapeOptions) {
     focusNodeRadial,
     zoomIn,
     zoomOut,
+    zoomToEntity,
     resetView,
     runLayout,
     clearGraph,

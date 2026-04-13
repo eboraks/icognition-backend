@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     # Google Search Configuration
     GOOGLE_SEARCH_API: Optional[str] = os.getenv("GOOGLE_SEARCH_API")
     GOOGLE_CSE_ID: Optional[str] = os.getenv("GOOGLE_CSE_ID")
+
+    # Tavily Search (research agent)
+    TAVILY_API_KEY: Optional[str] = os.getenv("TAVILY_API_KEY")
     
     # Google Cloud Storage Configuration
     GCS_BUCKET_NAME: Optional[str] = os.getenv("GCS_BUCKET_NAME")

@@ -78,3 +78,19 @@ export interface NeighborhoodResponse {
   entity_document_links: EntityDocumentLink[]
   center_entity_id?: number | null
 }
+
+export interface ThemeSummary {
+  id: number
+  label: string
+  description?: string | null
+  doc_count: number
+  color?: string | null
+}
+
+export interface ResearchSessionSummary {
+  id: number
+  brief: string
+  status: string
+  created_at: string
+  doc_count: number
+}

@@ -3,7 +3,7 @@ import { getAuth } from 'firebase/auth';
 import type {
   SearchResponse, EntityRead, NeighborhoodResponse,
   RelationshipRead, RelationshipSummary, DocumentSummary,
-  DocumentRead,
+  DocumentRead, ThemeSummary, ResearchSessionSummary,
 } from '@/types/graph';
 
 const apiBaseUrl: string = import.meta.env.VITE_APP_API_BASE_URL || '';
@@ -117,13 +117,41 @@ export const knowledgeService = {
 
   getDiscoveryGraph(params?: {
     source?: string;
+    theme?: number;
+    research?: number;
     limit?: number;
   }): Promise<{ data: NeighborhoodResponse }> {
     return apiClient.get('/api/v1/knowledge/graph/discovery', { params });
   },
 
+  getResearchSessions(): Promise<{ data: { research_sessions: ResearchSessionSummary[] } }> {
+    return apiClient.get('/api/v1/knowledge/research-sessions');
+  },
+
   getDocumentSources(): Promise<{ data: { sources: { site_name: string; count: number }[] } }> {
     return apiClient.get('/api/v1/knowledge/graph/sources');
+  },
+
+  // ── Theme endpoints ────────────────────────────────
+
+  getThemes(): Promise<{ data: { themes: ThemeSummary[] } }> {
+    return apiClient.get('/api/v1/knowledge/themes');
+  },
+
+  getThemeDocuments(themeId: number): Promise<{ data: DocumentSummary[] }> {
+    return apiClient.get(`/api/v1/knowledge/themes/${themeId}/documents`);
+  },
+
+  reassignDocument(fromThemeId: number, body: { document_id: number; to_theme_id: number }): Promise<{ data: { ok: boolean } }> {
+    return apiClient.post(`/api/v1/knowledge/themes/${fromThemeId}/reassign`, body);
+  },
+
+  reclusterThemes(): Promise<{ data: { themes_created: number; themes_updated: number; documents_assigned: number } }> {
+    return apiClient.post('/api/v1/knowledge/themes/recluster');
+  },
+
+  updateTheme(themeId: number, body: { label?: string; color?: string }): Promise<{ data: { ok: boolean } }> {
+    return apiClient.put(`/api/v1/knowledge/themes/${themeId}`, body);
   },
 
   // ── Graph exploration endpoints ──────────────────

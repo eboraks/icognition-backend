@@ -1,9 +1,19 @@
 <template>
   <div class="discovery-hub">
     <!-- Left Sidebar: Smart Folders -->
-    <div class="hub-sidebar" :class="{ collapsed: !sidebarVisible }">
+    <div
+      class="hub-sidebar"
+      :class="{ collapsed: !sidebarVisible }"
+      :style="sidebarVisible ? { width: sidebarWidth + 'px', minWidth: sidebarWidth + 'px' } : {}"
+    >
       <SmartFoldersSidebar
         @bookmark-select="onBookmarkSelect"
+      />
+      <!-- Resize handle -->
+      <div
+        v-if="sidebarVisible"
+        class="sidebar-resize-handle"
+        @mousedown.prevent="startSidebarResize"
       />
     </div>
 
@@ -47,6 +57,33 @@ const graphCanvas = ref<InstanceType<typeof HubGraphCanvas> | null>(null)
 const chatPanel = ref<InstanceType<typeof HubChatPanel> | null>(null)
 const sidebarVisible = ref(true)
 
+// Resizable left sidebar
+const sidebarWidth = ref(250)
+const SIDEBAR_MIN_WIDTH = 200
+const SIDEBAR_MAX_WIDTH = 500
+
+function startSidebarResize(e: MouseEvent) {
+  const startX = e.clientX
+  const startWidth = sidebarWidth.value
+
+  function onMouseMove(ev: MouseEvent) {
+    const delta = ev.clientX - startX
+    sidebarWidth.value = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, startWidth + delta))
+  }
+
+  function onMouseUp() {
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseup', onMouseUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', onMouseUp)
+}
+
 // Handle search bar enter → send to chat
 async function onSearchChat(query: string) {
   await chatPanel.value?.sendChatMessage(query)
@@ -62,6 +99,8 @@ onMounted(async () => {
   await Promise.all([
     hubStore.loadDiscoveryGraph(),
     hubStore.loadSources(),
+    hubStore.loadThemes(),
+    hubStore.loadResearchSessions(),
     chatStore.loadSessions(),
   ])
 
@@ -97,14 +136,34 @@ onMounted(async () => {
   width: 250px;
   min-width: 250px;
   flex-shrink: 0;
-  transition: width 0.3s ease, min-width 0.3s ease, opacity 0.3s ease;
   overflow: hidden;
+  position: relative;
+}
+
+/* Sidebar resize handle */
+.sidebar-resize-handle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  z-index: 10;
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle:active {
+  background: var(--p-primary-color);
+  opacity: 0.4;
 }
 
 .hub-sidebar.collapsed {
-  width: 0;
-  min-width: 0;
+  width: 0 !important;
+  min-width: 0 !important;
   opacity: 0;
+  transition: width 0.3s ease, min-width 0.3s ease, opacity 0.3s ease;
 }
 
 /* Sidebar toggle button */

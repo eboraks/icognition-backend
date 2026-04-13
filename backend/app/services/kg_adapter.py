@@ -97,6 +97,7 @@ class KGAdapter:
 
         # Collect edges that need creation (dedup check), then batch-embed
         pending_edges: list[dict] = []
+        seen_edge_keys: set[tuple] = set()
         for rel in aligned_rels:
             from_node = name_to_node.get(rel["from_entity"])
             to_node = name_to_node.get(rel["to_entity"])
@@ -108,7 +109,13 @@ class KGAdapter:
             property_uri = alignment.uri if (alignment and alignment.matched) else None
             property_label = alignment.label if (alignment and alignment.matched) else raw_type.replace("_", " ")
 
-            # Dedup check
+            # In-batch dedup: skip if we already have this edge queued
+            edge_key = (from_node.id, to_node.id, property_uri, document_id)
+            if edge_key in seen_edge_keys:
+                continue
+            seen_edge_keys.add(edge_key)
+
+            # DB dedup check
             existing = await self.session.execute(
                 select(KGEdge).where(
                     and_(

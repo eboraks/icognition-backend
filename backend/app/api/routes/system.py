@@ -16,6 +16,7 @@ from app.core.user_context import get_active_user_context, UserContext
 from app.db.database import get_session, async_session
 from app.models import Document, Embedding
 from app.models_kg import KGNode, KGNodeDocument
+from app.services.theme_service import ThemeService, MIN_DOCS_FOR_CLUSTERING
 from app.utils.logging import get_logger
 from app.api.routes.bookmarks import _process_document_entities, _process_document_embeddings, _process_document_content, _process_document_entities_batch, _process_document_embeddings_batch
 from app.core.config import settings
@@ -458,14 +459,14 @@ async def trigger_document_processing(
 
 @router.post("/documents/process-missing-entities")
 async def process_missing_entities(
-    background_tasks: BackgroundTasks,
     user_context: UserContext = Depends(get_active_user_context),
     session: AsyncSession = Depends(get_session)
 ):
     """
     Process documents that are missing entities.
-    
+
     Finds all documents for the user that don't have entities and triggers entity extraction.
+    Runs as a detached async task so the UI stays responsive.
     """
     try:
         # Find documents missing entities
@@ -478,36 +479,35 @@ async def process_missing_entities(
                 select(KGNodeDocument.document_id).distinct()
             )
         ]
-        
+
         # Get documents to process
         query = select(Document).where(and_(*conditions)).limit(100)
         result = await session.execute(query)
         documents = result.scalars().all()
-        
+
         if not documents:
             return {
                 "message": "No documents found that need entity processing",
                 "documents_processed": 0,
                 "document_ids": []
             }
-        
+
         document_ids = [str(doc.id) for doc in documents]
-        
-        # Trigger single background task for all documents
-        background_tasks.add_task(
-            _process_document_entities_batch,
-            document_ids,
-            user_context.user.id
+
+        # Fire-and-forget: detached task that yields the event loop between docs
+        import asyncio
+        asyncio.create_task(
+            _process_document_entities_batch(document_ids, user_context.user.id)
         )
-        
+
         logger.info(f"Triggered entity processing for {len(document_ids)} documents")
-        
+
         return {
             "message": f"Entity processing triggered for {len(document_ids)} documents",
             "documents_processed": len(document_ids),
             "document_ids": document_ids
         }
-        
+
     except Exception as e:
         logger.error(f"Error processing missing entities: {e}")
         raise HTTPException(
@@ -818,6 +818,43 @@ async def _process_all_entity_embeddings(
         logger.error(f"Error in batch entity embedding generation: {str(e)}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
+
+
+@router.post("/backfill-themes")
+async def backfill_themes(
+    user_context: UserContext = Depends(get_active_user_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Backfill themes for all users who have enough embedded documents.
+    Restricted to sysadmin role.
+    """
+    if user_context.user.role != "sysadmin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    # Find users with enough document embeddings
+    users_sql = text(f"""
+        SELECT user_id, COUNT(DISTINCT source_id) AS doc_count
+        FROM embedding
+        WHERE source_type = 'document' AND field = 'title'
+        GROUP BY user_id
+        HAVING COUNT(DISTINCT source_id) >= :min_docs
+    """)
+    result = await session.execute(users_sql, {"min_docs": MIN_DOCS_FOR_CLUSTERING})
+    user_rows = result.mappings().all()
+
+    results = []
+    for row in user_rows:
+        uid = row["user_id"]
+        try:
+            theme_service = ThemeService(session)
+            summary = await theme_service.recluster_themes(uid)
+            results.append({"user_id": uid, **summary})
+        except Exception as e:
+            logger.error(f"Failed to backfill themes for user {uid}: {e}")
+            results.append({"user_id": uid, "error": str(e)})
+
+    return {"backfilled": len(results), "results": results}
 
 
 @router.get("/health")

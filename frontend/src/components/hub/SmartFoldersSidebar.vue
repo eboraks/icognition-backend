@@ -2,38 +2,123 @@
   <div class="smart-folders-sidebar">
     <!-- Smart Folders Header -->
     <div class="sidebar-section">
-      <h3 class="sidebar-title">
+      <h3 class="sidebar-title clickable" @click="sourcesCollapsed = !sourcesCollapsed">
+        <i class="pi" :class="sourcesCollapsed ? 'pi-chevron-right' : 'pi-chevron-down'" />
         <i class="pi pi-folder" />
         Smart Folders
       </h3>
 
-      <!-- All Sources option -->
-      <div
-        class="source-item"
-        :class="{ active: !activeSource }"
-        @click="selectSource(null)"
-      >
-        <i class="pi pi-th-large source-icon" />
-        <span class="source-name">All Sources</span>
-        <span class="source-count">{{ totalCount }}</span>
-      </div>
+      <div v-show="!sourcesCollapsed">
+        <!-- All Sources option -->
+        <div
+          class="source-item"
+          :class="{ active: !activeSource }"
+          @click="selectSource(null)"
+        >
+          <i class="pi pi-th-large source-icon" />
+          <span class="source-name">All Sources</span>
+          <span class="source-count">{{ totalCount }}</span>
+        </div>
 
-      <!-- Source list -->
-      <div
-        v-for="source in hubStore.sources"
-        :key="source.site_name"
-        class="source-item"
-        :class="{ active: activeSource === source.site_name }"
-        @click="selectSource(source.site_name)"
-      >
-        <img
-          :src="faviconUrl(source.site_name)"
-          :alt="source.site_name"
-          class="source-favicon"
-          @error="onFaviconError"
-        />
-        <span class="source-name">{{ source.site_name }}</span>
-        <span class="source-count">{{ source.count }}</span>
+        <!-- Source list -->
+        <div
+          v-for="source in hubStore.sources"
+          :key="source.site_name"
+          class="source-item"
+          :class="{ active: activeSource === source.site_name }"
+          @click="selectSource(source.site_name)"
+        >
+          <img
+            :src="faviconUrl(source.site_name)"
+            :alt="source.site_name"
+            class="source-favicon"
+            @error="onFaviconError"
+          />
+          <span class="source-name">{{ source.site_name }}</span>
+          <span class="source-count">{{ source.count }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Themes -->
+    <div v-if="hubStore.themes.length > 0" class="sidebar-section">
+      <h3 class="sidebar-title clickable" @click="themesCollapsed = !themesCollapsed">
+        <i class="pi" :class="themesCollapsed ? 'pi-chevron-right' : 'pi-chevron-down'" />
+        <i class="pi pi-tags" />
+        Themes
+        <button
+          class="recluster-btn"
+          title="Re-organize themes"
+          @click.stop="hubStore.reclusterThemes()"
+        >
+          <i class="pi pi-refresh" />
+        </button>
+      </h3>
+
+      <div v-show="!themesCollapsed">
+        <!-- All Themes option -->
+        <div
+          class="source-item"
+          :class="{ active: !hubStore.themeFilter && !activeSource }"
+          @click="selectTheme(null)"
+        >
+          <i class="pi pi-th-large source-icon" />
+          <span class="source-name">All Themes</span>
+        </div>
+
+        <!-- Theme list -->
+        <div
+          v-for="theme in hubStore.themes"
+          :key="theme.id"
+          class="source-item"
+          :class="{ active: hubStore.themeFilter === theme.id }"
+          @click="selectTheme(theme.id)"
+        >
+          <span
+            class="theme-dot"
+            :style="{ background: theme.color || '#6B7280' }"
+          />
+          <span class="source-name">{{ theme.label }}</span>
+          <span class="source-count">{{ theme.doc_count }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Research Sessions -->
+    <div v-if="hubStore.researchSessions.length > 0" class="sidebar-section">
+      <h3 class="sidebar-title clickable" @click="researchCollapsed = !researchCollapsed">
+        <i class="pi" :class="researchCollapsed ? 'pi-chevron-right' : 'pi-chevron-down'" />
+        <i class="pi pi-search" />
+        Research
+      </h3>
+
+      <div v-show="!researchCollapsed">
+        <!-- All Research option -->
+        <div
+          class="source-item"
+          :class="{ active: !hubStore.researchFilter && !activeSource && !hubStore.themeFilter }"
+          @click="selectResearch(null)"
+        >
+          <i class="pi pi-th-large source-icon" />
+          <span class="source-name">All Research</span>
+        </div>
+
+        <!-- Research session list -->
+        <div
+          v-for="rs in hubStore.researchSessions"
+          :key="rs.id"
+          class="source-item research-item"
+          :class="{ active: hubStore.researchFilter === rs.id }"
+          :title="rs.brief"
+          @click="selectResearch(rs.id)"
+        >
+          <i
+            class="pi source-icon"
+            :class="statusIcon(rs.status)"
+          />
+          <span class="source-name">{{ briefLabel(rs.brief) }}</span>
+          <span class="source-count">{{ rs.doc_count }}</span>
+        </div>
       </div>
     </div>
 
@@ -48,16 +133,21 @@
         :key="doc.id"
         class="bookmark-item"
         @click="onBookmarkClick(doc)"
+        @contextmenu.prevent="onBookmarkContextMenu($event, doc)"
       >
         <i class="pi pi-file" />
         <span class="bookmark-title">{{ doc.title }}</span>
       </div>
     </div>
+
+    <!-- Context menu for reassigning bookmarks to themes -->
+    <ContextMenu ref="contextMenuRef" :model="contextMenuItems" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, computed } from 'vue'
+import ContextMenu from 'primevue/contextmenu'
 import { useHubStore } from '@/stores/hubStore'
 import type { DocumentSummary } from '@/types/graph'
 
@@ -66,6 +156,11 @@ const hubStore = useHubStore()
 const emit = defineEmits<{
   'bookmark-select': [doc: DocumentSummary]
 }>()
+
+// Collapsible section state
+const sourcesCollapsed = ref(false)
+const themesCollapsed = ref(false)
+const researchCollapsed = ref(false)
 
 const activeSource = computed(() => hubStore.sourceFilter)
 
@@ -88,8 +183,59 @@ function selectSource(source: string | null) {
   hubStore.filterBySource(source)
 }
 
+function selectTheme(themeId: number | null) {
+  hubStore.filterByTheme(themeId)
+}
+
+function selectResearch(researchId: number | null) {
+  hubStore.filterByResearch(researchId)
+}
+
+function briefLabel(brief: string): string {
+  if (!brief) return 'Untitled research'
+  const trimmed = brief.trim()
+  return trimmed.length > 40 ? trimmed.slice(0, 40) + '…' : trimmed
+}
+
+function statusIcon(status: string): string {
+  if (status === 'running') return 'pi-spin pi-spinner'
+  if (status === 'failed') return 'pi-exclamation-triangle'
+  return 'pi-search'
+}
+
 function onBookmarkClick(doc: DocumentSummary) {
   emit('bookmark-select', doc)
+}
+
+// Context menu for reassigning bookmarks to themes
+const contextMenuRef = ref()
+const contextMenuDocId = ref<number | null>(null)
+
+const contextMenuItems = computed(() => {
+  if (!hubStore.themes.length || !hubStore.themeFilter) return []
+  return [
+    {
+      label: 'Move to theme...',
+      icon: 'pi pi-arrow-right',
+      items: hubStore.themes
+        .filter((t) => t.id !== hubStore.themeFilter)
+        .map((t) => ({
+          label: t.label,
+          icon: 'pi pi-tag',
+          command: () => {
+            if (contextMenuDocId.value && hubStore.themeFilter) {
+              hubStore.reassignDocument(contextMenuDocId.value, hubStore.themeFilter, t.id)
+            }
+          },
+        })),
+    },
+  ]
+})
+
+function onBookmarkContextMenu(event: MouseEvent, doc: DocumentSummary) {
+  if (!hubStore.themes.length || !hubStore.themeFilter) return
+  contextMenuDocId.value = doc.id
+  contextMenuRef.value?.show(event)
 }
 </script>
 
@@ -127,6 +273,18 @@ function onBookmarkClick(doc: DocumentSummary) {
 
 .sidebar-title i {
   font-size: 0.8rem;
+}
+
+.sidebar-title.clickable {
+  cursor: pointer;
+  user-select: none;
+  padding: 0.25rem 0;
+  border-radius: 4px;
+  transition: color 0.15s;
+}
+
+.sidebar-title.clickable:hover {
+  color: var(--p-text-color);
 }
 
 .source-item {
@@ -213,5 +371,34 @@ function onBookmarkClick(doc: DocumentSummary) {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+}
+
+.theme-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.recluster-btn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.15rem 0.3rem;
+  border-radius: 4px;
+  color: var(--p-text-muted-color);
+  font-size: 0.7rem;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.recluster-btn:hover {
+  background: var(--p-surface-hover);
+  color: var(--p-text-color);
+}
+
+.research-item .source-name {
+  font-size: 0.8rem;
+  line-height: 1.2;
 }
 </style>

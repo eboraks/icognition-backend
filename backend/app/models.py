@@ -136,11 +136,16 @@ class Document(SQLModel, table=True):
     
     # Content extraction results
     extracted_content: Optional[Dict[str, Any]] = Field(
-        default=None, 
+        default=None,
         sa_column=Column(JSONB),
         description="LLM-extracted content with page type, confidence, and structured data"
     )
-    
+
+    # Research provenance: links document to a research session if it was created by the research agent
+    research_session_id: Optional[int] = Field(
+        default=None, foreign_key="research_session.id", index=True, nullable=True
+    )
+
     qans: list["Question_Answer"] = Relationship(back_populates="document")
 
     def to_display(self) -> dict:
@@ -857,4 +862,42 @@ class Prompt(SQLModel, table=True):
     __table_args__ = (
         Index('ix_prompts_type_version', 'prompt_type', 'version', unique=True),
         Index('ix_prompts_type_active', 'prompt_type', 'is_active'),
+    )
+
+
+class ResearchSession(SQLModel, table=True):
+    """A research run dispatched by the chat agent's research workflow."""
+
+    __tablename__ = "research_session"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: str = Field(foreign_key="users.id", index=True, nullable=False)
+
+    # Optional links to the chat that triggered the research
+    chat_session_id: Optional[int] = Field(
+        default=None, foreign_key="chat_sessions.id", nullable=True
+    )
+    chat_message_id: Optional[int] = Field(
+        default=None, foreign_key="chat_messages.id", nullable=True
+    )
+
+    brief: str = Field(sa_column=Column(Text))
+    plan: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSONB))
+    budget: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSONB))
+
+    status: str = Field(default="running", max_length=20)  # running / completed / failed
+    final_response: Optional[str] = Field(default=None, sa_column=Column(Text))
+    token_cost: int = Field(default=0)
+
+    created_at: Optional[datetime] = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )
+    updated_at: Optional[datetime] = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(
+            DateTime(timezone=True),
+            server_default=func.now(),
+            onupdate=func.now(),
+        ),
     )

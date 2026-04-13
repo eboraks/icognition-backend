@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { knowledgeService } from '@/services/knowledgeService'
 import { useGraphStore } from './graphStore'
 import { useChatStore } from './chat_store'
-import type { DocumentSummary } from '@/types/graph'
+import type { DocumentSummary, ThemeSummary, ResearchSessionSummary } from '@/types/graph'
 
 export interface SourceFolder {
   site_name: string
@@ -21,17 +21,23 @@ export const useHubStore = defineStore('hub', () => {
   const chatPanelOpen = ref(false)
   const sourceFilter = ref<string | null>(null)
   const sources = ref<SourceFolder[]>([])
+  const themeFilter = ref<number | null>(null)
+  const themes = ref<ThemeSummary[]>([])
+  const researchFilter = ref<number | null>(null)
+  const researchSessions = ref<ResearchSessionSummary[]>([])
   const relatedBookmarks = ref<DocumentSummary[]>([])
   const initialLoading = ref(false)
 
   const hasSelection = computed(() => selectedEntityId.value !== null || selectedDocumentId.value !== null)
 
-  async function loadDiscoveryGraph(source?: string) {
+  async function loadDiscoveryGraph(source?: string, theme?: number, research?: number) {
     initialLoading.value = true
     try {
       graphStore.resetGraph()
-      const params: { source?: string; limit?: number } = { limit: 30 }
+      const params: { source?: string; theme?: number; research?: number; limit?: number } = { limit: 30 }
       if (source) params.source = source
+      if (theme) params.theme = theme
+      if (research) params.research = research
       const resp = await knowledgeService.getDiscoveryGraph(params)
       const data = resp.data
 
@@ -115,7 +121,71 @@ export const useHubStore = defineStore('hub', () => {
 
   async function filterBySource(siteName: string | null) {
     sourceFilter.value = siteName
+    themeFilter.value = null
+    researchFilter.value = null
     await loadDiscoveryGraph(siteName || undefined)
+  }
+
+  async function loadThemes() {
+    try {
+      const resp = await knowledgeService.getThemes()
+      themes.value = resp.data.themes
+    } catch (err) {
+      console.error('Failed to load themes:', err)
+    }
+  }
+
+  async function filterByTheme(themeId: number | null) {
+    themeFilter.value = themeId
+    sourceFilter.value = null
+    researchFilter.value = null
+    await loadDiscoveryGraph(undefined, themeId || undefined)
+  }
+
+  async function loadResearchSessions() {
+    try {
+      const resp = await knowledgeService.getResearchSessions()
+      researchSessions.value = resp.data.research_sessions
+    } catch (err) {
+      console.error('Failed to load research sessions:', err)
+    }
+  }
+
+  async function filterByResearch(researchId: number | null) {
+    researchFilter.value = researchId
+    sourceFilter.value = null
+    themeFilter.value = null
+    await loadDiscoveryGraph(undefined, undefined, researchId || undefined)
+  }
+
+  async function reassignDocument(documentId: number, fromThemeId: number, toThemeId: number) {
+    try {
+      await knowledgeService.reassignDocument(fromThemeId, {
+        document_id: documentId,
+        to_theme_id: toThemeId,
+      })
+      // Refresh themes to update counts
+      await loadThemes()
+      // Reload graph if filtering by theme
+      if (themeFilter.value) {
+        await loadDiscoveryGraph(undefined, themeFilter.value)
+      }
+    } catch (err) {
+      console.error('Failed to reassign document:', err)
+    }
+  }
+
+  async function reclusterThemes() {
+    try {
+      await knowledgeService.reclusterThemes()
+      await loadThemes()
+      // Reload graph if a theme filter was active
+      if (themeFilter.value) {
+        await loadDiscoveryGraph(undefined, themeFilter.value)
+      }
+    } catch (err) {
+      console.error('Failed to recluster themes:', err)
+    }
   }
 
   function closeChatPanel() {
@@ -134,16 +204,26 @@ export const useHubStore = defineStore('hub', () => {
     chatPanelOpen,
     sourceFilter,
     sources,
+    themeFilter,
+    themes,
+    researchFilter,
+    researchSessions,
     relatedBookmarks,
     initialLoading,
     hasSelection,
     // Actions
     loadDiscoveryGraph,
     loadSources,
+    loadThemes,
+    loadResearchSessions,
     selectEntity,
     selectDocument,
     clearSelection,
     filterBySource,
+    filterByTheme,
+    filterByResearch,
+    reassignDocument,
+    reclusterThemes,
     closeChatPanel,
     openChatPanel,
   }

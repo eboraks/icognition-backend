@@ -46,9 +46,18 @@
               <span class="detail-type-badge">{{ entityDetail.type }}</span>
               <h3 class="detail-title">{{ entityDetail.name }}</h3>
             </div>
-            <p v-if="entityDetail.description" class="detail-description">
-              {{ entityDetail.description }}
-            </p>
+            <div
+              v-if="entityDetail.description"
+              class="detail-description markdown-body"
+              v-html="renderedEntityDescription"
+            />
+            <button
+              v-if="isEntityDescriptionLong"
+              class="expand-toggle"
+              @click="entityDescriptionExpanded = !entityDescriptionExpanded"
+            >
+              {{ entityDescriptionExpanded ? 'Show less' : 'Show more' }}
+            </button>
 
             <!-- Related documents -->
             <div v-if="relatedBookmarks.length" class="detail-section">
@@ -76,9 +85,18 @@
                 <template v-else>{{ documentDetail.title }}</template>
               </h3>
             </div>
-            <div v-if="documentDetail.ai_markdown_content" class="detail-description">
-              {{ documentDetail.ai_markdown_content.substring(0, 300) }}{{ documentDetail.ai_markdown_content.length > 300 ? '...' : '' }}
-            </div>
+            <div
+              v-if="documentDetail.ai_markdown_content"
+              class="detail-description markdown-body"
+              v-html="renderedDocumentContent"
+            />
+            <button
+              v-if="isDocumentContentLong"
+              class="expand-toggle"
+              @click="documentContentExpanded = !documentContentExpanded"
+            >
+              {{ documentContentExpanded ? 'Show less' : 'Show more' }}
+            </button>
             <div v-if="documentDetail.entities?.length" class="detail-section">
               <h4 class="section-title">Entities mentioned</h4>
               <div
@@ -204,6 +222,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from 'vue'
+import { marked } from 'marked'
 import ChatPanel from '@/components/knowledge_explorer/ChatPanel.vue'
 import { useHubStore } from '@/stores/hubStore'
 import { useChatStore } from '@/stores/chat_store'
@@ -235,6 +254,48 @@ const documentDetail = computed(() => {
 })
 
 const relatedBookmarks = computed(() => hubStore.relatedBookmarks || [])
+
+// Markdown rendering for entity description and document content
+const DESCRIPTION_PREVIEW_LIMIT = 400
+const entityDescriptionExpanded = ref(false)
+const documentContentExpanded = ref(false)
+
+// Reset expanded state when selection changes
+watch(
+  () => [hubStore.selectedEntityId, hubStore.selectedDocumentId],
+  () => {
+    entityDescriptionExpanded.value = false
+    documentContentExpanded.value = false
+  }
+)
+
+const isEntityDescriptionLong = computed(() => {
+  const desc = entityDetail.value?.description || ''
+  return desc.length > DESCRIPTION_PREVIEW_LIMIT
+})
+
+const renderedEntityDescription = computed(() => {
+  const desc = entityDetail.value?.description || ''
+  if (!desc) return ''
+  const text = !entityDescriptionExpanded.value && isEntityDescriptionLong.value
+    ? desc.substring(0, DESCRIPTION_PREVIEW_LIMIT) + '…'
+    : desc
+  return marked.parse(text) as string
+})
+
+const isDocumentContentLong = computed(() => {
+  const content = documentDetail.value?.ai_markdown_content || ''
+  return content.length > DESCRIPTION_PREVIEW_LIMIT
+})
+
+const renderedDocumentContent = computed(() => {
+  const content = documentDetail.value?.ai_markdown_content || ''
+  if (!content) return ''
+  const text = !documentContentExpanded.value && isDocumentContentLong.value
+    ? content.substring(0, DESCRIPTION_PREVIEW_LIMIT) + '…'
+    : content
+  return marked.parse(text) as string
+})
 
 // Chat history & rename
 const showHistory = ref(false)
@@ -484,7 +545,92 @@ defineExpose({
   font-size: 0.88rem;
   line-height: 1.6;
   color: #475569;
+  margin-bottom: 0.5rem;
+  word-wrap: break-word;
+}
+
+/* Markdown rendering inside the details panel */
+.markdown-body :deep(p) {
+  margin: 0 0 0.6rem 0;
+}
+.markdown-body :deep(p:last-child) {
+  margin-bottom: 0;
+}
+.markdown-body :deep(strong) {
+  font-weight: 700;
+  color: var(--p-text-color);
+}
+.markdown-body :deep(em) {
+  font-style: italic;
+}
+.markdown-body :deep(h1),
+.markdown-body :deep(h2),
+.markdown-body :deep(h3),
+.markdown-body :deep(h4) {
+  font-weight: 700;
+  color: var(--p-text-color);
+  margin: 0.8rem 0 0.4rem 0;
+  line-height: 1.3;
+}
+.markdown-body :deep(h1) { font-size: 1rem; }
+.markdown-body :deep(h2) { font-size: 0.95rem; }
+.markdown-body :deep(h3) { font-size: 0.9rem; }
+.markdown-body :deep(h4) { font-size: 0.88rem; }
+.markdown-body :deep(ul),
+.markdown-body :deep(ol) {
+  margin: 0 0 0.6rem 0;
+  padding-left: 1.25rem;
+}
+.markdown-body :deep(li) {
+  margin-bottom: 0.2rem;
+}
+.markdown-body :deep(code) {
+  background: var(--p-surface-100);
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  font-size: 0.82rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.markdown-body :deep(pre) {
+  background: var(--p-surface-100);
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: 0.8rem;
+  margin: 0 0 0.6rem 0;
+}
+.markdown-body :deep(pre code) {
+  background: none;
+  padding: 0;
+}
+.markdown-body :deep(blockquote) {
+  border-left: 3px solid var(--p-content-border-color);
+  padding-left: 0.75rem;
+  margin: 0 0 0.6rem 0;
+  color: var(--p-text-muted-color);
+}
+.markdown-body :deep(a) {
+  color: var(--p-primary-color);
+  text-decoration: none;
+}
+.markdown-body :deep(a:hover) {
+  text-decoration: underline;
+}
+
+.expand-toggle {
+  background: none;
+  border: none;
+  padding: 0.25rem 0;
   margin-bottom: 1rem;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--p-primary-color);
+  transition: color 0.15s;
+}
+
+.expand-toggle:hover {
+  text-decoration: underline;
 }
 
 .detail-section {

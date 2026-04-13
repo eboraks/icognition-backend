@@ -22,6 +22,7 @@ from app.models import Document, Bookmark
 from app.services.document_service import DocumentService
 from app.services.kg_pipeline import process_document_kg_background
 from app.services.embedding_service import get_embedding_service
+from app.services.theme_service import ThemeService, MIN_DOCS_FOR_CLUSTERING
 from app.services.x_api_service import get_x_api_service
 from app.core.config import settings
 from app.api.routes.websocket import get_connection_manager
@@ -506,15 +507,52 @@ async def _process_document_embeddings(
             if embedding_success:
                 logger.info(f"Successfully generated embeddings for document {document_id}")
                 await session.commit()
+
+                # Assign document to a theme now that embeddings exist
+                await _assign_document_theme(doc_id, document.user_id)
             else:
                 logger.warning(f"Failed to generate embeddings for document {document_id}")
-                
+
     except Exception as e:
         logger.error(f"Error generating embeddings for document {document_id}: {str(e)}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
-        
+
         # Don't re-raise to avoid breaking the background task
+
+
+async def _assign_document_theme(document_id: int, user_id: str):
+    """
+    Background task: assign a document to a theme after embeddings are generated.
+    If the user has no themes yet and enough documents, triggers initial clustering.
+    """
+    try:
+        async with async_session() as session:
+            theme_service = ThemeService(session)
+            themes = await theme_service.get_themes(user_id)
+
+            if not themes:
+                # Check if user has enough documents for initial clustering
+                from sqlalchemy import text as sa_text
+                count_sql = sa_text("""
+                    SELECT COUNT(DISTINCT source_id)
+                    FROM embedding
+                    WHERE source_type = 'document' AND field = 'title' AND user_id = :user_id
+                """)
+                result = await session.execute(count_sql, {"user_id": user_id})
+                doc_count = result.scalar() or 0
+                if doc_count >= MIN_DOCS_FOR_CLUSTERING:
+                    logger.info(f"Triggering initial theme clustering for user {user_id}")
+                    await theme_service.recluster_themes(user_id)
+                else:
+                    logger.debug(
+                        f"User {user_id} has {doc_count} docs, "
+                        f"need {MIN_DOCS_FOR_CLUSTERING} for clustering"
+                    )
+            else:
+                await theme_service.assign_document_to_theme(document_id, user_id)
+    except Exception as e:
+        logger.error(f"Error assigning theme for document {document_id}: {e}")
 
 
 async def _process_document_content_and_entities(
@@ -576,7 +614,9 @@ async def _process_document_entities_batch(
     """
     Background task to extract entities from multiple documents.
     Delegates to KG pipeline for each document.
+    Yields the event loop between documents so the UI stays responsive.
     """
+    import asyncio
     logger.info(f"Starting batch KG extraction for {len(document_ids)} documents")
     for document_id in document_ids:
         try:
@@ -585,6 +625,8 @@ async def _process_document_entities_batch(
         except Exception as e:
             logger.error(f"KG batch: error processing document {document_id}: {e}")
             continue
+        # Yield event loop so API requests can be served between documents
+        await asyncio.sleep(0)
     logger.info(f"Batch KG extraction completed for {len(document_ids)} documents")
 
 

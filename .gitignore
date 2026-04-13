@@ -59,6 +59,10 @@ coverage.xml
 .pytest_cache/
 cover/
 
+
+# AI Agents
+.claude/
+
 # Translations
 *.mo
 *.pot

@@ -175,3 +175,72 @@ class KGNodeDocument(SQLModel, table=True):
         default_factory=datetime.utcnow,
         sa_column=Column(DateTime(timezone=True), server_default=func.now()),
     )
+
+
+# ---------------------------------------------------------------------------
+# Theme clustering tables
+# ---------------------------------------------------------------------------
+
+class Theme(SQLModel, table=True):
+    """A user-scoped theme cluster derived from document embeddings."""
+
+    __tablename__ = "theme"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: str = Field(foreign_key="users.id", index=True, nullable=False)
+    label: str = Field(max_length=255, nullable=False)
+    description: Optional[str] = Field(default=None, sa_column=Column(Text))
+
+    # Centroid: mean of member document embeddings (1536-dim Gemini)
+    centroid: Optional[List[float]] = Field(
+        default=None, sa_column=Column(Vector(1536))
+    )
+
+    # Denormalized count for sidebar display
+    doc_count: int = Field(default=0)
+
+    # Optional hex color for UI (e.g. "#4F46E5")
+    color: Optional[str] = Field(default=None, max_length=7)
+
+    is_active: bool = Field(default=True)
+
+    created_at: Optional[datetime] = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )
+    updated_at: Optional[datetime] = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(
+            DateTime(timezone=True),
+            server_default=func.now(),
+            onupdate=func.now(),
+        ),
+    )
+
+    __table_args__ = (
+        Index("ix_theme_user_label", "user_id", "label", unique=True),
+        Index(
+            "ix_theme_centroid_hnsw",
+            "centroid",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"centroid": "vector_cosine_ops"},
+        ),
+    )
+
+
+class ThemeDocument(SQLModel, table=True):
+    """Junction table: which documents belong to a theme."""
+
+    __tablename__ = "theme_document"
+
+    theme_id: int = Field(foreign_key="theme.id", primary_key=True)
+    document_id: int = Field(foreign_key="document.id", primary_key=True)
+
+    # True when the user explicitly reassigned this document; protected from re-clustering
+    is_manual: bool = Field(default=False)
+
+    created_at: Optional[datetime] = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )

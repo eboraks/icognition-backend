@@ -482,7 +482,10 @@ class GraphService:
     # ------------------------------------------------------------------
 
     async def get_discovery_graph(
-        self, user_id: str, source: Optional[str] = None, limit: int = 30
+        self, user_id: str, source: Optional[str] = None,
+        theme_id: Optional[int] = None,
+        research_session_id: Optional[int] = None,
+        limit: int = 30
     ) -> dict:
         """
         Return a discovery graph for the hub landing page:
@@ -493,6 +496,7 @@ class GraphService:
         half = limit // 2
 
         source_filter = ""
+        theme_filter = ""
         params: dict = {"user_id": user_id, "half": half, "limit": limit}
         if source:
             source_filter = """
@@ -507,6 +511,15 @@ class GraphService:
                 )
             """
             params["source"] = source
+        if theme_id:
+            theme_filter = """
+                AND n.id IN (
+                    SELECT nd3.node_id FROM kg_node_document nd3
+                    JOIN theme_document td ON td.document_id = nd3.document_id
+                    WHERE td.theme_id = :theme_id
+                )
+            """
+            params["theme_id"] = theme_id
 
         popular_sql = text(f"""
             SELECT n.id, n.label AS name, n.raw_type AS type,
@@ -517,6 +530,7 @@ class GraphService:
             LEFT JOIN kg_edge er ON er.from_node_id = n.id OR er.to_node_id = n.id
             WHERE n.user_id = :user_id
               {source_filter}
+              {theme_filter}
             GROUP BY n.id, n.label, n.raw_type, cc.label, n.wikidata_id
             ORDER BY COUNT(DISTINCT er.id) + COUNT(DISTINCT nd.document_id) DESC
             LIMIT :half
@@ -535,6 +549,7 @@ class GraphService:
             JOIN document d ON d.id = nd.document_id
             WHERE d.user_id = :user_id
               {source_filter}
+              {theme_filter}
             GROUP BY n.id, n.label, n.raw_type, cc.label, n.wikidata_id
             ORDER BY MAX(d.created_at) DESC
             LIMIT :half
@@ -548,9 +563,23 @@ class GraphService:
                 all_entities.append(e)
 
         entity_ids = [e["id"] for e in all_entities]
+
+        # ── Research-specific path: start from documents in the research session ──
+        if research_session_id:
+            return await self._build_research_graph(
+                user_id, research_session_id, limit
+            )
+
+        # ── Theme-specific path: start from themed documents ──
+        if theme_id:
+            return await self._build_theme_graph(
+                user_id, theme_id, all_entities, entity_ids, limit
+            )
+
         if not entity_ids:
             return {"entities": [], "relationships": [], "documents": [], "center_entity_id": None}
 
+        # ── Standard (non-theme) path ──
         rels_sql = text("""
             SELECT e.id, e.from_node_id AS from_entity_id, e.to_node_id AS to_entity_id,
                    e.property_label AS relationship_type, e.property_uri
@@ -588,6 +617,193 @@ class GraphService:
             "entity_document_links": entity_document_links,
             "center_entity_id": None,
         }
+
+    async def _build_theme_graph(
+        self,
+        user_id: str,
+        theme_id: int,
+        hint_entities: list[dict],
+        hint_entity_ids: list[int],
+        limit: int,
+    ) -> dict:
+        """
+        Build a discovery graph for a theme. Starts from themed documents,
+        finds all their KG entities and relationships, and includes orphan
+        documents (no KG nodes) as standalone document nodes.
+        """
+        # 1. Get all documents in this theme
+        docs_sql = text("""
+            SELECT d.id, d.title
+            FROM document d
+            JOIN theme_document td ON td.document_id = d.id
+            WHERE td.theme_id = :theme_id AND d.user_id = :user_id
+        """)
+        docs_result = await self.session.execute(
+            docs_sql, {"theme_id": theme_id, "user_id": user_id}
+        )
+        documents = [dict(r) for r in docs_result.mappings().all()]
+        doc_ids = [d["id"] for d in documents]
+
+        logger.info(
+            f"_build_theme_graph: theme={theme_id}, docs={len(documents)}, "
+            f"doc_ids={doc_ids[:5]}..."
+        )
+
+        if not doc_ids:
+            return {
+                "entities": [], "relationships": [], "documents": [],
+                "entity_document_links": [], "center_entity_id": None,
+            }
+
+        # 2. Find all KG entities connected to these documents
+        entities_sql = text("""
+            SELECT DISTINCT n.id, n.label AS name, n.raw_type AS type,
+                   cc.label AS canonical_type, n.wikidata_id
+            FROM kg_node n
+            LEFT JOIN kg_canonical_class cc ON cc.id = n.canonical_class_id
+            JOIN kg_node_document nd ON nd.node_id = n.id
+            WHERE nd.document_id = ANY(:doc_ids) AND n.user_id = :user_id
+            LIMIT :limit
+        """)
+        entities_result = await self.session.execute(
+            entities_sql, {"doc_ids": doc_ids, "user_id": user_id, "limit": limit}
+        )
+        entities = [dict(r) for r in entities_result.mappings().all()]
+        entity_ids = [e["id"] for e in entities]
+
+        # 3. Find relationships between these entities
+        rels = []
+        if entity_ids:
+            rels_sql = text("""
+                SELECT e.id, e.from_node_id AS from_entity_id,
+                       e.to_node_id AS to_entity_id,
+                       e.property_label AS relationship_type, e.property_uri
+                FROM kg_edge e
+                WHERE e.from_node_id = ANY(:ids) AND e.to_node_id = ANY(:ids)
+            """)
+            rels_result = await self.session.execute(rels_sql, {"ids": entity_ids})
+            rels = [dict(r) for r in rels_result.mappings().all()]
+
+        # 4. Entity-document links
+        entity_document_links = []
+        if entity_ids and doc_ids:
+            links_sql = text("""
+                SELECT nd.node_id AS entity_id, nd.document_id
+                FROM kg_node_document nd
+                WHERE nd.node_id = ANY(:entity_ids)
+                  AND nd.document_id = ANY(:doc_ids)
+            """)
+            links_result = await self.session.execute(
+                links_sql, {"entity_ids": entity_ids, "doc_ids": doc_ids}
+            )
+            entity_document_links = [dict(r) for r in links_result.mappings().all()]
+
+        return {
+            "entities": entities,
+            "relationships": rels,
+            "documents": documents,
+            "entity_document_links": entity_document_links,
+            "center_entity_id": None,
+        }
+
+    async def _build_research_graph(
+        self,
+        user_id: str,
+        research_session_id: int,
+        limit: int,
+    ) -> dict:
+        """
+        Build a discovery graph filtered to documents from a single research session.
+        Shows all docs saved by that research run plus any entities extracted from them.
+        """
+        # 1. Get all documents in this research session
+        docs_sql = text("""
+            SELECT d.id, d.title
+            FROM document d
+            WHERE d.research_session_id = :rs_id AND d.user_id = :user_id
+            ORDER BY d.created_at DESC
+        """)
+        docs_result = await self.session.execute(
+            docs_sql, {"rs_id": research_session_id, "user_id": user_id}
+        )
+        documents = [dict(r) for r in docs_result.mappings().all()]
+        doc_ids = [d["id"] for d in documents]
+
+        if not doc_ids:
+            return {
+                "entities": [], "relationships": [], "documents": [],
+                "entity_document_links": [], "center_entity_id": None,
+            }
+
+        # 2. Find KG entities connected to these documents (if any — research docs
+        #    may not have KG extraction complete yet)
+        entities_sql = text("""
+            SELECT DISTINCT n.id, n.label AS name, n.raw_type AS type,
+                   cc.label AS canonical_type, n.wikidata_id
+            FROM kg_node n
+            LEFT JOIN kg_canonical_class cc ON cc.id = n.canonical_class_id
+            JOIN kg_node_document nd ON nd.node_id = n.id
+            WHERE nd.document_id = ANY(:doc_ids) AND n.user_id = :user_id
+            LIMIT :limit
+        """)
+        entities_result = await self.session.execute(
+            entities_sql, {"doc_ids": doc_ids, "user_id": user_id, "limit": limit}
+        )
+        entities = [dict(r) for r in entities_result.mappings().all()]
+        entity_ids = [e["id"] for e in entities]
+
+        # 3. Find relationships between these entities
+        rels = []
+        if entity_ids:
+            rels_sql = text("""
+                SELECT e.id, e.from_node_id AS from_entity_id,
+                       e.to_node_id AS to_entity_id,
+                       e.property_label AS relationship_type, e.property_uri
+                FROM kg_edge e
+                WHERE e.from_node_id = ANY(:ids) AND e.to_node_id = ANY(:ids)
+            """)
+            rels_result = await self.session.execute(rels_sql, {"ids": entity_ids})
+            rels = [dict(r) for r in rels_result.mappings().all()]
+
+        # 4. Entity-document links
+        entity_document_links = []
+        if entity_ids and doc_ids:
+            links_sql = text("""
+                SELECT nd.node_id AS entity_id, nd.document_id
+                FROM kg_node_document nd
+                WHERE nd.node_id = ANY(:entity_ids)
+                  AND nd.document_id = ANY(:doc_ids)
+            """)
+            links_result = await self.session.execute(
+                links_sql, {"entity_ids": entity_ids, "doc_ids": doc_ids}
+            )
+            entity_document_links = [dict(r) for r in links_result.mappings().all()]
+
+        return {
+            "entities": entities,
+            "relationships": rels,
+            "documents": documents,
+            "entity_document_links": entity_document_links,
+            "center_entity_id": None,
+        }
+
+    # ------------------------------------------------------------------
+    # Research sessions
+    # ------------------------------------------------------------------
+
+    async def get_research_sessions(self, user_id: str) -> list[dict]:
+        """Return all research sessions for a user with document counts."""
+        sql = text("""
+            SELECT rs.id, rs.brief, rs.status, rs.created_at,
+                   COUNT(d.id) AS doc_count
+            FROM research_session rs
+            LEFT JOIN document d ON d.research_session_id = rs.id
+            WHERE rs.user_id = :user_id
+            GROUP BY rs.id, rs.brief, rs.status, rs.created_at
+            ORDER BY rs.created_at DESC
+        """)
+        result = await self.session.execute(sql, {"user_id": user_id})
+        return [dict(r) for r in result.mappings().all()]
 
     # ------------------------------------------------------------------
     # Document sources

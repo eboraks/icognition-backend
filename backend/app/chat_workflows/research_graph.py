@@ -30,6 +30,7 @@ class AgentState(TypedDict):
     kg_context: str
     context_entity_ids: List[int]
     context_document_ids: List[int]
+    requires_research: bool
 
 # --- Structured Outputs ---
 
@@ -38,6 +39,7 @@ class IntentClassification(TypedDict):
     refined_query: str
     reasoning: str
     key_entities: List[str]
+    requires_research: bool
 
 class ReflectionOutput(TypedDict):
     critique: str
@@ -276,6 +278,7 @@ def build_research_graph(
                 "refined_query": str(last_message),
                 "describe_the_user_message_intent": "",
                 "key_entities": [],
+                "requires_research": False,
             }
 
         # Skill selection: slash command override > embedding similarity match
@@ -285,11 +288,16 @@ def build_research_graph(
         else:
             skill = await match_skill(str(last_message))
 
+        requires_research = bool(result.get("requires_research", False))
+        if requires_research:
+            logger.info(f"Intent flagged as research: {result['refined_query'][:80]}")
+
         return {
             "latest_query": result["refined_query"],
             "intent_description": result["describe_the_user_message_intent"],
             "skill": skill,
             "extracted_entities": result.get("key_entities", []),
+            "requires_research": requires_research,
             # Reset per-turn state so previous turn's values don't carry over
             "is_satisfactory": False,
             "reflection_count": 0,
@@ -514,12 +522,117 @@ def build_research_graph(
             "messages": [HumanMessage(content=result["critique"])] if not result["is_satisfactory"] else []
         }
 
+    async def dispatch_research_node(state: AgentState):
+        """
+        Dispatch the user's brief to the research multi-agent workflow.
+        Creates a ResearchSession, runs the research graph, and appends the
+        final synthesized response as an AIMessage.
+        """
+        from app.chat_workflows.research_multiagent_graph import (
+            build_research_multiagent_graph,
+            DEFAULT_MAX_SUBAGENTS,
+            DEFAULT_MAX_TOOL_CALLS_PER_SUBAGENT,
+            DEFAULT_MAX_CRITIC_LOOPS,
+        )
+        from app.models import ResearchSession
+        from sqlalchemy import select
+
+        brief = state.get("latest_query") or (
+            state["messages"][-1].content if state.get("messages") else ""
+        )
+
+        # Create the ResearchSession row
+        research_session_id = None
+        if db_session and user_id:
+            try:
+                rs = ResearchSession(
+                    user_id=user_id,
+                    brief=brief,
+                    status="running",
+                    budget={
+                        "max_subagents": DEFAULT_MAX_SUBAGENTS,
+                        "max_tool_calls_per_subagent": DEFAULT_MAX_TOOL_CALLS_PER_SUBAGENT,
+                        "max_critic_loops": DEFAULT_MAX_CRITIC_LOOPS,
+                    },
+                )
+                db_session.add(rs)
+                await db_session.commit()
+                await db_session.refresh(rs)
+                research_session_id = rs.id
+                logger.info(f"Created research_session={research_session_id} for brief: {brief[:80]}")
+            except Exception as e:
+                logger.error(f"Failed to create research session: {e}")
+
+        if research_session_id is None:
+            return {
+                "messages": [AIMessage(content="Research dispatch failed: could not create research session.")],
+                "is_satisfactory": True,
+            }
+
+        # Build and invoke the research graph (no checkpointer for v1 — research runs are short-lived)
+        try:
+            research_graph = build_research_multiagent_graph(checkpointer=None)
+            initial_state = {
+                "brief": brief,
+                "user_id": user_id,
+                "research_session_id": research_session_id,
+                "subagent_results": [],
+                "critic_loops": 0,
+                "budget": {
+                    "max_subagents": DEFAULT_MAX_SUBAGENTS,
+                    "max_tool_calls_per_subagent": DEFAULT_MAX_TOOL_CALLS_PER_SUBAGENT,
+                    "max_critic_loops": DEFAULT_MAX_CRITIC_LOOPS,
+                },
+            }
+            # Use a unique thread_id so this run doesn't collide with anything
+            run_config = {"configurable": {"thread_id": f"research_{research_session_id}"}}
+            final_state = await research_graph.ainvoke(initial_state, config=run_config)
+            final_response = final_state.get("final_response", "Research completed but produced no response.")
+            saved_doc_ids = final_state.get("saved_doc_ids", []) or []
+
+            # Update research_session with results
+            try:
+                result = await db_session.execute(
+                    select(ResearchSession).where(ResearchSession.id == research_session_id)
+                )
+                rs = result.scalar_one_or_none()
+                if rs:
+                    rs.status = "completed"
+                    rs.final_response = final_response
+                    rs.plan = {"sub_topics": final_state.get("plan", [])}
+                    await db_session.commit()
+            except Exception as e:
+                logger.error(f"Failed to update research session: {e}")
+
+            return {
+                "messages": [AIMessage(content=final_response)],
+                "context_document_ids": saved_doc_ids,
+                "is_satisfactory": True,
+            }
+        except Exception as e:
+            logger.error(f"Research workflow failed: {e}", exc_info=True)
+            try:
+                result = await db_session.execute(
+                    select(ResearchSession).where(ResearchSession.id == research_session_id)
+                )
+                rs = result.scalar_one_or_none()
+                if rs:
+                    rs.status = "failed"
+                    await db_session.commit()
+            except Exception:
+                pass
+            return {
+                "messages": [AIMessage(content=f"Research workflow encountered an error: {e}")],
+                "is_satisfactory": True,
+            }
+
     # 3. Graph Construction
     from langgraph.prebuilt import ToolNode
 
     graph = StateGraph(AgentState)
 
     graph.add_node("intent_node", intent_node)
+    graph.add_node("dispatch_research_node", dispatch_research_node)
     graph.add_node("generate_node", generate_node)
     graph.add_node("reflect_node", reflect_node)
 
@@ -528,7 +641,19 @@ def build_research_graph(
 
     # Edges
     graph.add_edge(START, "intent_node")
-    graph.add_edge("intent_node", "generate_node")
+
+    def route_after_intent(state: AgentState) -> str:
+        """Dispatch to research workflow if intent classifier flagged it, else normal generation."""
+        if state.get("requires_research"):
+            return "dispatch_research_node"
+        return "generate_node"
+
+    graph.add_conditional_edges(
+        "intent_node",
+        route_after_intent,
+        {"dispatch_research_node": "dispatch_research_node", "generate_node": "generate_node"},
+    )
+    graph.add_edge("dispatch_research_node", END)
 
     def route_after_generate(state: AgentState) -> str:
         """Route to tools if tool_calls present, otherwise reflect."""

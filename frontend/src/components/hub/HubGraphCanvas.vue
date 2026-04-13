@@ -13,11 +13,13 @@
     <div class="graph-controls-overlay">
       <GraphControls
         :can-expand="canExpandSelected"
+        :has-selection="!!selectedNodeId"
         :font-size="currentFontSize"
         :chat-filter-active="chatStore.chatFilterActive"
         @zoom-in="zoomIn"
         @zoom-out="zoomOut"
         @fit="resetView"
+        @focus="onFocusSelected"
         @expand="onExpandSelected"
         @font-size-change="setFontSize"
         @relayout="runLayout"
@@ -65,6 +67,8 @@ const cyContainer = ref<HTMLElement | null>(null)
 
 // Track selected entity for expand button
 const selectedEntityId = ref<string | null>(null)
+// Track ANY selected node (entity or document) for focus button
+const selectedNodeId = ref<string | null>(null)
 
 const canExpandSelected = computed(() => {
   if (!selectedEntityId.value) return false
@@ -77,6 +81,23 @@ function onExpandSelected() {
   graphStore.expandEntity(entityId).then(() => {
     focusEntity(entityId)
   })
+}
+
+function onFocusSelected() {
+  const nodeId = selectedNodeId.value
+  if (!nodeId || !cy.value) return
+  const node = cy.value.getElementById(nodeId)
+  if (node.length === 0) return
+
+  // Animate fit on the selected node + its direct neighbors
+  const neighborhood = node.closedNeighborhood()
+  cy.value.animate(
+    { fit: { eles: neighborhood, padding: 80 } },
+    { duration: 400 }
+  )
+  // Ensure the node is selected visually
+  cy.value.elements().unselect()
+  node.select()
 }
 
 function onToggleChatFilter() {
@@ -120,6 +141,7 @@ const {
   focusEntity,
   zoomIn,
   zoomOut,
+  zoomToEntity,
   resetView,
   runLayout,
   clearGraph,
@@ -134,13 +156,16 @@ const {
     if (!entityId) {
       hubStore.clearSelection()
       selectedEntityId.value = null
+      selectedNodeId.value = null
       return
     }
     selectedEntityId.value = entityId
+    selectedNodeId.value = entityId
     hubStore.selectEntity(Number(entityId))
   },
   onDocumentSelect: (docId: string) => {
     selectedEntityId.value = null
+    selectedNodeId.value = docId
     const numericId = Number(docId.replace('doc-', ''))
     hubStore.selectDocument(numericId)
   },

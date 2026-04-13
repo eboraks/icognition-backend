@@ -3,6 +3,7 @@
     <Button icon="pi pi-search-plus" v-tooltip.top="'Zoom in (Ctrl +)'" text rounded size="small" @click="emit('zoomIn')" />
     <Button icon="pi pi-search-minus" v-tooltip.top="'Zoom out (Ctrl -)'" text rounded size="small" @click="emit('zoomOut')" />
     <Button icon="pi pi-arrows-alt" v-tooltip.top="'Fit to screen'" text rounded size="small" @click="emit('fit')" />
+    <Button icon="pi pi-bullseye" v-tooltip.top="'Focus & zoom on selected node'" text rounded size="small" :disabled="!hasSelection" @click="emit('focus')" />
     <Button icon="pi pi-plus-circle" v-tooltip.top="'Expand selected node'" text rounded size="small" :disabled="!canExpand" @click="emit('expand')" />
     <select
       class="font-size-select"
@@ -26,6 +27,7 @@ import Button from 'primevue/button'
 
 defineProps<{
   canExpand?: boolean
+  hasSelection?: boolean
   fontSize?: string
   chatFilterActive?: boolean
 }>()
@@ -34,6 +36,7 @@ const emit = defineEmits<{
   zoomIn: []
   zoomOut: []
   fit: []
+  focus: []
   expand: []
   fontSizeChange: [size: string]
   relayout: []

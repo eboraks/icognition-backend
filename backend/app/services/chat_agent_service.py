@@ -427,6 +427,14 @@ class ChatAgentService:
                         }
                         last_intent = current_intent
 
+                    # 1b. Research dispatch detected
+                    if chunk.get("requires_research"):
+                        yield {
+                            "type": "status",
+                            "status_type": "researching",
+                            "content": "Researching the web for fresh sources..."
+                        }
+
                     # Track classified skill in Langfuse trace
                     classified_skill = chunk.get("skill")
                     if classified_skill and lf_handler:
