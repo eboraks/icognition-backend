@@ -11,9 +11,12 @@
       @change="emit('fontSizeChange', ($event.target as HTMLSelectElement).value)"
       title="Font size"
     >
-      <option value="small">A-</option>
-      <option value="medium">A</option>
-      <option value="large">A+</option>
+      <option value="8">8</option>
+      <option value="10">10</option>
+      <option value="12">12</option>
+      <option value="13">13</option>
+      <option value="14">14</option>
+      <option value="16">16</option>
     </select>
     <Button icon="pi pi-refresh" v-tooltip.top="'Re-layout'" text rounded size="small" @click="emit('relayout')" />
     <Button icon="pi pi-filter" v-tooltip.top="'Filter graph by chat context'" text rounded size="small" :class="{ 'filter-active': chatFilterActive }" @click="emit('toggleChatFilter')" />

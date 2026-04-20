@@ -128,6 +128,14 @@ export const knowledgeService = {
     return apiClient.get('/api/v1/knowledge/research-sessions');
   },
 
+  getResearchSession(sessionId: number): Promise<{ data: any }> {
+    return apiClient.get(`/api/v1/knowledge/research-sessions/${sessionId}`);
+  },
+
+  deleteResearchSession(sessionId: number): Promise<{ data: any }> {
+    return apiClient.delete(`/api/v1/knowledge/research-sessions/${sessionId}`);
+  },
+
   getDocumentSources(): Promise<{ data: { sources: { site_name: string; count: number }[] } }> {
     return apiClient.get('/api/v1/knowledge/graph/sources');
   },

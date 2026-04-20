@@ -10,6 +10,7 @@ from typing import List, Dict, Any, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.models_kg import KGNode, KGEdge, KGNodeDocument
 from app.services.schema_alignment_service import (
@@ -265,32 +266,76 @@ class KGAdapter:
                 )
                 return wd_existing, False
 
-        # 4. Create new node with embedding + Wikidata enrichment
+        # 4. Create new node with embedding + Wikidata enrichment.
+        # Race-safe insert: if a concurrent worker created the same
+        # (label_normalized, schema_type_uri, user_id) row between our step-1
+        # lookup and now, ON CONFLICT DO NOTHING suppresses the duplicate and
+        # we re-query to return the winner.
         canonical_label = name
         if wikidata_entity and wikidata_entity.label:
             canonical_label = wikidata_entity.label
 
-        node = KGNode(
-            label=canonical_label,
-            label_normalized=canonical_label.strip().lower(),
-            canonical_class_id=alignment.canonical_id if (alignment and alignment.matched) else None,
-            schema_type_uri=schema_type_uri,
-            raw_type=raw_type,
-            raw_description=description,
-            description=wikidata_entity.description if wikidata_entity and wikidata_entity.description else description,
-            wikidata_id=wikidata_entity.wikidata_id if wikidata_entity else None,
-            vector=node_vector,
-            user_id=user_id,
-        )
-        self.session.add(node)
-        await self.session.flush()  # get node.id
+        canonical_normalized = canonical_label.strip().lower()
+        node_values = {
+            "label": canonical_label,
+            "label_normalized": canonical_normalized,
+            "canonical_class_id": alignment.canonical_id if (alignment and alignment.matched) else None,
+            "schema_type_uri": schema_type_uri,
+            "raw_type": raw_type,
+            "raw_description": description,
+            "description": wikidata_entity.description if wikidata_entity and wikidata_entity.description else description,
+            "wikidata_id": wikidata_entity.wikidata_id if wikidata_entity else None,
+            "vector": node_vector,
+            "user_id": user_id,
+        }
 
-        logger.debug(
-            f"Created kg_node: '{canonical_label}' type={schema_type_uri or raw_type} "
-            f"wikidata={wikidata_entity.wikidata_id if wikidata_entity else 'none'} "
-            f"(match={'yes' if alignment and alignment.matched else 'no'})"
+        stmt = (
+            pg_insert(KGNode)
+            .values(**node_values)
+            .on_conflict_do_nothing(
+                index_elements=["label_normalized", "schema_type_uri", "user_id"]
+            )
+            .returning(KGNode.id)
         )
-        return node, True
+        result = await self.session.execute(stmt)
+        inserted_id = result.scalar_one_or_none()
+
+        if inserted_id is not None:
+            fetched = await self.session.execute(
+                select(KGNode).where(KGNode.id == inserted_id)
+            )
+            node = fetched.scalar_one()
+            logger.debug(
+                f"Created kg_node: '{canonical_label}' type={schema_type_uri or raw_type} "
+                f"wikidata={wikidata_entity.wikidata_id if wikidata_entity else 'none'} "
+                f"(match={'yes' if alignment and alignment.matched else 'no'})"
+            )
+            return node, True
+
+        # Concurrent insert won — fetch the node that now exists.
+        conflict_query = select(KGNode).where(
+            and_(
+                KGNode.label_normalized == canonical_normalized,
+                KGNode.user_id == user_id,
+                KGNode.schema_type_uri == schema_type_uri
+                if schema_type_uri
+                else KGNode.schema_type_uri.is_(None),
+            )
+        )
+        conflict_result = await self.session.execute(conflict_query)
+        existing_node = conflict_result.scalars().first()
+        if existing_node:
+            logger.info(
+                f"Race dedup: '{canonical_label}' matched concurrently-created "
+                f"node (id={existing_node.id})"
+            )
+            return existing_node, False
+
+        logger.warning(
+            f"ON CONFLICT suppressed insert of '{canonical_label}' but no "
+            f"matching row found — skipping"
+        )
+        return None, False
 
     async def _embed_text(self, text: str) -> Optional[List[float]]:
         """Generate an embedding vector for the given text."""

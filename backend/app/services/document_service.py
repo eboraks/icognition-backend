@@ -97,17 +97,21 @@ class DocumentService(UserIsolatedService[Document]):
         try:
             # Fetch web page content
             success, html_content, fetch_metadata = await fetch_web_page(url)
-            
+
+            # Strip null bytes that PostgreSQL rejects
+            if html_content:
+                html_content = html_content.replace("\x00", "")
+
             if success and html_content:
                 # Use HtmlContentService to parse content
                 html_service = HtmlContentService()
-                
+
                 # Extract all content and metadata
                 extraction_result = await html_service.extract_content(html_content, url)
-                
+
                 # Update document with fetched content
                 document.raw_html = html_content
-                
+
                 # Update title if not provided or if extracted title is better
                 if extraction_result.title and (
                     not title 
@@ -122,11 +126,11 @@ class DocumentService(UserIsolatedService[Document]):
                 
                 # Store author
                 if extraction_result.author:
-                    document.author = extraction_result.author
+                    document.authors = extraction_result.author
                 
                 # Store description from metadata
                 if extraction_result.metadata.get('description'):
-                    document.description = extraction_result.metadata['description']
+                    document.metadata_description = extraction_result.metadata['description']
                 
                 # Store published date
                 if extraction_result.publication_date:
@@ -157,7 +161,7 @@ class DocumentService(UserIsolatedService[Document]):
                 
                 # Copy tags
                 if extraction_result.tags:
-                    document.keywords = extraction_result.tags
+                    document.metadata_keywords = ", ".join(extraction_result.tags) if isinstance(extraction_result.tags, list) else extraction_result.tags
                 
                 # Store page detection info if available
                 if fetch_metadata.get('page_detection'):
@@ -267,7 +271,7 @@ class DocumentService(UserIsolatedService[Document]):
                     pass
             
             if extraction_result.tags:
-                document_data['keywords'] = extraction_result.tags
+                document_data['metadata_keywords'] = ", ".join(extraction_result.tags) if isinstance(extraction_result.tags, list) else extraction_result.tags
             
         elif content_type == "text":
             # Wrap text content in basic HTML structure
@@ -317,17 +321,21 @@ class DocumentService(UserIsolatedService[Document]):
         try:
             # Fetch web page content
             success, html_content, fetch_metadata = await fetch_web_page(document.url)
-            
+
+            # Strip null bytes that PostgreSQL rejects
+            if html_content:
+                html_content = html_content.replace("\x00", "")
+
             if success and html_content:
                 # Use HtmlContentService to parse content
                 html_service = HtmlContentService()
-                
+
                 # Extract all content and metadata
                 extraction_result = await html_service.extract_content(html_content, document.url)
-                
+
                 # Update document with fetched content
                 document.raw_html = html_content
-                
+
                 # Update title if extracted title is better
                 if extraction_result.title and len(extraction_result.title) > len(document.title):
                     document.title = extraction_result.title
@@ -338,11 +346,11 @@ class DocumentService(UserIsolatedService[Document]):
                 
                 # Store author
                 if extraction_result.author:
-                    document.author = extraction_result.author
+                    document.authors = extraction_result.author
                 
                 # Store description
                 if extraction_result.metadata.get('description'):
-                    document.description = extraction_result.metadata['description']
+                    document.metadata_description = extraction_result.metadata['description']
                 
                 # Store extracted metadata
                 if document.document_metadata is None:
@@ -355,7 +363,7 @@ class DocumentService(UserIsolatedService[Document]):
                 
                 # Copy tags
                 if extraction_result.tags:
-                    document.keywords = extraction_result.tags
+                    document.metadata_keywords = ", ".join(extraction_result.tags) if isinstance(extraction_result.tags, list) else extraction_result.tags
                 
                 # Store publication date
                 if extraction_result.publication_date:

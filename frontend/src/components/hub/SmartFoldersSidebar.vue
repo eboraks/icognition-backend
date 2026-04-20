@@ -1,45 +1,5 @@
 <template>
   <div class="smart-folders-sidebar">
-    <!-- Smart Folders Header -->
-    <div class="sidebar-section">
-      <h3 class="sidebar-title clickable" @click="sourcesCollapsed = !sourcesCollapsed">
-        <i class="pi" :class="sourcesCollapsed ? 'pi-chevron-right' : 'pi-chevron-down'" />
-        <i class="pi pi-folder" />
-        Smart Folders
-      </h3>
-
-      <div v-show="!sourcesCollapsed">
-        <!-- All Sources option -->
-        <div
-          class="source-item"
-          :class="{ active: !activeSource }"
-          @click="selectSource(null)"
-        >
-          <i class="pi pi-th-large source-icon" />
-          <span class="source-name">All Sources</span>
-          <span class="source-count">{{ totalCount }}</span>
-        </div>
-
-        <!-- Source list -->
-        <div
-          v-for="source in hubStore.sources"
-          :key="source.site_name"
-          class="source-item"
-          :class="{ active: activeSource === source.site_name }"
-          @click="selectSource(source.site_name)"
-        >
-          <img
-            :src="faviconUrl(source.site_name)"
-            :alt="source.site_name"
-            class="source-favicon"
-            @error="onFaviconError"
-          />
-          <span class="source-name">{{ source.site_name }}</span>
-          <span class="source-count">{{ source.count }}</span>
-        </div>
-      </div>
-    </div>
-
     <!-- Themes -->
     <div v-if="hubStore.themes.length > 0" class="sidebar-section">
       <h3 class="sidebar-title clickable" @click="themesCollapsed = !themesCollapsed">
@@ -118,6 +78,53 @@
           />
           <span class="source-name">{{ briefLabel(rs.brief) }}</span>
           <span class="source-count">{{ rs.doc_count }}</span>
+          <button
+            class="research-delete-btn"
+            title="Delete research"
+            @click.stop="deleteResearch(rs.id)"
+          >
+            <i class="pi pi-trash" />
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Smart Folders -->
+    <div class="sidebar-section">
+      <h3 class="sidebar-title clickable" @click="sourcesCollapsed = !sourcesCollapsed">
+        <i class="pi" :class="sourcesCollapsed ? 'pi-chevron-right' : 'pi-chevron-down'" />
+        <i class="pi pi-folder" />
+        Smart Folders
+      </h3>
+
+      <div v-show="!sourcesCollapsed">
+        <!-- All Sources option -->
+        <div
+          class="source-item"
+          :class="{ active: !activeSource }"
+          @click="selectSource(null)"
+        >
+          <i class="pi pi-th-large source-icon" />
+          <span class="source-name">All Sources</span>
+          <span class="source-count">{{ totalCount }}</span>
+        </div>
+
+        <!-- Source list -->
+        <div
+          v-for="source in hubStore.sources"
+          :key="source.site_name"
+          class="source-item"
+          :class="{ active: activeSource === source.site_name }"
+          @click="selectSource(source.site_name)"
+        >
+          <img
+            :src="faviconUrl(source.site_name)"
+            :alt="source.site_name"
+            class="source-favicon"
+            @error="onFaviconError"
+          />
+          <span class="source-name">{{ source.site_name }}</span>
+          <span class="source-count">{{ source.count }}</span>
         </div>
       </div>
     </div>
@@ -191,6 +198,10 @@ function selectResearch(researchId: number | null) {
   hubStore.filterByResearch(researchId)
 }
 
+async function deleteResearch(researchId: number) {
+  await hubStore.deleteResearchSession(researchId)
+}
+
 function briefLabel(brief: string): string {
   if (!brief) return 'Untitled research'
   const trimmed = brief.trim()
@@ -248,6 +259,7 @@ function onBookmarkContextMenu(event: MouseEvent, doc: DocumentSummary) {
   padding: 1rem;
   background: var(--p-surface-card);
   border-right: 1px solid var(--p-content-border-color);
+  font-size: var(--app-font-size, 12px);
 }
 
 .sidebar-section {
@@ -260,7 +272,7 @@ function onBookmarkContextMenu(event: MouseEvent, doc: DocumentSummary) {
 }
 
 .sidebar-title {
-  font-size: 0.75rem;
+  font-size: 0.9em;
   font-weight: 600;
   text-transform: uppercase;
   color: var(--p-text-muted-color);
@@ -272,7 +284,7 @@ function onBookmarkContextMenu(event: MouseEvent, doc: DocumentSummary) {
 }
 
 .sidebar-title i {
-  font-size: 0.8rem;
+  font-size: 0.95em;
 }
 
 .sidebar-title.clickable {
@@ -295,7 +307,7 @@ function onBookmarkContextMenu(event: MouseEvent, doc: DocumentSummary) {
   border-radius: 6px;
   cursor: pointer;
   transition: background-color 0.15s;
-  font-size: 0.85rem;
+  font-size: 1em;
   color: var(--p-text-color);
 }
 
@@ -317,7 +329,7 @@ function onBookmarkContextMenu(event: MouseEvent, doc: DocumentSummary) {
 }
 
 .source-icon {
-  font-size: 0.8rem;
+  font-size: 0.95em;
   width: 16px;
   text-align: center;
   flex-shrink: 0;
@@ -332,7 +344,7 @@ function onBookmarkContextMenu(event: MouseEvent, doc: DocumentSummary) {
 }
 
 .source-count {
-  font-size: 0.7rem;
+  font-size: 0.85em;
   background: var(--p-surface-200);
   color: var(--p-text-muted-color);
   padding: 0.1rem 0.4rem;
@@ -350,7 +362,7 @@ function onBookmarkContextMenu(event: MouseEvent, doc: DocumentSummary) {
   border-radius: 6px;
   cursor: pointer;
   transition: background-color 0.15s;
-  font-size: 0.8rem;
+  font-size: 0.95em;
   color: var(--p-text-color);
 }
 
@@ -359,7 +371,7 @@ function onBookmarkContextMenu(event: MouseEvent, doc: DocumentSummary) {
 }
 
 .bookmark-item i {
-  font-size: 0.75rem;
+  font-size: 0.9em;
   margin-top: 0.15rem;
   color: var(--p-text-muted-color);
   flex-shrink: 0;
@@ -388,7 +400,7 @@ function onBookmarkContextMenu(event: MouseEvent, doc: DocumentSummary) {
   padding: 0.15rem 0.3rem;
   border-radius: 4px;
   color: var(--p-text-muted-color);
-  font-size: 0.7rem;
+  font-size: 0.85em;
   transition: background-color 0.15s, color 0.15s;
 }
 
@@ -398,7 +410,29 @@ function onBookmarkContextMenu(event: MouseEvent, doc: DocumentSummary) {
 }
 
 .research-item .source-name {
-  font-size: 0.8rem;
+  font-size: 0.95em;
   line-height: 1.2;
+}
+
+.research-delete-btn {
+  opacity: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.2rem 0.35rem;
+  border-radius: 3px;
+  color: var(--p-text-muted-color);
+  font-size: 0.85em;
+  flex-shrink: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+
+.research-item:hover .research-delete-btn {
+  opacity: 1;
+}
+
+.research-delete-btn:hover {
+  background: var(--p-red-50);
+  color: var(--p-red-500);
 }
 </style>

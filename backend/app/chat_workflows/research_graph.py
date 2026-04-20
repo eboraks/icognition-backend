@@ -14,6 +14,7 @@ from app.chat_workflows.tools import get_google_search_tool, create_retrieve_doc
 from app.services.prompt_service import get_prompt, get_all_skills, get_skill, get_default_skill, match_skill
 from app.services.prompt_utils import PromptType
 from app.utils.logging import get_logger
+from app.utils.langfuse_worker import get_langfuse_handler
 
 logger = get_logger(__name__)
 
@@ -203,6 +204,7 @@ def build_research_graph(
     db_session: Optional[AsyncSession] = None,
     user_id: Optional[str] = None,
     skill_override: Optional[str] = None,
+    chat_session_id: Optional[int] = None,
 ):
     """
     Builds the compiled StateGraph for the Reflective Research Agent.
@@ -289,8 +291,10 @@ def build_research_graph(
             skill = await match_skill(str(last_message))
 
         requires_research = bool(result.get("requires_research", False))
-        if requires_research:
-            logger.info(f"Intent flagged as research: {result['refined_query'][:80]}")
+        logger.info(
+            f"Intent classification: requires_research={requires_research}, "
+            f"skill={skill}, query={result.get('refined_query', '')[:80]}"
+        )
 
         return {
             "latest_query": result["refined_query"],
@@ -549,6 +553,7 @@ def build_research_graph(
                     user_id=user_id,
                     brief=brief,
                     status="running",
+                    chat_session_id=chat_session_id,
                     budget={
                         "max_subagents": DEFAULT_MAX_SUBAGENTS,
                         "max_tool_calls_per_subagent": DEFAULT_MAX_TOOL_CALLS_PER_SUBAGENT,
@@ -586,6 +591,19 @@ def build_research_graph(
             }
             # Use a unique thread_id so this run doesn't collide with anything
             run_config = {"configurable": {"thread_id": f"research_{research_session_id}"}}
+
+            # Wire Langfuse tracing into the research graph
+            lf_handler = get_langfuse_handler()
+            if lf_handler:
+                run_config["callbacks"] = [lf_handler]
+                run_config["run_name"] = "Research Multi-Agent"
+                run_config["metadata"] = {
+                    "research_session_id": str(research_session_id),
+                    "user_id": str(user_id),
+                    "brief": brief[:200],
+                }
+                run_config["tags"] = ["research_agent"]
+
             final_state = await research_graph.ainvoke(initial_state, config=run_config)
             final_response = final_state.get("final_response", "Research completed but produced no response.")
             saved_doc_ids = final_state.get("saved_doc_ids", []) or []

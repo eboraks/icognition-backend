@@ -62,6 +62,7 @@ cover/
 
 # AI Agents
 .claude/
+CLAUDE.md
 
 # Translations
 *.mo

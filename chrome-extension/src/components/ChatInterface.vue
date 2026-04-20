@@ -36,7 +36,7 @@
                   <p class="comment-card-text" :style="{ fontSize: fontSize }">{{ option.text }}</p>
                 </div>
               </div>
-              <div v-else class="message-text" v-html="message.content"></div>
+              <div v-else class="message-text" v-html="renderAssistantContent(message.content)"></div>
             </template>
             <!-- Status text: shown while pending (matches web app ChatPanel behaviour) -->
             <div v-if="message.pending && message.statusText" class="message-status">
@@ -125,6 +125,19 @@ const inputMessage = ref('');
 const messagesContainer = ref(null);
 const loading = ref(false);
 const copiedLabel = ref(null);
+
+// Render assistant markdown through marked. Legacy stored messages were
+// saved as mixed HTML (<p>...</p><ul>...), so first strip the <p> wrappers
+// the same way the web app does — otherwise marked treats the block as raw
+// HTML and swallows any following markdown (e.g. ### headings after </ul>).
+const renderAssistantContent = (text) => {
+  if (!text) return '';
+  const cleaned = text
+    .replace(/<p>/gi, '')
+    .replace(/<\/p>/gi, '\n\n')
+    .trim();
+  return marked.parse(cleaned, { async: false });
+};
 
 const decodeHtmlEntities = (text) => {
   const doc = new DOMParser().parseFromString(text, 'text/html');

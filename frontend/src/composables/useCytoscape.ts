@@ -18,23 +18,33 @@ export interface UseCytoscapeOptions {
 export function useCytoscape(options: UseCytoscapeOptions) {
   const cy = ref<Core | null>(null)
 
-  // Font size presets
-  type FontSize = 'small' | 'medium' | 'large'
-  const fontSizeConfig = { small: 9, medium: 11, large: 14 }
-  const edgeFontSizeConfig = { small: 7, medium: 9, large: 11 }
-  const currentFontSize = ref<FontSize>('medium')
+  // Font size (numeric px value applied globally)
+  const currentFontSize = ref('14')
 
-  function setFontSize(size: FontSize) {
+  function setFontSize(size: string) {
     currentFontSize.value = size
-    if (!cy.value) return
-    cy.value.style()
-      .selector('node')
-      .style('font-size', `${fontSizeConfig[size]}px`)
-      .selector('node[type = "document"]')
-      .style('font-size', `${fontSizeConfig[size] - 1}px`)
-      .selector('edge')
-      .style('font-size', `${edgeFontSizeConfig[size]}px`)
-      .update()
+    const px = parseInt(size, 10) || 12
+
+    // Cytoscape canvas text renders ~25% larger than DOM text at the same px,
+    // so scale down the graph labels to look visually consistent with the UI.
+    const graphPx = Math.round(px * 0.8)
+    const docPx = Math.max(graphPx - 1, 6)
+    const edgePx = Math.max(graphPx - 2, 5)
+
+    // Apply to Cytoscape graph (scaled down)
+    if (cy.value) {
+      cy.value.style()
+        .selector('node')
+        .style('font-size', `${graphPx}px`)
+        .selector('node[type = "document"]')
+        .style('font-size', `${docPx}px`)
+        .selector('edge')
+        .style('font-size', `${edgePx}px`)
+        .update()
+    }
+
+    // Apply globally via CSS custom property (sidebar, chat, details — actual px)
+    document.documentElement.style.setProperty('--app-font-size', `${px}px`)
   }
 
   // Default cose-bilkent layout options with good spacing
@@ -85,7 +95,7 @@ export function useCytoscape(options: UseCytoscapeOptions) {
         'shape': 'ellipse',
         'width': 40,
         'height': 40,
-        'font-size': '11px',
+        'font-size': '10px',
         'text-valign': 'bottom',
         'text-margin-y': 6,
         'color': '#374151',
@@ -100,7 +110,7 @@ export function useCytoscape(options: UseCytoscapeOptions) {
       style: {
         'width': 30,
         'height': 36,
-        'font-size': '10px',
+        'font-size': '9px',
         'text-max-width': '100px',
       },
     },
@@ -179,6 +189,8 @@ export function useCytoscape(options: UseCytoscapeOptions) {
 
   function init() {
     if (!options.container.value) return
+    // Set initial global font size CSS variable
+    document.documentElement.style.setProperty('--app-font-size', `${currentFontSize.value}px`)
 
     cy.value = cytoscape({
       container: options.container.value,

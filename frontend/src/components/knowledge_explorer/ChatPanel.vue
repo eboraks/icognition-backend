@@ -122,6 +122,18 @@ interface CommentOption {
   text: string;
 }
 
+function renderMarkdown(text: string): string {
+  if (!text) return ''
+  // Strip <p> wrapper tags that the backend adds — they prevent marked from
+  // parsing markdown inside them (e.g., <p>## Heading</p> stays as-is).
+  // Convert <p>...</p> to plain text blocks separated by double newlines.
+  let cleaned = text
+    .replace(/<p>/gi, '')
+    .replace(/<\/p>/gi, '\n\n')
+    .trim()
+  return marked.parse(cleaned, { async: false }) as string
+}
+
 interface ChatMessage {
   type: 'system' | 'user' | 'filter';
   content: string;
@@ -357,13 +369,14 @@ const loadInitialMessage = async () => {
     if (chatStore.activeSession) {
       messages.value = chatStore.activeSession.messages.map(msg => {
         const isPending = (msg as any).pending ?? false;
+        const isUser = msg.senderId === authStore.currentUser?.uid;
         return {
-          type: msg.senderId === authStore.currentUser?.uid ? 'user' : 'system',
-          content: msg.content,
+          type: isUser ? 'user' : 'system',
+          content: isUser ? msg.content : renderMarkdown(msg.content),
           actions: (msg as any).actions,
           resources: (msg as any).resources,
           pending: isPending,
-          commentOptions: !isPending ? parseCommentOptions(msg.content) : null,
+          commentOptions: !isPending && !isUser ? parseCommentOptions(msg.content) : null,
         };
       });
     } else {
@@ -504,14 +517,15 @@ watch(
       // Convert chatStore messages to ChatPanel's local ChatMessage format
       const newMessagesFormatted: ChatMessage[] = newMessages.map(msg => {
         const isPending = (msg as any).pending ?? false;
+        const isUser = msg.senderId === authStore.currentUser?.uid;
         return {
-          type: (msg.senderId === authStore.currentUser?.uid ? 'user' : 'system') as 'user' | 'system',
-          content: msg.content,
+          type: (isUser ? 'user' : 'system') as 'user' | 'system',
+          content: isUser ? msg.content : renderMarkdown(msg.content),
           actions: (msg as any).actions,
           resources: (msg as any).resources,
           pending: isPending,
           statusText: (msg as any).statusText,
-          commentOptions: !isPending ? parseCommentOptions(msg.content) : null,
+          commentOptions: !isPending && !isUser ? parseCommentOptions(msg.content) : null,
         };
       });
       
@@ -557,6 +571,7 @@ watch(
         (newChatSessionId === oldChatSessionId && (newEntityId !== oldEntityId || newDocumentId !== oldDocumentId))
       ) {
         messages.value = [];
+        isLoadingInitialMessage.value = false;  // Reset guard so new session can load
         loadInitialMessage();
       }
     }, 100); // 100ms debounce
@@ -668,36 +683,81 @@ onBeforeUnmount(() => {
 
 .message-text {
   white-space: normal;
-  line-height: 1.45;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  color: #334155;
-  font-size: 0.92rem;
+  line-height: 1.7;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  color: #1e293b;
+  font-size: var(--app-font-size, 15px);
+  letter-spacing: -0.01em;
 }
 
-.message-text p {
-  margin: 0 0 0.6rem 0;
+.message-text :deep(p) {
+  margin: 0 0 1em 0;
 }
 
-.message-text p:last-child {
+.message-text :deep(p:last-child) {
   margin-bottom: 0;
 }
 
-.message-text h3 {
-  margin: 0 0 0.4rem 0;
+.message-text :deep(h2) {
+  font-size: 1.2em;
+  font-weight: 700;
+  margin: 1.5em 0 0.5em 0;
 }
 
-.message-text h4 {
-  margin: 0.5rem 0 0.25rem 0;
+.message-text :deep(h3) {
+  font-size: 1.1em;
+  font-weight: 700;
+  margin: 1.25em 0 0.4em 0;
 }
 
-.message-text ul {
-  margin: 0.4rem 0 0.4rem 1.25rem;
-  padding-left: 1.25rem;
+.message-text :deep(h4) {
+  font-size: 1.05em;
+  font-weight: 600;
+  margin: 1em 0 0.3em 0;
+}
+
+.message-text :deep(ul),
+.message-text :deep(ol) {
+  margin: 0.5em 0 1em 0;
+  padding-left: 1.5em;
+}
+
+.message-text :deep(ul) {
   list-style-type: disc;
 }
 
-.message-text li {
-  margin-bottom: 0.3rem;
+.message-text :deep(li) {
+  margin-bottom: 0.4em;
+  line-height: 1.65;
+}
+
+.message-text :deep(strong) {
+  font-weight: 600;
+}
+
+.message-text :deep(a) {
+  color: #2563eb;
+  text-decoration: underline;
+  text-decoration-color: rgba(37, 99, 235, 0.3);
+}
+
+.message-text :deep(a:hover) {
+  text-decoration-color: rgba(37, 99, 235, 0.8);
+}
+
+.message-text :deep(code) {
+  background: #f1f5f9;
+  padding: 0.15em 0.35em;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.message-text :deep(blockquote) {
+  border-left: 3px solid #cbd5e1;
+  padding-left: 1em;
+  margin: 0.75em 0;
+  color: #475569;
 }
 
 .system-message {
@@ -735,11 +795,11 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-.message-content p {
-  margin: 0 0 0.75rem 0;
-  line-height: 1.65;
+.message-content :deep(p) {
+  margin: 0 0 1em 0;
+  line-height: 1.7;
   color: #1e293b;
-  font-size: 0.92rem;
+  font-size: inherit;
   letter-spacing: -0.01em;
 }
 

@@ -111,6 +111,35 @@
             </div>
           </template>
 
+          <!-- Research result details -->
+          <template v-else-if="hubStore.selectedResearchDetail?.final_response">
+            <div class="detail-header">
+              <span class="detail-type-badge">Research</span>
+              <h3 class="detail-title">{{ hubStore.selectedResearchDetail.brief }}</h3>
+              <div class="research-meta">
+                {{ new Date(hubStore.selectedResearchDetail.created_at).toLocaleDateString() }}
+                <span v-if="hubStore.selectedResearchDetail.documents?.length">
+                  &middot; {{ hubStore.selectedResearchDetail.documents.length }} sources
+                </span>
+              </div>
+            </div>
+            <div class="detail-description markdown-body message-text"
+                 v-html="renderMarkdown(hubStore.selectedResearchDetail.final_response)"
+            />
+            <div v-if="hubStore.selectedResearchDetail.documents?.length" class="detail-section">
+              <h4 class="section-title">Saved Sources</h4>
+              <div
+                v-for="doc in hubStore.selectedResearchDetail.documents"
+                :key="doc.id"
+                class="doc-item"
+              >
+                <i class="pi pi-file" />
+                <a v-if="doc.url" :href="doc.url" target="_blank" rel="noopener" class="doc-link">{{ doc.title }}</a>
+                <span v-else>{{ doc.title }}</span>
+              </div>
+            </div>
+          </template>
+
           <!-- No selection -->
           <template v-else>
             <div class="no-selection">
@@ -235,11 +264,38 @@ const graphStore = useGraphStore()
 
 const activeTab = ref<'details' | 'chat'>('details')
 
+function renderMarkdown(text: string): string {
+  if (!text) return ''
+  // Strip <p> wrapper tags that the backend adds — they prevent marked from
+  // parsing markdown inside them.
+  let cleaned = text
+    .replace(/<p>/gi, '')
+    .replace(/<\/p>/gi, '\n\n')
+    .trim()
+  return marked.parse(cleaned, { async: false }) as string
+}
+
 // Auto-switch to Details tab when a node is selected
 const hasSelection = computed(() => hubStore.selectedEntityId !== null || hubStore.selectedDocumentId !== null)
 
 watch(hasSelection, (val) => {
   if (val) activeTab.value = 'details'
+})
+
+// Auto-switch to Chat tab when requested
+watch(() => hubStore.requestChatTab, (val) => {
+  if (val) {
+    activeTab.value = 'chat'
+    hubStore.requestChatTab = false
+  }
+})
+
+// Auto-switch to Details tab when requested (e.g. research session clicked)
+watch(() => hubStore.requestDetailsTab, (val) => {
+  if (val) {
+    activeTab.value = 'details'
+    hubStore.requestDetailsTab = false
+  }
 })
 
 // Detail data
@@ -383,6 +439,7 @@ defineExpose({
   background: var(--p-surface-card);
   flex-shrink: 0;
   position: relative;
+  font-size: var(--app-font-size, 12px);
 }
 
 .hub-chat-panel.open {
@@ -437,7 +494,7 @@ defineExpose({
   border: none;
   background: none;
   cursor: pointer;
-  font-size: 0.82rem;
+  font-size: 0.95em;
   font-weight: 500;
   color: var(--p-text-muted-color);
   border-bottom: 2px solid transparent;
@@ -455,7 +512,7 @@ defineExpose({
 }
 
 .tab-btn i {
-  font-size: 0.85rem;
+  font-size: 1em;
 }
 
 .tab-dot {
@@ -512,7 +569,7 @@ defineExpose({
 }
 
 .detail-type-badge {
-  font-size: 0.65rem;
+  font-size: 0.8em;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -523,7 +580,7 @@ defineExpose({
 }
 
 .detail-title {
-  font-size: 1.1rem;
+  font-size: 1.25em;
   font-weight: 700;
   color: var(--p-text-color);
   margin: 0.5rem 0 0 0;
@@ -542,22 +599,38 @@ defineExpose({
 }
 
 .detail-description {
-  font-size: 0.88rem;
-  line-height: 1.6;
-  color: #475569;
+  font-size: var(--app-font-size, 14px);
+  line-height: 1.7;
+  color: #1e293b;
   margin-bottom: 0.5rem;
   word-wrap: break-word;
 }
 
+.research-meta {
+  font-size: 0.85em;
+  color: var(--p-text-muted-color);
+  margin-top: 0.25rem;
+}
+
+.doc-link {
+  color: var(--p-primary-color);
+  text-decoration: none;
+}
+
+.doc-link:hover {
+  text-decoration: underline;
+}
+
 /* Markdown rendering inside the details panel */
 .markdown-body :deep(p) {
-  margin: 0 0 0.6rem 0;
+  margin: 0 0 1em 0;
+  line-height: 1.7;
 }
 .markdown-body :deep(p:last-child) {
   margin-bottom: 0;
 }
 .markdown-body :deep(strong) {
-  font-weight: 700;
+  font-weight: 600;
   color: var(--p-text-color);
 }
 .markdown-body :deep(em) {
@@ -569,26 +642,37 @@ defineExpose({
 .markdown-body :deep(h4) {
   font-weight: 700;
   color: var(--p-text-color);
-  margin: 0.8rem 0 0.4rem 0;
   line-height: 1.3;
 }
-.markdown-body :deep(h1) { font-size: 1rem; }
-.markdown-body :deep(h2) { font-size: 0.95rem; }
-.markdown-body :deep(h3) { font-size: 0.9rem; }
-.markdown-body :deep(h4) { font-size: 0.88rem; }
+.markdown-body :deep(h1) { font-size: 1.3em; margin: 1.5em 0 0.5em 0; }
+.markdown-body :deep(h2) { font-size: 1.2em; margin: 1.5em 0 0.5em 0; }
+.markdown-body :deep(h3) { font-size: 1.1em; margin: 1.25em 0 0.4em 0; }
+.markdown-body :deep(h4) { font-size: 1.05em; margin: 1em 0 0.3em 0; }
 .markdown-body :deep(ul),
 .markdown-body :deep(ol) {
-  margin: 0 0 0.6rem 0;
-  padding-left: 1.25rem;
+  margin: 0.5em 0 1em 0;
+  padding-left: 1.5em;
+}
+.markdown-body :deep(ul) {
+  list-style-type: disc;
 }
 .markdown-body :deep(li) {
-  margin-bottom: 0.2rem;
+  margin-bottom: 0.4em;
+  line-height: 1.65;
+}
+.markdown-body :deep(a) {
+  color: #2563eb;
+  text-decoration: underline;
+  text-decoration-color: rgba(37, 99, 235, 0.3);
+}
+.markdown-body :deep(a:hover) {
+  text-decoration-color: rgba(37, 99, 235, 0.8);
 }
 .markdown-body :deep(code) {
   background: var(--p-surface-100);
   padding: 0.1rem 0.3rem;
   border-radius: 3px;
-  font-size: 0.82rem;
+  font-size: 0.95em;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .markdown-body :deep(pre) {
@@ -596,7 +680,7 @@ defineExpose({
   padding: 0.5rem 0.75rem;
   border-radius: 4px;
   overflow-x: auto;
-  font-size: 0.8rem;
+  font-size: 0.95em;
   margin: 0 0 0.6rem 0;
 }
 .markdown-body :deep(pre code) {
@@ -623,7 +707,7 @@ defineExpose({
   padding: 0.25rem 0;
   margin-bottom: 1rem;
   cursor: pointer;
-  font-size: 0.78rem;
+  font-size: 0.92em;
   font-weight: 600;
   color: var(--p-primary-color);
   transition: color 0.15s;
@@ -638,7 +722,7 @@ defineExpose({
 }
 
 .section-title {
-  font-size: 0.72rem;
+  font-size: 0.85em;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -653,7 +737,7 @@ defineExpose({
   padding: 0.5rem 0.6rem;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 0.84rem;
+  font-size: 0.97em;
   color: var(--p-text-color);
   line-height: 1.4;
   transition: background 0.15s;
@@ -665,7 +749,7 @@ defineExpose({
 
 .doc-item i {
   color: var(--p-text-muted-color);
-  font-size: 0.8rem;
+  font-size: 0.95em;
   flex-shrink: 0;
   margin-top: 0.15rem;
 }
@@ -678,7 +762,7 @@ defineExpose({
 
 .no-selection p {
   margin-top: 0.75rem;
-  font-size: 0.85rem;
+  font-size: 1em;
 }
 
 /* Chat session header */
@@ -701,7 +785,7 @@ defineExpose({
 }
 
 .chat-session-title {
-  font-size: 0.82rem;
+  font-size: 0.95em;
   font-weight: 600;
   color: var(--p-text-color);
   overflow: hidden;
@@ -716,7 +800,7 @@ defineExpose({
 
 .title-input {
   flex: 1;
-  font-size: 0.82rem;
+  font-size: 0.95em;
   font-weight: 600;
   padding: 0.2rem 0.4rem;
   border: 1px solid var(--p-primary-color);
@@ -739,7 +823,7 @@ defineExpose({
   padding: 0.3rem;
   border-radius: 4px;
   color: var(--p-text-muted-color);
-  font-size: 0.8rem;
+  font-size: 0.95em;
   transition: background 0.15s, color 0.15s;
 }
 
@@ -795,7 +879,7 @@ defineExpose({
 }
 
 .recent-title {
-  font-size: 0.75rem;
+  font-size: 0.9em;
   font-weight: 600;
   text-transform: uppercase;
   color: var(--p-text-muted-color);
@@ -811,11 +895,11 @@ defineExpose({
 
 .no-chats p {
   margin-top: 0.5rem;
-  font-size: 0.85rem;
+  font-size: 1em;
 }
 
 .no-chats .hint {
-  font-size: 0.8rem;
+  font-size: 0.95em;
   opacity: 0.7;
 }
 
@@ -827,7 +911,7 @@ defineExpose({
   border-radius: 6px;
   cursor: pointer;
   transition: background-color 0.15s;
-  font-size: 0.85rem;
+  font-size: 1em;
   color: var(--p-text-color);
 }
 
@@ -837,7 +921,7 @@ defineExpose({
 
 .session-item i {
   color: var(--p-text-muted-color);
-  font-size: 0.8rem;
+  font-size: 0.95em;
   flex-shrink: 0;
 }
 
@@ -866,4 +950,6 @@ defineExpose({
     display: none;
   }
 }
+
+
 </style>

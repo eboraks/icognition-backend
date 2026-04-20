@@ -15,6 +15,22 @@ from app.utils.text_utils import extract_text_from_html
 logger = get_logger(__name__)
 
 
+def _looks_like_undecoded_compression(text: str, sample_bytes: int = 4096) -> bool:
+    """
+    Return True when `text` looks like compressed bytes that were decoded as
+    UTF-8 with errors='replace'. Symptom: a dense stream of U+FFFD characters
+    in the first few KB. Normal HTML almost never exceeds ~0.1% replacement
+    chars; compressed bodies decoded as text run well above 30%.
+    """
+    if not text:
+        return False
+    sample = text[:sample_bytes]
+    if not sample:
+        return False
+    replacement_ratio = sample.count("\uFFFD") / len(sample)
+    return replacement_ratio > 0.05
+
+
 class WebPageFetcher:
     """Service for fetching web page content"""
     
@@ -348,7 +364,20 @@ class WebPageFetcher:
             
             # Get HTML content
             html_content = response.text
-            
+
+            if _looks_like_undecoded_compression(html_content):
+                encoding_header = response.headers.get('content-encoding', '<none>')
+                logger.error(
+                    f"Response body for {url} looks like undecoded compressed bytes "
+                    f"(content-encoding={encoding_header}). Treating as fetch failure."
+                )
+                return False, None, {
+                    'error': 'Compressed response not decoded',
+                    'content_encoding': encoding_header,
+                    'status_code': response.status_code,
+                    'page_detection': page_detection,
+                }
+
             # Check for JavaScript placeholder content
             js_placeholders = [
                 'javascript is not available',
@@ -437,7 +466,21 @@ class WebPageFetcher:
                     
                     # Get HTML content
                     html_content = response.text
-                    
+
+                    if _looks_like_undecoded_compression(html_content):
+                        encoding_header = response.headers.get('content-encoding', '<none>')
+                        logger.error(
+                            f"Retry response body for {url} looks like undecoded "
+                            f"compressed bytes (content-encoding={encoding_header}). "
+                            f"Treating as fetch failure."
+                        )
+                        return False, None, {
+                            'error': 'Compressed response not decoded',
+                            'content_encoding': encoding_header,
+                            'status_code': response.status_code,
+                            'page_detection': page_detection,
+                        }
+
                     # Check for JavaScript placeholder content
                     html_lower = html_content.lower()
                     has_js_placeholder = any(placeholder in html_lower for placeholder in [

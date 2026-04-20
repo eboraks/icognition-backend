@@ -25,6 +25,9 @@ export const useHubStore = defineStore('hub', () => {
   const themes = ref<ThemeSummary[]>([])
   const researchFilter = ref<number | null>(null)
   const researchSessions = ref<ResearchSessionSummary[]>([])
+  const selectedResearchDetail = ref<any>(null)
+  const requestChatTab = ref(false)   // Signal for chat panel to switch to chat tab
+  const requestDetailsTab = ref(false) // Signal for chat panel to switch to details tab
   const relatedBookmarks = ref<DocumentSummary[]>([])
   const initialLoading = ref(false)
 
@@ -123,6 +126,7 @@ export const useHubStore = defineStore('hub', () => {
     sourceFilter.value = siteName
     themeFilter.value = null
     researchFilter.value = null
+    selectedResearchDetail.value = null
     await loadDiscoveryGraph(siteName || undefined)
   }
 
@@ -139,6 +143,7 @@ export const useHubStore = defineStore('hub', () => {
     themeFilter.value = themeId
     sourceFilter.value = null
     researchFilter.value = null
+    selectedResearchDetail.value = null
     await loadDiscoveryGraph(undefined, themeId || undefined)
   }
 
@@ -155,7 +160,34 @@ export const useHubStore = defineStore('hub', () => {
     researchFilter.value = researchId
     sourceFilter.value = null
     themeFilter.value = null
+    selectedResearchDetail.value = null
     await loadDiscoveryGraph(undefined, undefined, researchId || undefined)
+    if (researchId) {
+      try {
+        const resp = await knowledgeService.getResearchSession(researchId)
+        selectedResearchDetail.value = resp.data
+        // Open right panel and show Details tab (not Chat)
+        chatPanelOpen.value = true
+        requestDetailsTab.value = true
+      } catch (err) {
+        console.error('Failed to load research detail:', err)
+      }
+    }
+  }
+
+  async function deleteResearchSession(researchId: number) {
+    try {
+      await knowledgeService.deleteResearchSession(researchId)
+      researchSessions.value = researchSessions.value.filter(rs => rs.id !== researchId)
+      // Clear filter if we just deleted the active one
+      if (researchFilter.value === researchId) {
+        researchFilter.value = null
+        selectedResearchDetail.value = null
+        await loadDiscoveryGraph()
+      }
+    } catch (err) {
+      console.error('Failed to delete research session:', err)
+    }
   }
 
   async function reassignDocument(documentId: number, fromThemeId: number, toThemeId: number) {
@@ -208,6 +240,9 @@ export const useHubStore = defineStore('hub', () => {
     themes,
     researchFilter,
     researchSessions,
+    selectedResearchDetail,
+    requestChatTab,
+    requestDetailsTab,
     relatedBookmarks,
     initialLoading,
     hasSelection,
@@ -222,6 +257,7 @@ export const useHubStore = defineStore('hub', () => {
     filterBySource,
     filterByTheme,
     filterByResearch,
+    deleteResearchSession,
     reassignDocument,
     reclusterThemes,
     closeChatPanel,

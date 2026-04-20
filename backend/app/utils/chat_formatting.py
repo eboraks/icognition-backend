@@ -37,7 +37,7 @@ def _build_source_html(doc_id: str, title: str) -> str:
     )
 
 
-def _process_source_tags(text: str) -> str:
+def process_source_tags(text: str) -> str:
     """Convert <source doc_id="ID">Title</source> tags and SOURCE_N references
     into interactive HTML with an info button."""
 
@@ -127,7 +127,7 @@ def format_chat_message(content: str) -> str:
         return "<p></p>"
 
     # Process <source> tags BEFORE splitting/escaping (they contain raw HTML output)
-    content = _process_source_tags(content)
+    content = process_source_tags(content)
 
     lines = content.splitlines()
     html_parts: List[str] = []

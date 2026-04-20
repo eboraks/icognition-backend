@@ -101,6 +101,8 @@ dependencies = [
     "opentelemetry-sdk>=1.22.0",
     "opentelemetry-exporter-otlp>=1.22.0",
     "tavily-python>=0.7.23",
+    "brotli>=1.2.0",
+    "zstandard>=0.25.0",
 ]
 
 [project.optional-dependencies]

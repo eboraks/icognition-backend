@@ -5,7 +5,7 @@ from app.models import ChatSession, ChatMessage
 from typing import List, Optional
 from fastapi import Depends
 from datetime import datetime, timezone
-from app.utils.chat_formatting import format_chat_message
+from app.utils.chat_formatting import format_chat_message, process_source_tags
 from app.core.config import settings
 import logging
 
@@ -120,7 +120,17 @@ class ChatSessionService:
             logger.error("Attempted to save message to missing session %s", session_id)
             raise ValueError("Chat session not found")
 
-        formatted_content = format_chat_message(content or "")
+        # Assistant messages are rendered by the frontend via marked.js — store
+        # raw markdown so headings, code blocks, tables, etc. render correctly.
+        # Only apply source-tag → interactive HTML conversion so citation
+        # buttons still work. User messages still go through full HTML
+        # escaping (format_chat_message) because the frontend inserts them via
+        # v-html without a markdown parser.
+        raw = content or ""
+        if role == "assistant":
+            formatted_content = process_source_tags(raw)
+        else:
+            formatted_content = format_chat_message(raw)
 
         try:
             logger.info(f"Database: Attempting to save {role} message for session {session_id}")

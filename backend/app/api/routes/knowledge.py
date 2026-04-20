@@ -162,6 +162,87 @@ async def list_research_sessions(
     return {"research_sessions": sessions}
 
 
+@router.delete("/research-sessions/{session_id}")
+async def delete_research_session(
+    session_id: int,
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Delete a research session and unlink its documents."""
+    from sqlalchemy import text as sa_text
+    # Unlink documents (don't delete them — they're in the user's library now)
+    await session.execute(
+        sa_text("UPDATE document SET research_session_id = NULL WHERE research_session_id = :id"),
+        {"id": session_id},
+    )
+    # Delete the session
+    result = await session.execute(
+        sa_text("DELETE FROM research_session WHERE id = :id AND user_id = :user_id RETURNING id"),
+        {"id": session_id, "user_id": user_context.user.id},
+    )
+    row = result.first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Research session not found")
+    await session.commit()
+    return {"ok": True}
+
+
+class ResearchSessionStatusUpdate(BaseModel):
+    status: str  # running / completed / failed
+
+
+@router.get("/research-sessions/{session_id}")
+async def get_research_session(
+    session_id: int,
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Get a single research session with its full response."""
+    from sqlalchemy import text as sa_text
+    result = await session.execute(
+        sa_text("""
+            SELECT rs.id, rs.brief, rs.status, rs.final_response, rs.plan,
+                   rs.created_at, rs.budget,
+                   COALESCE(json_agg(json_build_object('id', d.id, 'title', d.title, 'url', d.url))
+                     FILTER (WHERE d.id IS NOT NULL), '[]') AS documents
+            FROM research_session rs
+            LEFT JOIN document d ON d.research_session_id = rs.id
+            WHERE rs.id = :id AND rs.user_id = :user_id
+            GROUP BY rs.id
+        """),
+        {"id": session_id, "user_id": user_context.user.id},
+    )
+    row = result.mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Research session not found")
+    return dict(row)
+
+
+@router.put("/research-sessions/{session_id}/status")
+async def update_research_session_status(
+    session_id: int,
+    body: ResearchSessionStatusUpdate,
+    user_context: UserContext = Depends(get_authenticated_user_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update the status of a research session."""
+    from sqlalchemy import text as sa_text
+    result = await session.execute(
+        sa_text("""
+            UPDATE research_session
+            SET status = :status, updated_at = now()
+            WHERE id = :id AND user_id = :user_id
+            RETURNING id, status
+        """),
+        {"id": session_id, "status": body.status, "user_id": user_context.user.id},
+    )
+    row = result.mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Research session not found")
+    await session.commit()
+    return {"id": row["id"], "status": row["status"]}
+
+
 @router.get("/graph/sources")
 async def graph_sources(
     user_context: UserContext = Depends(get_authenticated_user_context),

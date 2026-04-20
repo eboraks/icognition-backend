@@ -350,6 +350,7 @@ class ChatAgentService:
                     db_session=db_session,
                     user_id=user_id,
                     skill_override=skill_override,
+                    chat_session_id=session_id,
                 )
                 logger.info(f"[Session {session_id}] Created Research Graph agent with tools and checkpointer")
             except Exception as e:

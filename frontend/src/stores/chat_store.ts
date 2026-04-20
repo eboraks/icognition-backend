@@ -414,6 +414,16 @@ export const useChatStore = defineStore('chat', () => {
       streamingMessageId = null;
       streamingBuffer = '';
       log('end_stream processed successfully');
+
+      // Refresh sessions lists after stream completes
+      loadSessions();  // Refresh chat history
+      try {
+        import('./hubStore').then(({ useHubStore }) => {
+          useHubStore().loadResearchSessions();
+        });
+      } catch (e) {
+        // hubStore may not be available in all contexts
+      }
     } else if (type === "agent_status") {
       log(`STATUS event received: ${content}`);
       if (activeSession.value && streamingMessageId) {
@@ -485,18 +495,23 @@ export const useChatStore = defineStore('chat', () => {
     disconnectSSE();
     clearChatContext();
 
-    const newSession = sessions.value.find(s => s.id === sessionId);
+    let newSession = sessions.value.find(s => s.id === sessionId);
+    // Session might not be in the list yet (e.g. just created by research agent)
+    if (!newSession) {
+      console.log(`Session ${sessionId} not in list, reloading sessions...`);
+      await loadSessions();
+      newSession = sessions.value.find(s => s.id === sessionId);
+    }
     if (newSession) {
       activeSession.value = newSession;
       try {
         console.log(`Loading messages for session ${sessionId}`);
         await loadMessages(sessionId);
-        // No need to connect SSE here - it's done per message
       } catch (error) {
         console.error(`Failed to switch to session ${sessionId}:`, error);
       }
     } else {
-      console.warn(`Session ${sessionId} not found.`);
+      console.warn(`Session ${sessionId} not found even after reload.`);
       activeSession.value = null;
     }
   }

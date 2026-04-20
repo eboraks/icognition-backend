@@ -129,6 +129,7 @@ onMounted(async () => {
   height: calc(100vh - 4rem);
   overflow: hidden;
   position: relative;
+  font-size: var(--app-font-size, 12px);
 }
 
 /* Left Sidebar */

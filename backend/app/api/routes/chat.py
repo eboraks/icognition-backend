@@ -14,7 +14,7 @@ import json
 import logging
 import uuid
 import asyncio
-from app.utils.chat_formatting import format_chat_message
+# format_chat_message removed — frontend renders markdown via marked.js
 
 logger = logging.getLogger(__name__)
 
@@ -248,11 +248,10 @@ async def stream_chat_response(
                         content = chunk.get("content")
                         if content:
                             assistant_response += content
-                            formatted_content = format_chat_message(assistant_response)
-                            
+
                             event_data = {
                                 "type": "stream_chunk",
-                                "content": formatted_content,
+                                "content": assistant_response,
                                 "message_id": response_message_id
                             }
                             yield f"event: stream_chunk\ndata: {json.dumps(event_data)}\n\n"
@@ -287,11 +286,10 @@ async def stream_chat_response(
                 
                 logger.info(f"[Session {session_id}] Stream iteration completed. Total chunks: {chunk_count}, Total response: {len(assistant_response)} chars")
                 
-                # Send end_stream event
-                formatted_content = format_chat_message(assistant_response)
+                # Send end_stream event (raw markdown — frontend renders via marked.js)
                 event_data = {
                     "type": "end_stream",
-                    "content": formatted_content,
+                    "content": assistant_response,
                     "message_id": response_message_id
                 }
                 yield f"event: end_stream\ndata: {json.dumps(event_data)}\n\n"
@@ -428,7 +426,7 @@ async def chat_websocket_endpoint(
                                 assistant_response += content
                                 try:
                                     # Send each chunk wrapped in a structured message
-                                    formatted_content = format_chat_message(assistant_response)
+                                    formatted_content = assistant_response
                                     await websocket.send_text(WebSocketMessage(
                                         type="stream_chunk",
                                         content=formatted_content,
@@ -459,7 +457,7 @@ async def chat_websocket_endpoint(
                     
                     # If we never streamed (e.g., model responded at once) but we have content, emit it now
                     if assistant_response and not sent_stream_chunk:
-                        formatted_content = format_chat_message(assistant_response)
+                        formatted_content = assistant_response
                         await websocket.send_text(WebSocketMessage(
                             type="stream_chunk",
                             content=formatted_content,
@@ -470,7 +468,7 @@ async def chat_websocket_endpoint(
                     # Send an explicit end_stream message
                     await websocket.send_text(WebSocketMessage(
                         type="end_stream",
-                        content=format_chat_message(assistant_response),
+                        content=assistant_response,
                         message_id=response_message_id
                     ).json())
 
