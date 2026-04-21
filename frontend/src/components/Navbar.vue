@@ -2,7 +2,7 @@
     <header
         data-test="header"
         id="app-header"
-        class="header w-full bg-primary-800 shadow-5 sticky top-0"
+        class="header w-full bg-primary-800 shadow-2 sticky top-0"
         style="z-index: 1000;"
         tabindex="-1">
         <div class="grid">

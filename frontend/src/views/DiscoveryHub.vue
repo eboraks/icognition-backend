@@ -35,7 +35,7 @@
     </div>
 
     <!-- Right: Chat Panel -->
-    <HubChatPanel ref="chatPanel" />
+    <HubChatPanel ref="chatPanel" @panel-resize="onPanelResize" />
   </div>
 </template>
 
@@ -84,6 +84,11 @@ function startSidebarResize(e: MouseEvent) {
   document.addEventListener('mouseup', onMouseUp)
 }
 
+// Refit graph when chat panel is resized
+function onPanelResize() {
+  graphCanvas.value?.refitGraph()
+}
+
 // Handle search bar enter → send to chat
 async function onSearchChat(query: string) {
   await chatPanel.value?.sendChatMessage(query)
@@ -129,7 +134,7 @@ onMounted(async () => {
   height: calc(100vh - 4rem);
   overflow: hidden;
   position: relative;
-  font-size: var(--app-font-size, 12px);
+  font-size: var(--app-font-size, 1.125rem);
 }
 
 /* Left Sidebar */

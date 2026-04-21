@@ -259,7 +259,7 @@ function onBookmarkContextMenu(event: MouseEvent, doc: DocumentSummary) {
   padding: 1rem;
   background: var(--p-surface-card);
   border-right: 1px solid var(--p-content-border-color);
-  font-size: var(--app-font-size, 12px);
+  font-size: var(--app-font-size, 1.125rem);
 }
 
 .sidebar-section {

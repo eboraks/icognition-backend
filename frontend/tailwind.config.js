@@ -9,6 +9,7 @@ export default {
   theme: {
     extend: {
       fontFamily: {
+        sans: ['"Source Sans 3"', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Oxygen', 'Ubuntu', 'Cantarell', '"Helvetica Neue"', 'sans-serif'],
         mono: ['"Roboto Mono"', 'monospace'],
       },
     },

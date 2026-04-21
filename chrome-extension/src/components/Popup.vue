@@ -396,7 +396,7 @@ const buttonHasFocus = ref(false);
 // Add refs for settings dialog
 const showSettings = ref(false);
 const selectedEnvironment = ref('development');
-const selectedFontSize = ref('medium'); // Default to medium (12px)
+const selectedFontSize = ref('large'); // Default to large (1.125rem / ~18px)
 
 // Computed property to check if current page is social media
 const isSocialMedia = computed(() => {
@@ -407,11 +407,11 @@ const isSocialMedia = computed(() => {
 
 // Font size mapping
 const fontSizeMap = {
-    'small': '10px',
-    'medium': '12px',
-    'large': '14px',
-    'xl': '16px',
-    'xxl': '18px'
+    'small': '0.875rem',
+    'medium': '1rem',
+    'large': '1.125rem',
+    'xl': '1.25rem',
+    'xxl': '1.375rem'
 };
 
 const fontSizeOptions = [
@@ -2629,13 +2629,13 @@ const focusQuestionInput = () => {
     flex-direction: column;
     height: 100vh;
     width: 100%;
-    /* Add CSS variable for primary color in RGB format for opacity support */
-    --primary-color-rgb: 59, 130, 246;
+    /* Primary color in RGB format for opacity support (stone-800) */
+    --primary-color-rgb: 41, 37, 36;
 }
 
 .header {
-    background: #3497BE;
-    border-bottom: 1px solid #e0e0e0;
+    background: #292524;
+    border-bottom: 1px solid #d6d3d1;
 }
 
 .chat-interface-container {

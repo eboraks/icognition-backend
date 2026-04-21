@@ -6,21 +6,37 @@ import { definePreset } from '@primevue/themes';
 import 'primeicons/primeicons.css';
 import 'primeflex/primeflex.css';
 
-// Define custom preset with web app's primary color
-const CustomAura = definePreset(Aura, {
+// Warm neutral theme preset (stone palette) — matches web app
+const WarmAura = definePreset(Aura, {
     semantic: {
         primary: {
-            50: '{cyan.50}',
-            100: '{cyan.100}',
-            200: '{cyan.200}',
-            300: '{cyan.300}',
-            400: '{cyan.400}',
-            500: '{cyan.500}',
-            600: '{cyan.600}',
-            700: '{cyan.700}',
-            800: '{cyan.800}',
-            900: '{cyan.900}',
-            950: '{cyan.950}'
+            50: '#fafaf9',
+            100: '#f5f5f4',
+            200: '#e7e5e4',
+            300: '#d6d3d1',
+            400: '#a8a29e',
+            500: '#78716c',
+            600: '#57534e',
+            700: '#44403c',
+            800: '#292524',
+            900: '#1c1917',
+            950: '#0c0a09'
+        },
+        colorScheme: {
+            light: {
+                primary: {
+                    color: '#44403c',
+                    inverseColor: '#ffffff',
+                    hoverColor: '#292524',
+                    activeColor: '#1c1917'
+                },
+                highlight: {
+                    background: '#f5f5f4',
+                    focusBackground: '#e7e5e4',
+                    color: '#292524',
+                    focusColor: '#1c1917'
+                }
+            }
         }
     }
 });
@@ -43,7 +59,7 @@ console.log('main.js loaded');
 const app = createApp(App);
 app.use(PrimeVue, {
     theme: {
-        preset: CustomAura,
+        preset: WarmAura,
         options: {
             darkModeSelector: false
         }

@@ -213,6 +213,13 @@ function onReset() {
   hubStore.loadDiscoveryGraph(hubStore.sourceFilter || undefined)
 }
 
+function refitGraph() {
+  cy.value?.resize()
+  cy.value?.fit(undefined, 50)
+}
+
+defineExpose({ refitGraph })
+
 onMounted(() => {
   // Initial view fit after data loads
   setTimeout(() => {

@@ -1,52 +1,56 @@
-/* color palette */
+/* color palette — warm neutral (Daiva-inspired) */
 :root {
-  --primary-color:#3497BE;      // Primary Main
+  --primary-color:#78716c;      // Primary Main (stone-500)
   --primary-color-text:#ffffff; // Primary contrast text
-  --primary-200:#8AD3E1;        // Primary Light
-  --primary-500:#3497be;        // Primary Main
-  --primary-800:#054761;        // Primary Dark
+  --primary-200:#d6d3d1;        // Primary Light (stone-300)
+  --primary-500:#78716c;        // Primary Main (stone-500)
+  --primary-800:#292524;        // Primary Dark (stone-800)
 
-  --cyan-200:rgba(0,170,255,.95)!important;  // Select Light
-  --cyan-500:rgba(0,170,255,.9)!important;  // Select Main
-  --cyan-800:rgba(0,170,255,.85)!important;  // Select Dark
+  --accent-color:#b45309;       // Accent (amber-700) for CTAs/highlights
+  --accent-light:#fbbf24;       // Accent Light (amber-400)
+  --accent-dark:#92400e;        // Accent Dark (amber-800)
 
-  --blue-100:#CDE8FC;       // Info-Link Ultralight
-  --blue-200:#64B5F6;       // Info-Link Light
-  --blue-400:#0d7699;       // Info-Link Website
-  --blue-500:#2196F3;       // Info-Link Main
-  --blue-600:#2196f3;       // Info-Link Main
-  --blue-800:#1976D2;       // Info-Link Dark
-    
+  --cyan-200:#d6d3d1!important;  // Select Light (stone-300)
+  --cyan-500:#a8a29e!important;  // Select Main (stone-400)
+  --cyan-800:#57534e!important;  // Select Dark (stone-600)
+
+  --blue-100:#fef3c7;       // Info-Link Ultralight (amber-100)
+  --blue-200:#fcd34d;       // Info-Link Light (amber-300)
+  --blue-400:#b45309;       // Info-Link Website (amber-700)
+  --blue-500:#d97706;       // Info-Link Main (amber-600)
+  --blue-600:#d97706;       // Info-Link Main (amber-600)
+  --blue-800:#92400e;       // Info-Link Dark (amber-800)
+
   --red-200:#E57373;        // Error Light
-  --red-500:#F44336;        // Error Main
-  --red-800:#D32F2F;        // Error Dark
+  --red-500:#dc2626;        // Error Main
+  --red-800:#991b1b;        // Error Dark
   --red-900:#611A15;        // Error Text
-  
-  --teal-200:#65d7c0;       // Secondary Light
-  --teal-500:#29b998;       // Secondary Main
-  --teal-800:#26796c;       // Secondary Dark
 
-  --green-200:#96d7AC;      // Success Light
-  --green-500:#4CAF6E;      // Success Main
-  --green-800:#297945;      // Success Dark
-  --green-900:#1C4229;      // Success Text
+  --teal-200:#d6d3d1;       // Secondary Light (stone-300)
+  --teal-500:#78716c;       // Secondary Main (stone-500)
+  --teal-800:#44403c;       // Secondary Dark (stone-700)
 
-  --orange-200:#FFB74D;     // Warning Light
-  --orange-500:#FF9800;     // Warning Main
-  --orange-600: rgba(255, 94, 0, .73); // Notations/Comments
-  --orange-800:#F57C00;     // Warning Dark
-  --orange-900:#661F00;     // Warning Text
+  --green-200:#bbf7d0;      // Success Light
+  --green-500:#16a34a;      // Success Main
+  --green-800:#166534;      // Success Dark
+  --green-900:#14532d;      // Success Text
 
-  --surface-50: #F8FAFC;   // Slate
-  --surface-100: #F1F5F9;  // Slate
-  --surface-200: #E2E8F0;  // Slate
-  --surface-300: #CBD5E1;  // Slate
-  --surface-400: #93A3B8;  // Slate
-  --surface-500: #64748B;  // Slate
-  --surface-600: #465569;  // Slate
-  --surface-700: #324155;  // Slate
-  --surface-800: #1E293B;  // Slate
-  --surface-900: #0F172B;  // Slate
+  --orange-200:#fed7aa;     // Warning Light
+  --orange-500:#f97316;     // Warning Main
+  --orange-600:#ea580c;     // Notations/Comments
+  --orange-800:#9a3412;     // Warning Dark
+  --orange-900:#7c2d12;     // Warning Text
+
+  --surface-50: #fafaf9;   // Stone
+  --surface-100: #f5f5f4;  // Stone
+  --surface-200: #e7e5e4;  // Stone
+  --surface-300: #d6d3d1;  // Stone
+  --surface-400: #a8a29e;  // Stone
+  --surface-500: #78716c;  // Stone
+  --surface-600: #57534e;  // Stone
+  --surface-700: #44403c;  // Stone
+  --surface-800: #292524;  // Stone
+  --surface-900: #1c1917;  // Stone
 
   --vt-c-white: #ffffff;
   --vt-c-white-soft: #f8f8f8;
@@ -173,21 +177,19 @@ body {
   transition:
     color 0.5s,
     background-color 0.5s;
-  line-height: 1.6;
+  line-height: 1.7;
+  letter-spacing: 0.015em;
   font-family:
-    Inter,
+    'Source Sans 3',
     -apple-system,
     BlinkMacSystemFont,
-    'HarmoniaSans',
-    Roboto,
+    'Segoe UI',
     Oxygen,
     Ubuntu,
     Cantarell,
-    'Fira Sans',
-    'Droid Sans',
     'Helvetica Neue',
     sans-serif;
-  font-size: 15px;
+  font-size: 16px;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -195,15 +197,15 @@ body {
 
 // Reader Background colors
 .bg-highlight {
-  background-color: rgba(70, 255, 0, .55);
+  background-color: rgba(251, 191, 36, .4);
 }
 
 .bg-playfill {
-  background-color: #F2FFEC;
+  background-color: #fef9ee;
 }
 
 .bg-reader {
-  background-color: #FFB74D;
+  background-color: #fcd34d;
 }
 
 .bg-stopfill {
@@ -212,15 +214,15 @@ body {
 
 // Ask iCognition Background colors
 .bg-header-selected {
-  background-color: #ADCEE5;
+  background-color: #e7e5e4;
 }
 
 .bg-body-selected {
-  background-color: #E0F1FA;
+  background-color: #f5f5f4;
 }
 
 .bg-provenance-highlighting {
-  background-color: rgba(33, 150, 243, .78);
+  background-color: rgba(180, 83, 9, .25);
 }
 
 .hero-background {

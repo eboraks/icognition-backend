@@ -382,9 +382,13 @@ async function startNewChat() {
 }
 
 // Resizable panel
+const emit = defineEmits(['panel-resize'])
+
 const panelWidth = ref(420)
 const MIN_WIDTH = 340
-const MAX_WIDTH = 800
+
+// Allow panel to extend up to half the viewport width
+const MAX_WIDTH = computed(() => Math.floor(window.innerWidth / 2))
 
 function startResize(e: MouseEvent) {
   const startX = e.clientX
@@ -392,7 +396,8 @@ function startResize(e: MouseEvent) {
 
   function onMouseMove(ev: MouseEvent) {
     const delta = startX - ev.clientX
-    panelWidth.value = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth + delta))
+    panelWidth.value = Math.min(MAX_WIDTH.value, Math.max(MIN_WIDTH, startWidth + delta))
+    emit('panel-resize')
   }
 
   function onMouseUp() {
@@ -400,6 +405,7 @@ function startResize(e: MouseEvent) {
     document.removeEventListener('mouseup', onMouseUp)
     document.body.style.cursor = ''
     document.body.style.userSelect = ''
+    emit('panel-resize')
   }
 
   document.body.style.cursor = 'col-resize'
@@ -439,7 +445,7 @@ defineExpose({
   background: var(--p-surface-card);
   flex-shrink: 0;
   position: relative;
-  font-size: var(--app-font-size, 12px);
+  font-size: 22px;
 }
 
 .hub-chat-panel.open {
@@ -599,7 +605,7 @@ defineExpose({
 }
 
 .detail-description {
-  font-size: var(--app-font-size, 14px);
+  font-size: 22px;
   line-height: 1.7;
   color: #1e293b;
   margin-bottom: 0.5rem;
@@ -644,10 +650,10 @@ defineExpose({
   color: var(--p-text-color);
   line-height: 1.3;
 }
-.markdown-body :deep(h1) { font-size: 1.3em; margin: 1.5em 0 0.5em 0; }
-.markdown-body :deep(h2) { font-size: 1.2em; margin: 1.5em 0 0.5em 0; }
-.markdown-body :deep(h3) { font-size: 1.1em; margin: 1.25em 0 0.4em 0; }
-.markdown-body :deep(h4) { font-size: 1.05em; margin: 1em 0 0.3em 0; }
+.markdown-body :deep(h1) { font-size: 1.5em; margin: 1.5em 0 0.5em 0; }
+.markdown-body :deep(h2) { font-size: 1.4em; margin: 1.5em 0 0.5em 0; }
+.markdown-body :deep(h3) { font-size: 1.25em; margin: 1.25em 0 0.4em 0; }
+.markdown-body :deep(h4) { font-size: 1.125em; margin: 1em 0 0.3em 0; }
 .markdown-body :deep(ul),
 .markdown-body :deep(ol) {
   margin: 0.5em 0 1em 0;
@@ -657,23 +663,23 @@ defineExpose({
   list-style-type: disc;
 }
 .markdown-body :deep(li) {
-  margin-bottom: 0.4em;
+  margin-bottom: 0.5em;
   line-height: 1.65;
 }
 .markdown-body :deep(a) {
-  color: #2563eb;
+  color: #b45309;
   text-decoration: underline;
-  text-decoration-color: rgba(37, 99, 235, 0.3);
+  text-decoration-color: rgba(180, 83, 9, 0.3);
 }
 .markdown-body :deep(a:hover) {
-  text-decoration-color: rgba(37, 99, 235, 0.8);
+  text-decoration-color: rgba(180, 83, 9, 0.8);
 }
 .markdown-body :deep(code) {
-  background: var(--p-surface-100);
+  background: #f5f5f4;
   padding: 0.1rem 0.3rem;
   border-radius: 3px;
   font-size: 0.95em;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: 'Roboto Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .markdown-body :deep(pre) {
   background: var(--p-surface-100);
@@ -694,11 +700,12 @@ defineExpose({
   color: var(--p-text-muted-color);
 }
 .markdown-body :deep(a) {
-  color: var(--p-primary-color);
+  color: #b45309;
   text-decoration: none;
 }
 .markdown-body :deep(a:hover) {
   text-decoration: underline;
+  text-decoration-color: rgba(180, 83, 9, 0.8);
 }
 
 .expand-toggle {

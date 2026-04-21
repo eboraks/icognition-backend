@@ -684,14 +684,15 @@ onBeforeUnmount(() => {
 .message-text {
   white-space: normal;
   line-height: 1.7;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-  color: #1e293b;
-  font-size: var(--app-font-size, 15px);
-  letter-spacing: -0.01em;
+  font-family: 'Source Sans 3', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: #292524;
+  font-size: 22px;
+  letter-spacing: 0.01em;
 }
 
 .message-text :deep(p) {
   margin: 0 0 1em 0;
+  line-height: 1.7;
 }
 
 .message-text :deep(p:last-child) {
@@ -699,21 +700,24 @@ onBeforeUnmount(() => {
 }
 
 .message-text :deep(h2) {
-  font-size: 1.2em;
+  font-size: 1.4em;
   font-weight: 700;
   margin: 1.5em 0 0.5em 0;
+  color: #1c1917;
 }
 
 .message-text :deep(h3) {
-  font-size: 1.1em;
+  font-size: 1.25em;
   font-weight: 700;
   margin: 1.25em 0 0.4em 0;
+  color: #1c1917;
 }
 
 .message-text :deep(h4) {
-  font-size: 1.05em;
+  font-size: 1.125em;
   font-weight: 600;
   margin: 1em 0 0.3em 0;
+  color: #1c1917;
 }
 
 .message-text :deep(ul),
@@ -727,37 +731,37 @@ onBeforeUnmount(() => {
 }
 
 .message-text :deep(li) {
-  margin-bottom: 0.4em;
+  margin-bottom: 0.5em;
   line-height: 1.65;
 }
 
 .message-text :deep(strong) {
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .message-text :deep(a) {
-  color: #2563eb;
+  color: #b45309;
   text-decoration: underline;
-  text-decoration-color: rgba(37, 99, 235, 0.3);
+  text-decoration-color: rgba(180, 83, 9, 0.3);
 }
 
 .message-text :deep(a:hover) {
-  text-decoration-color: rgba(37, 99, 235, 0.8);
+  text-decoration-color: rgba(180, 83, 9, 0.8);
 }
 
 .message-text :deep(code) {
-  background: #f1f5f9;
+  background: #f5f5f4;
   padding: 0.15em 0.35em;
   border-radius: 4px;
   font-size: 0.9em;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: 'Roboto Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .message-text :deep(blockquote) {
-  border-left: 3px solid #cbd5e1;
+  border-left: 3px solid #d6d3d1;
   padding-left: 1em;
   margin: 0.75em 0;
-  color: #475569;
+  color: #57534e;
 }
 
 .system-message {
@@ -798,9 +802,9 @@ onBeforeUnmount(() => {
 .message-content :deep(p) {
   margin: 0 0 1em 0;
   line-height: 1.7;
-  color: #1e293b;
+  color: #292524;
   font-size: inherit;
-  letter-spacing: -0.01em;
+  letter-spacing: 0.01em;
 }
 
 .message-content p:last-child {

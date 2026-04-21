@@ -10,11 +10,47 @@ import 'primeflex/primeflex.css';
 
 import PrimeVue from 'primevue/config';
 import Aura from '@primeuix/themes/aura';
+import { definePreset } from '@primeuix/themes';
 import Tooltip from 'primevue/tooltip';
 import ToastService from 'primevue/toastservice';
 import Toast from 'primevue/toast';
 import ConfirmationService from 'primevue/confirmationservice';
 import ConfirmDialog from 'primevue/confirmdialog';
+
+// Warm neutral theme preset (stone palette)
+const WarmAura = definePreset(Aura, {
+    semantic: {
+        primary: {
+            50: '#fafaf9',
+            100: '#f5f5f4',
+            200: '#e7e5e4',
+            300: '#d6d3d1',
+            400: '#a8a29e',
+            500: '#78716c',
+            600: '#57534e',
+            700: '#44403c',
+            800: '#292524',
+            900: '#1c1917',
+            950: '#0c0a09'
+        },
+        colorScheme: {
+            light: {
+                primary: {
+                    color: '#44403c',
+                    inverseColor: '#ffffff',
+                    hoverColor: '#292524',
+                    activeColor: '#1c1917'
+                },
+                highlight: {
+                    background: '#f5f5f4',
+                    focusBackground: '#e7e5e4',
+                    color: '#292524',
+                    focusColor: '#1c1917'
+                }
+            }
+        }
+    }
+});
 
 // Firebase and Auth Store
 import { useAuthStore } from './stores/auth_store.js';
@@ -25,14 +61,14 @@ const app = createApp(App);
 // Use plugins
 app.use(pinia);
 app.use(router);
-app.use(PrimeVue as any, { 
+app.use(PrimeVue as any, {
     theme: {
-        preset: Aura,
+        preset: WarmAura,
         options: {
             darkModeSelector: false
         }
     },
-    ripple: true 
+    ripple: true
 });
 
 app.use(ToastService as any);

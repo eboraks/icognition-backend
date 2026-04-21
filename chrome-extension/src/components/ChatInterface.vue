@@ -114,7 +114,7 @@ const props = defineProps({
   },
   fontSize: {
     type: String,
-    default: '12px'
+    default: '1.125rem'
   }
 });
 
@@ -609,34 +609,73 @@ const sendMessage = async () => {
 }
 
 .message-text {
-  /* Dynamic font size applied via root variable or inline style */
-  line-height: 1.4;
-  font-size: v-bind(fontSize); /* Bound to prop */
-  font-family: 'Roboto Mono', monospace;
+  line-height: 1.7;
+  font-size: 22px;
+  font-family: 'Source Sans 3', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: #292524;
+  letter-spacing: 0.01em;
 }
 
+:deep(.message-text h2) {
+    font-size: 1.4em;
+    font-weight: 700;
+    margin: 1.5em 0 0.5em 0;
+    color: #1c1917;
+}
+:deep(.message-text h3) {
+    font-size: 1.25em;
+    font-weight: 700;
+    margin: 1.25em 0 0.4em 0;
+    color: #1c1917;
+}
 :deep(.message-text h4) {
-    margin-top: 0;
-    margin-bottom: 0.5rem;
-    color: var(--text-color);
+    font-size: 1.125em;
+    font-weight: 600;
+    margin: 1em 0 0.3em 0;
+    color: #1c1917;
 }
 :deep(.message-text p) {
-    margin: 0 0 0.5rem 0;
+    margin: 0 0 1em 0;
+    line-height: 1.7;
 }
 :deep(.message-text p:last-child) {
     margin-bottom: 0;
 }
+:deep(.message-text ul),
+:deep(.message-text ol) {
+    margin: 0.5em 0 1em 0;
+    padding-left: 1.5em;
+}
 :deep(.message-text ul) {
-    margin: 0.5rem 0 0.5rem 1.25rem;
-    padding-left: 0;
     list-style-type: disc;
 }
 :deep(.message-text li) {
-    margin-bottom: 0.25rem;
+    margin-bottom: 0.5em;
+    line-height: 1.65;
+}
+:deep(.message-text strong) {
+    font-weight: 700;
 }
 :deep(.message-text a) {
-    color: var(--primary-600);
+    color: #b45309;
     text-decoration: underline;
+    text-decoration-color: rgba(180, 83, 9, 0.3);
+}
+:deep(.message-text a:hover) {
+    text-decoration-color: rgba(180, 83, 9, 0.8);
+}
+:deep(.message-text code) {
+    background: #f5f5f4;
+    padding: 0.15em 0.35em;
+    border-radius: 4px;
+    font-size: 0.9em;
+    font-family: 'Roboto Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+:deep(.message-text blockquote) {
+    border-left: 3px solid #d6d3d1;
+    padding-left: 1em;
+    margin: 0.75em 0;
+    color: #57534e;
 }
 
 

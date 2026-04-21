@@ -19,7 +19,7 @@ export function useCytoscape(options: UseCytoscapeOptions) {
   const cy = ref<Core | null>(null)
 
   // Font size (numeric px value applied globally)
-  const currentFontSize = ref('14')
+  const currentFontSize = ref('18')
 
   function setFontSize(size: string) {
     currentFontSize.value = size

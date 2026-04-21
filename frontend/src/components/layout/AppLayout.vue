@@ -1,7 +1,7 @@
 <template>
   <div class="layout-wrapper">
     <!-- Top Bar -->
-    <div class="layout-topbar bg-primary-500">
+    <div class="layout-topbar bg-primary-800">
       <div class="layout-topbar-left">
         <div class="layout-topbar-logo">
           <img src="/src/assets/images/iCognitionLogo.png?format=1500w" alt="iCognition.ai" />
