@@ -8,7 +8,7 @@
         :class="message.type"
       >
         <div v-if="message.type === 'system'" class="message system-message">
-          <div class="message-icon">
+          <div v-if="message.id !== 'initial-summary'" class="message-icon">
             <img src="/icons/icog_action_icon_32x32.png" alt="AI Icon" style="width: 2.25rem; height: 2.25rem; object-fit: contain;" />
           </div>
           <div class="message-content">
@@ -343,11 +343,8 @@ const initChat = () => {
     console.log('ChatInterface: initChat called, summary status:', !!props.initialSummary);
     if (props.initialSummary) {
         let content = '';
-        // Always add title if available as a header to prevent blank state
-        if (props.initialSummary.title && props.initialSummary.title.trim()) {
-            content += `<h3 class="text-lg font-bold mb-3 border-bottom-1 border-200 pb-2">${escapeHtml(props.initialSummary.title)}</h3>`;
-        }
-        
+        // Title is rendered by the parent panel header — don't repeat it here.
+
         if (props.initialSummary.markdown_content) {
             content += `<h4 class="font-semibold mb-1 mt-1">Content</h4><div class="mt-1">${marked.parse(props.initialSummary.markdown_content)}</div>`;
         }
@@ -404,6 +401,13 @@ const handleStreamChunk = (data) => {
             message.content += content || '';
             scrollToBottom();
         }
+    } else if (type === 'draft_replace') {
+        // Reflection rejected the draft — clear content for refined version
+        if (message) {
+            message.content = '';
+            message.statusText = 'Refining response...';
+        }
+        scrollToBottom();
     } else if (type === 'end_stream') {
         if (message) {
             message.pending = false;
@@ -570,7 +574,7 @@ const sendMessage = async () => {
 }
 
 :deep(.p-scrollpanel-content) {
-  padding: 0.5rem;
+  padding: 0.5rem 1.75rem;
   display: flex;
   flex-direction: column;
   gap: 0.5rem; /* Reduced from 1rem */
@@ -606,6 +610,14 @@ const sendMessage = async () => {
   box-shadow: 0 1px 3px rgba(0,0,0,0.04);
   word-break: break-word;
   overflow-wrap: anywhere;
+}
+
+/* System messages render long markdown (bullet lists, paragraphs) and
+   were running visually flush with the right edge despite the parent's
+   28px padding. Cap them tighter so the bubble itself stops well short
+   of the panel edge, regardless of panel width. */
+.message-wrapper.system .message {
+  max-width: 82%;
 }
 
 .message-text {

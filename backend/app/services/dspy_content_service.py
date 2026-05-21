@@ -13,10 +13,18 @@ from app.core.config import settings
 from app.utils.logging import get_logger
 from app.services.dspy_models_no_entities import ContentExtractNoEntities
 from app.models import Document
+from app.utils.text_utils import extract_text_from_html
 from bs4 import BeautifulSoup
 from app.services.image_analysis_service import get_image_analysis_service
 
 logger = get_logger(__name__)
+
+# Gemini 2.5 Flash Lite caps input at 1,048,576 tokens. Empirically ~4 chars/token
+# for English prose, lower for HTML markup. Cap raw input at ~600K chars so the
+# prompt + reasoning budget fits comfortably; strip to plain text first to recover
+# from bloated HTML before falling back to a hard truncate.
+MAX_CONTENT_CHARS = 600_000
+STRIP_HTML_THRESHOLD = 400_000
 
 
 # --- DSPy Signature for Content Extraction ---
@@ -216,13 +224,32 @@ class DspyContentService:
                     # Fallback to original content
                     filtered_html = content
 
+            # Guard against oversized inputs that would blow past Gemini Flash Lite's
+            # 1M-token input cap. Strip HTML first (much smaller than raw markup);
+            # truncate as a last resort.
+            if len(filtered_html) > STRIP_HTML_THRESHOLD:
+                stripped = extract_text_from_html(filtered_html)
+                logger.warning(
+                    f"Content exceeds {STRIP_HTML_THRESHOLD} chars "
+                    f"({len(filtered_html)} chars HTML → {len(stripped)} chars text); "
+                    f"stripping HTML for: {title or url or 'Untitled'}"
+                )
+                filtered_html = stripped or filtered_html
+
+            if len(filtered_html) > MAX_CONTENT_CHARS:
+                logger.warning(
+                    f"Content still exceeds {MAX_CONTENT_CHARS} chars after stripping "
+                    f"({len(filtered_html)} chars); truncating for: {title or url or 'Untitled'}"
+                )
+                filtered_html = filtered_html[:MAX_CONTENT_CHARS]
+
             # Use anyio.to_thread.run_sync to offload synchronous DSPy calls
             # self.lm is created once at init — no repeated instantiation cost.
             def run_extraction():
                 with dspy.context(lm=self.lm):
                     program = ContentExtractorProgram(instructions=instructions)
                     return program(text=filtered_html)
-            
+
             extracted = await anyio.to_thread.run_sync(run_extraction)
             
             # Prepare result in compatible format with old service

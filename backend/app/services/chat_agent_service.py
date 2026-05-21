@@ -21,8 +21,38 @@ def _build_chat_context_event(chunk: dict, response_text: str) -> dict:
         "document_ids": doc_ids,
     }
 
+
+def _latest_ai_answer(state: dict) -> str:
+    """
+    Return the content of the most recent answer-bearing AIMessage in the
+    graph state, or '' if none. Skips tool-call AIMessages (those are
+    intermediate, not user-facing answers).
+    Used when the answer arrives as a single message in state instead of
+    streamed tokens — e.g. dispatch_research_node → writer_node, which
+    invokes a sub-graph and produces one AIMessage when it returns.
+    """
+    from langchain_core.messages import AIMessage as _AI
+
+    messages = state.get("messages") or []
+    for msg in reversed(messages):
+        if not isinstance(msg, _AI):
+            continue
+        if getattr(msg, "tool_calls", None):
+            continue
+        content = msg.content
+        if isinstance(content, list):
+            content = "".join(
+                item.get("text", "") if isinstance(item, dict) else str(item)
+                for item in content
+            )
+        content = (content or "").strip()
+        if content:
+            return content
+    return ""
+
+
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, SystemMessage
 from sqlalchemy.ext.asyncio import AsyncSession
 from tenacity import RetryError
 from app.chat_workflows.research_graph import build_research_graph, fetch_graph_prompts
@@ -378,20 +408,17 @@ class ChatAgentService:
             chunk_count = 0
             
             # State tracking for UI feedback
-            last_reflection_count = 0
             last_intent = None
-            last_message_count = 0 
             last_processed_message_id = None
-            
+
             try:
                 # Add Langfuse tracing
                 lf_handler = get_langfuse_handler()
-                
+
                 run_config = {"thread_id": thread_id}
                 if lf_handler:
                     run_config["callbacks"] = [lf_handler]
                     run_config["run_name"] = PromptType.CHAT_AGENT_SYSTEM.value
-                    # Add metadata for Langfuse traces to easily filter/search
                     run_config["metadata"] = {
                         "session_id": str(session_id),
                         "user_id": str(user_id),
@@ -403,121 +430,155 @@ class ChatAgentService:
                     if skill_override:
                         run_config["tags"] = [f"skill:{skill_override}"]
 
-                pending_ai_message = None
-                
-                logger.info(f"[Session {session_id}] Calling agent.astream()...")
+                # --- Token-by-token streaming with reflection/replace ---
+                # We stream using both "messages" (for LLM tokens) and "values" (for state updates).
+                # Draft text is streamed live. If reflection rejects it, we send a
+                # "draft_replace" event so the frontend clears the message and we re-stream.
+
+                draft_text = ""           # Accumulated tokens for the current draft
+                draft_number = 0          # Which generation pass we're on
+                has_yielded_content = False
+                last_values_state = {}    # Most recent full state from "values" mode
+
+                logger.info(f"[Session {session_id}] Calling agent.astream() with stream_mode=['messages', 'values']...")
                 async for chunk in agent.astream(
                     {"messages": input_messages},
                     config=run_config,
-                    stream_mode="values"
+                    stream_mode=["messages", "values"],
                 ):
                     chunk_count += 1
-                    logger.info(f"[Session {session_id}] Received chunk #{chunk_count}")
-                    
-                    # --- Status Feedback Logic ---
-                    current_intent = chunk.get("intent_description")
-                    current_message_list = chunk.get("messages", [])
-                    
-                    # 1. Intent Classified
-                    if current_intent and current_intent != last_intent:
-                        logger.info(f"[Session {session_id}] Intent detected: {current_intent}")
-                        yield {
-                            "type": "status",
-                            "status_type": "thinking",
-                            "content": f"analyzing request ({current_intent})"
-                        }
-                        last_intent = current_intent
+                    stream_type = chunk[0] if isinstance(chunk, tuple) else None
+                    stream_data = chunk[1] if isinstance(chunk, tuple) else chunk
 
-                    # 1b. Research dispatch detected
-                    if chunk.get("requires_research"):
-                        yield {
-                            "type": "status",
-                            "status_type": "researching",
-                            "content": "Researching the web for fresh sources..."
-                        }
+                    # --- Handle "values" events (state snapshots after each node) ---
+                    if stream_type == "values":
+                        last_values_state = stream_data
 
-                    # Track classified skill in Langfuse trace
-                    classified_skill = chunk.get("skill")
-                    if classified_skill and lf_handler:
-                        run_config.setdefault("tags", [])
-                        skill_tag = f"skill:{classified_skill}"
-                        if skill_tag not in run_config["tags"]:
-                            run_config["tags"].append(skill_tag)
-                            run_config["metadata"]["classified_skill"] = classified_skill
-                            logger.info(f"[Session {session_id}] Skill classified: {classified_skill}")
- 
-                    # 2. Check for Reflection Outcome (Did we just reject a message?)
-                    # If we had a pending message, and the new state has a critique (HumanMessage) 
-                    # OR is explicitly not satisfactory but we moved past the generation step...
-                    # Actually, we can check if the last message is a HumanMessage (Critique)
-                    if current_message_list:
-                        last_msg = current_message_list[-1]
-                        
-                        # If the last message is a HumanMessage (Critique) and we have a pending AI message,
-                        # it means the AI message was rejected. Discard it.
-                        if isinstance(last_msg, HumanMessage) and pending_ai_message:
-                             logger.info(f"[Session {session_id}] Discarding pending AI message due to negative reflection.")
-                             pending_ai_message = None 
-                             yield {
-                                "type": "status", 
-                                "status_type": "thinking", 
-                                "content": "refining answer based on critique"
-                             }
-                             
-                        # If the last message is a System Note (Search), handled below, but also implies refinement
-                        if isinstance(last_msg, HumanMessage) and "SYSTEM NOTE" in str(last_msg.content):
-                             if getattr(last_msg, 'id', None) != last_processed_message_id:
-                                logger.info(f"[Session {session_id}] Google Search executed")
-                                yield {
-                                    "type": "status",
-                                    "status_type": "thinking",
-                                    "content": "searching google for updated info"
-                                }
-                                last_processed_message_id = getattr(last_msg, 'id', None)
-                                # If we searched, we definitely discard any previous AI answer (it was insufficient)
-                                pending_ai_message = None
+                        # Intent classification status
+                        current_intent = stream_data.get("intent_description")
+                        if current_intent and current_intent != last_intent:
+                            logger.info(f"[Session {session_id}] Intent detected: {current_intent}")
+                            yield {
+                                "type": "status",
+                                "status_type": "thinking",
+                                "content": f"analyzing request ({current_intent})"
+                            }
+                            last_intent = current_intent
 
-                        # If the last message is an AIMessage, we BUFFER it.
-                        # We do NOT yield it yet. We wait for the next step (Reflection) to validate it.
-                        if isinstance(last_msg, AIMessage):
-                            # Skip tool-calling messages — they are intermediate, not final answers
-                            if last_msg.tool_calls:
-                                logger.info(f"[Session {session_id}] Skipping AI message with tool_calls (not a final answer).")
-                                pending_ai_message = None
-                            else:
-                                if last_msg != pending_ai_message:
-                                    logger.info(f"[Session {session_id}] Buffering new AI message candidate.")
-                                    pending_ai_message = last_msg
+                        # Research dispatch
+                        if stream_data.get("requires_research"):
+                            yield {
+                                "type": "status",
+                                "status_type": "researching",
+                                "content": "Researching the web for fresh sources..."
+                            }
 
-                                # If is_satisfactory is TRUE in this chunk AND we have actual content,
-                                # we can yield it immediately.
-                                text = extract_text_from_content(pending_ai_message.content) if pending_ai_message else ""
-                                if chunk.get("is_satisfactory") and text:
-                                    content_type = type(pending_ai_message.content).__name__
-                                    logger.info(f"[Session {session_id}] Message verified satisfactory. Yielding. Content type={content_type}, length={len(text)}")
-                                    yield {"type": "content", "content": text}
-                                    # Yield chat context (entity + doc IDs) for graph filtering
-                                    yield _build_chat_context_event(chunk, text)
-                                    pending_ai_message = None # Flushed
-                                    return # End stream, we are done
-                                elif chunk.get("is_satisfactory") and not text:
-                                    logger.warning(f"[Session {session_id}] is_satisfactory=True but content is empty — not yielding, waiting for more chunks")
-                                
-                # If loop finishes and we still have a pending message (e.g. max reflections reached),
-                # we must yield it as best-effort.
-                if pending_ai_message:
-                     logger.info(f"[Session {session_id}] Yielding final buffered message (Max reflections or End of Stream).")
-                     text = extract_text_from_content(pending_ai_message.content)
-                     yield {"type": "content", "content": text}
-                     yield _build_chat_context_event(chunk, text)
-                elif chunk_count == 0:
-                     # Graph produced zero chunks — something went wrong silently
-                     logger.error(f"[Session {session_id}] Stream completed with ZERO chunks — graph likely crashed silently")
-                     yield {"type": "error", "content": "Failed to generate a response. The AI agent did not produce any output. Please try again."}
-                else:
-                     # We got chunks but no AI message was buffered — likely all were discarded by reflection
-                     logger.warning(f"[Session {session_id}] Stream completed with {chunk_count} chunks but no AI message to yield")
-                     yield {"type": "error", "content": "The AI could not generate a satisfactory response after multiple attempts. Please try rephrasing your question."}
+                        # Track classified skill in Langfuse
+                        classified_skill = stream_data.get("skill")
+                        if classified_skill and lf_handler:
+                            run_config.setdefault("tags", [])
+                            skill_tag = f"skill:{classified_skill}"
+                            if skill_tag not in run_config["tags"]:
+                                run_config["tags"].append(skill_tag)
+                                run_config["metadata"]["classified_skill"] = classified_skill
+
+                        # Check for reflection rejection (critique HumanMessage after our draft)
+                        current_messages = stream_data.get("messages", [])
+                        if current_messages:
+                            last_msg = current_messages[-1]
+
+                            # Critique detected — reflection rejected the draft
+                            if isinstance(last_msg, HumanMessage) and draft_text:
+                                is_critique = not last_msg.tool_calls if hasattr(last_msg, 'tool_calls') else True
+                                if is_critique:
+                                    logger.info(f"[Session {session_id}] Draft #{draft_number} rejected by reflection, replacing...")
+                                    draft_text = ""
+                                    draft_number += 1
+                                    yield {"type": "draft_replace"}
+
+                                    if "SYSTEM NOTE" in str(last_msg.content):
+                                        if getattr(last_msg, 'id', None) != last_processed_message_id:
+                                            yield {
+                                                "type": "status",
+                                                "status_type": "thinking",
+                                                "content": "searching google for updated info"
+                                            }
+                                            last_processed_message_id = getattr(last_msg, 'id', None)
+                                    else:
+                                        yield {
+                                            "type": "status",
+                                            "status_type": "thinking",
+                                            "content": "refining answer based on critique"
+                                        }
+
+                        # Success condition: the graph reached is_satisfactory=True
+                        # AND we have an answer. The answer comes from one of two places:
+                        #   1. draft_text — accumulated tokens streamed from generate_node
+                        #   2. the latest AIMessage in state — produced by the research path
+                        #      (dispatch_research_node → writer_node), which runs a sub-graph
+                        #      and lands a single AIMessage in state instead of streaming tokens.
+                        # Either path counts as a good answer; treat them uniformly here so the
+                        # end-of-stream branch doesn't have to infer what happened.
+                        if stream_data.get("is_satisfactory") and not has_yielded_content:
+                            answer = draft_text or _latest_ai_answer(stream_data)
+                            if answer:
+                                if not draft_text:
+                                    # Research path — never streamed; deliver as one block
+                                    yield {"type": "content", "content": answer}
+                                source = "tokens" if draft_text else "message"
+                                logger.info(
+                                    f"[Session {session_id}] Draft #{draft_number} satisfactory "
+                                    f"({len(answer)} chars, source={source})"
+                                )
+                                yield _build_chat_context_event(stream_data, answer)
+                                has_yielded_content = True
+
+                        continue  # Done processing this values event
+
+                    # --- Handle "messages" events (LLM token chunks) ---
+                    if stream_type == "messages":
+                        message_chunk, metadata = stream_data
+                        node_name = metadata.get("langgraph_node", "")
+
+                        # Only stream tokens from generate_node (the main answer generation)
+                        # Skip reflect_node, intent_node, and tool calls
+                        if node_name != "generate_node":
+                            continue
+
+                        # Skip tool-call chunks (intermediate, not final answer text)
+                        if isinstance(message_chunk, AIMessageChunk):
+                            if message_chunk.tool_call_chunks:
+                                continue
+                            token = message_chunk.content
+                            if token:
+                                # Handle Gemini's list-of-dicts content format
+                                if isinstance(token, list):
+                                    token = "".join(
+                                        item.get("text", "") if isinstance(item, dict) else str(item)
+                                        for item in token
+                                    )
+                                draft_text += token
+                                yield {"type": "token", "content": token}
+
+                # --- Stream ended: finalize ---
+                # If is_satisfactory never fired (max reflections reached, etc.) but we
+                # streamed a draft, ship it as best-effort. Otherwise it's a real failure.
+                if not has_yielded_content:
+                    fallback = draft_text or _latest_ai_answer(last_values_state)
+                    if fallback:
+                        logger.info(
+                            f"[Session {session_id}] No is_satisfactory signal — "
+                            f"yielding fallback ({len(fallback)} chars)"
+                        )
+                        if not draft_text:
+                            yield {"type": "content", "content": fallback}
+                        yield _build_chat_context_event(last_values_state, fallback)
+                    else:
+                        logger.error(
+                            f"[Session {session_id}] Stream produced no answer "
+                            f"({chunk_count} chunks)"
+                        )
+                        yield {"type": "error", "content": "Failed to generate a response. Please try again."}
 
                 logger.info(f"[Session {session_id}] Stream loop completed.")
 

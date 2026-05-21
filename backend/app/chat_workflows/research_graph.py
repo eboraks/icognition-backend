@@ -545,28 +545,57 @@ def build_research_graph(
             state["messages"][-1].content if state.get("messages") else ""
         )
 
-        # Create the ResearchSession row
+        # Reuse the existing ResearchSession for this chat if one exists, so
+        # follow-up research questions extend the same research (sources,
+        # graph) instead of creating a fresh session per turn. Only fall
+        # back to creating a new session when no prior research is linked to
+        # this chat.
         research_session_id = None
+        extended_existing = False
         if db_session and user_id:
             try:
-                rs = ResearchSession(
-                    user_id=user_id,
-                    brief=brief,
-                    status="running",
-                    chat_session_id=chat_session_id,
-                    budget={
-                        "max_subagents": DEFAULT_MAX_SUBAGENTS,
-                        "max_tool_calls_per_subagent": DEFAULT_MAX_TOOL_CALLS_PER_SUBAGENT,
-                        "max_critic_loops": DEFAULT_MAX_CRITIC_LOOPS,
-                    },
-                )
-                db_session.add(rs)
-                await db_session.commit()
-                await db_session.refresh(rs)
-                research_session_id = rs.id
-                logger.info(f"Created research_session={research_session_id} for brief: {brief[:80]}")
+                existing_rs = None
+                if chat_session_id:
+                    existing_result = await db_session.execute(
+                        select(ResearchSession)
+                        .where(ResearchSession.chat_session_id == chat_session_id)
+                        .where(ResearchSession.user_id == user_id)
+                        .order_by(ResearchSession.id.desc())
+                        .limit(1)
+                    )
+                    existing_rs = existing_result.scalar_one_or_none()
+
+                if existing_rs is not None:
+                    existing_rs.status = "running"
+                    existing_rs.final_response = None
+                    await db_session.commit()
+                    await db_session.refresh(existing_rs)
+                    research_session_id = existing_rs.id
+                    extended_existing = True
+                    logger.info(
+                        f"Extending research_session={research_session_id} "
+                        f"(original brief: {existing_rs.brief[:60]!r}) "
+                        f"with follow-up: {brief[:80]!r}"
+                    )
+                else:
+                    rs = ResearchSession(
+                        user_id=user_id,
+                        brief=brief,
+                        status="running",
+                        chat_session_id=chat_session_id,
+                        budget={
+                            "max_subagents": DEFAULT_MAX_SUBAGENTS,
+                            "max_tool_calls_per_subagent": DEFAULT_MAX_TOOL_CALLS_PER_SUBAGENT,
+                            "max_critic_loops": DEFAULT_MAX_CRITIC_LOOPS,
+                        },
+                    )
+                    db_session.add(rs)
+                    await db_session.commit()
+                    await db_session.refresh(rs)
+                    research_session_id = rs.id
+                    logger.info(f"Created research_session={research_session_id} for brief: {brief[:80]}")
             except Exception as e:
-                logger.error(f"Failed to create research session: {e}")
+                logger.error(f"Failed to prepare research session: {e}")
 
         if research_session_id is None:
             return {
@@ -608,7 +637,10 @@ def build_research_graph(
             final_response = final_state.get("final_response", "Research completed but produced no response.")
             saved_doc_ids = final_state.get("saved_doc_ids", []) or []
 
-            # Update research_session with results
+            # Update research_session with results. When extending an
+            # existing session, accumulate sub-topics across turns instead
+            # of overwriting; the plan field becomes a running log of every
+            # research turn on this chat.
             try:
                 result = await db_session.execute(
                     select(ResearchSession).where(ResearchSession.id == research_session_id)
@@ -617,7 +649,15 @@ def build_research_graph(
                 if rs:
                     rs.status = "completed"
                     rs.final_response = final_response
-                    rs.plan = {"sub_topics": final_state.get("plan", [])}
+                    new_sub_topics = final_state.get("plan", []) or []
+                    if extended_existing:
+                        existing_plan = (rs.plan or {}).get("sub_topics", []) if isinstance(rs.plan, dict) else []
+                        rs.plan = {
+                            "sub_topics": list(existing_plan) + list(new_sub_topics),
+                            "last_follow_up_brief": brief,
+                        }
+                    else:
+                        rs.plan = {"sub_topics": new_sub_topics}
                     await db_session.commit()
             except Exception as e:
                 logger.error(f"Failed to update research session: {e}")

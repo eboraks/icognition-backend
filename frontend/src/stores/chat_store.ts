@@ -355,7 +355,6 @@ export const useChatStore = defineStore('chat', () => {
         log('WARNING: No active session, cannot handle stream_chunk');
         return;
       }
-      log('Processing stream_chunk...');
 
       if (!streamingMessageId) {
         streamingMessageId = message_id || `agent-${Date.now()}`;
@@ -391,13 +390,24 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       if (activeMessage) {
-        streamingBuffer = content || '';
+        // Append token delta to buffer (token-by-token streaming)
+        streamingBuffer += (content || '');
         activeMessage.content = streamingBuffer;
         activeMessage.pending = true;
         activeMessage.timestamp = now.toLocaleTimeString();
         activeMessage.date = now.toLocaleDateString();
-        log(`stream_chunk processed: ${streamingBuffer.length} chars total`);
       }
+    } else if (type === "draft_replace") {
+      // Reflection rejected the current draft — clear content and re-stream refined version
+      log('Draft rejected by reflection, clearing for refined version...');
+      if (activeSession.value && streamingMessageId) {
+        const activeMessage = activeSession.value.messages.find(msg => msg._id === streamingMessageId);
+        if (activeMessage) {
+          activeMessage.content = '';
+          activeMessage.statusText = 'Refining response...';
+        }
+      }
+      streamingBuffer = '';
     } else if (type === "end_stream") {
       log('Processing end_stream...');
       const finalContent = (content && content.length > 0) ? content : streamingBuffer;

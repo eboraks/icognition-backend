@@ -15,12 +15,12 @@
                 </a>
                 <div class="flex align-items-center gap-3 mr-4">
                     <template v-if="user">
-                        <Button 
-                            @click="handleQuickBookmark" 
-                            label="Quick Save" 
-                            icon="pi pi-bookmark" 
+                        <Button
+                            @click="handleQuickBookmark"
+                            label="Quick Save"
+                            icon="pi pi-bookmark"
                             tabindex="4"
-                            class="p-button-sm p-button-outlined"
+                            class="p-button-sm p-button-outlined quick-save-btn"
                             :loading="isQuickSaving"
                             :disabled="isQuickSaving || !active_tab || !active_tab.url"
                             title="Quick Save (LinkPresentation Style) - Testing Only"
@@ -98,8 +98,8 @@
         <div v-if="document_summary && status.state !== AppStatusEnum.PROCESSING.state" class="document-interface-container h-full flex flex-column custom-chat-height" tabindex="-1">
             <div class="page-info p-2 bg-primary-50 flex-none" tabindex="-1">
                 <div class="flex align-items-center justify-content-between" tabindex="-1">
-                    <span v-if="!isSocialMedia" class="text-sm text-primary-800 white-space-nowrap overflow-hidden text-overflow-ellipsis mr-2" :title="getCurrentPageTitle()">{{ getCurrentPageTitle() }}</span>
-                    <span v-else class="text-sm text-primary-800 font-bold mr-2">X Post</span>
+                    <h2 v-if="!isSocialMedia" class="page-title m-0 white-space-nowrap overflow-hidden text-overflow-ellipsis mr-2" :title="getCurrentPageTitle()">{{ getCurrentPageTitle() }}</h2>
+                    <h2 v-else class="page-title m-0 mr-2">X Post</h2>
                     <Button tabindex="2" @click="clearCurrentChat" icon="pi pi-trash" class="p-button-text p-button-sm p-button-danger flex-none"></Button>
                 </div>
             </div>
@@ -2638,6 +2638,30 @@ const focusQuestionInput = () => {
     border-bottom: 1px solid #d6d3d1;
 }
 
+/* Quick Save sits on the dark header — give label, icon, and border
+   enough contrast against #292524 to read at 0.75rem. */
+:deep(.quick-save-btn),
+:deep(.quick-save-btn .p-button-label),
+:deep(.quick-save-btn .p-button-icon) {
+    color: #d6d3d1;
+}
+:deep(.quick-save-btn) {
+    border-color: #57534e;
+}
+:deep(.quick-save-btn:not(:disabled):hover) {
+    background: rgba(214, 211, 209, 0.08);
+    border-color: #a8a29e;
+    color: #f5f5f4;
+}
+:deep(.quick-save-btn:not(:disabled):hover .p-button-label),
+:deep(.quick-save-btn:not(:disabled):hover .p-button-icon) {
+    color: #f5f5f4;
+}
+:deep(.quick-save-btn:disabled) {
+    color: #78716c;
+    border-color: #44403c;
+}
+
 .chat-interface-container {
     flex: 1;
     overflow: hidden;
@@ -2647,6 +2671,15 @@ const focusQuestionInput = () => {
 
 .page-info {
     border-bottom: 1px solid #e0e0e0;
+    padding: 0.625rem 0.875rem;
+}
+
+.page-title {
+    font-size: 1.05rem;
+    font-weight: 600;
+    line-height: 1.3;
+    color: #1c1917;
+    letter-spacing: -0.01em;
 }
 
 .message_container {

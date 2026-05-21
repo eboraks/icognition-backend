@@ -244,18 +244,39 @@ async def stream_chat_response(
                 async for chunk in chat_agent_service.get_stream(session_id, user_message, user_context.user.id, skill_override=skill):
                     chunk_type = chunk.get("type")
                     
-                    if chunk_type == "content":
-                        content = chunk.get("content")
-                        if content:
-                            assistant_response += content
-
+                    if chunk_type == "token":
+                        # Individual LLM token — append to response and stream delta
+                        token = chunk.get("content", "")
+                        if token:
+                            assistant_response += token
                             event_data = {
                                 "type": "stream_chunk",
-                                "content": assistant_response,
+                                "content": token,
                                 "message_id": response_message_id
                             }
                             yield f"event: stream_chunk\ndata: {json.dumps(event_data)}\n\n"
-                    
+
+                    elif chunk_type == "content":
+                        # Full content (fallback/best-effort) — replace entire response
+                        content = chunk.get("content")
+                        if content:
+                            assistant_response = content
+                            event_data = {
+                                "type": "stream_chunk",
+                                "content": content,
+                                "message_id": response_message_id
+                            }
+                            yield f"event: stream_chunk\ndata: {json.dumps(event_data)}\n\n"
+
+                    elif chunk_type == "draft_replace":
+                        # Reflection rejected the draft — tell frontend to clear and re-stream
+                        assistant_response = ""
+                        event_data = {
+                            "type": "draft_replace",
+                            "message_id": response_message_id
+                        }
+                        yield f"event: draft_replace\ndata: {json.dumps(event_data)}\n\n"
+
                     elif chunk_type == "status":
                         event_data = {
                             "type": "agent_status",

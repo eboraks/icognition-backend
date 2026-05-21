@@ -69,6 +69,12 @@ class ResearchState(TypedDict, total=False):
     final_response: str
     saved_doc_ids: List[int]
     budget: Dict[str, int]
+    # Error-surface fields. Populated when the planner produces no usable
+    # plan so the supervisor and writer can skip the LLM call instead of
+    # hallucinating sources. Both fields flow through the LangGraph state
+    # and show up in the Langfuse trace for diagnosis.
+    planner_raw_response: str
+    research_error: str
 
 
 # ----------------------------------------------------------------------
@@ -82,7 +88,11 @@ async def planner_node(state: ResearchState) -> Dict[str, Any]:
     budget = state.get("budget") or {}
     max_subagents = budget.get("max_subagents", DEFAULT_MAX_SUBAGENTS)
 
-    llm = _create_llm(temperature=0.2)
+    # 4096 tokens so Gemini 2.5 Flash's extended thinking can consume its
+    # reasoning budget without starving the JSON output. At 1024 we saw
+    # traces where 981 reasoning tokens left only ~43 for the plan, which
+    # truncated to an empty {"sub_topics": []}.
+    llm = _create_llm(temperature=0.2, max_output_tokens=4096)
 
     prompt_obj = get_prompt(PromptType.CHAT_RESEARCH_PLANNER.value)
     if not prompt_obj:
@@ -90,6 +100,8 @@ async def planner_node(state: ResearchState) -> Dict[str, Any]:
     system_text = prompt_obj.system_prompt
     user_text = prompt_obj.user_prompt.format(brief=brief)
 
+    content = ""
+    llm_error: Optional[str] = None
     try:
         response = await llm.ainvoke(
             [
@@ -100,11 +112,34 @@ async def planner_node(state: ResearchState) -> Dict[str, Any]:
         content = response.content or ""
         plan = _parse_plan(content)
     except Exception as e:
+        llm_error = str(e)
         logger.error(f"Planner LLM call failed: {e}")
-        plan = [{"topic": brief, "rationale": "Fallback: planner failed"}]
+        plan = []
 
     # Enforce hard cap
     plan = plan[:max_subagents]
+
+    if not plan:
+        # Never fall through silently — log the raw LLM response and stash it
+        # into state so it surfaces in the Langfuse trace for diagnosis.
+        # Without this the supervisor would route the writer with zero
+        # evidence and the writer would hallucinate sources.
+        logger.error(
+            "Planner returned empty plan for brief=%r. llm_error=%s raw_response=%r",
+            brief[:200], llm_error, content,
+        )
+        reason = (
+            f"Planner LLM call failed: {llm_error}"
+            if llm_error
+            else "Planner returned no sub-topics (likely truncated output — "
+                 "reasoning tokens consumed the max_output_tokens budget)."
+        )
+        return {
+            "plan": [],
+            "planner_raw_response": content,
+            "research_error": reason,
+        }
+
     logger.info(f"Planner generated {len(plan)} sub-topics for brief: {brief[:80]}")
     return {"plan": plan}
 
@@ -155,7 +190,21 @@ def _parse_plan(content: str) -> List[Dict[str, str]]:
 
 
 async def supervisor_node(state: ResearchState) -> Dict[str, Any]:
-    """No-op pass-through node that exists as a routing anchor for the fan-out."""
+    """Routing anchor for the fan-out. Also surfaces any planner failure
+    into state + logs so Langfuse and the operator both see it."""
+    plan = state.get("plan", [])
+    if not plan:
+        raw = state.get("planner_raw_response", "")
+        existing_error = state.get("research_error")
+        reason = existing_error or "Planner returned no sub-topics."
+        logger.error(
+            "Supervisor: skipping sub-agents — no plan to dispatch. "
+            "reason=%r raw_planner_response=%r",
+            reason, raw,
+        )
+        # Ensure research_error is set even if planner didn't set it
+        # (defensive — state should already carry it).
+        return {"research_error": reason}
     return {}
 
 
@@ -304,6 +353,21 @@ async def writer_node(state: ResearchState) -> Dict[str, Any]:
     """Synthesize the final response with citations."""
     brief = state["brief"]
     findings = state.get("subagent_results", [])
+    research_error = state.get("research_error")
+
+    # If research never ran (empty plan, planner failure, etc.), skip the
+    # writer LLM entirely. Calling it with zero findings caused it to
+    # hallucinate sources like https://www.example.com/... in production.
+    if research_error and not findings:
+        logger.error(
+            "Writer: bypassing LLM because research_error=%r", research_error
+        )
+        final_response = (
+            "I couldn't complete the research for this question.\n\n"
+            f"**Reason:** {research_error}\n\n"
+            "Please try rephrasing your question or try again in a moment."
+        )
+        return {"final_response": final_response, "saved_doc_ids": []}
 
     # Collect all saved doc IDs across sub-agents
     all_doc_ids: List[int] = []
