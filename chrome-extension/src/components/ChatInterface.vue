@@ -1,6 +1,12 @@
 <template>
   <div class="chat-panel-container">
-    <ScrollPanel class="chat-messages" ref="messagesContainer">
+    <ScrollPanel
+      class="chat-messages"
+      ref="messagesContainer"
+      @pointerover="handleMessagesPointerOver"
+      @pointerout="handleMessagesPointerOut"
+      @click="handleMessagesClick"
+    >
       <div
         v-for="(message, index) in messages"
         :key="index"
@@ -36,7 +42,7 @@
                   <p class="comment-card-text" :style="{ fontSize: fontSize }">{{ option.text }}</p>
                 </div>
               </div>
-              <div v-else class="message-text" v-html="renderAssistantContent(message.content)"></div>
+              <div v-else class="message-text" v-html="renderAssistantContent(message.content, message.webCitations)"></div>
             </template>
             <!-- Status text: shown while pending (matches web app ChatPanel behaviour) -->
             <div v-if="message.pending && message.statusText" class="message-status">
@@ -92,6 +98,34 @@
         />
       </div>
     </div>
+    <!-- Citation popover for inline source chips -->
+    <div
+      v-if="activeCitation"
+      class="cite-popover"
+      :style="{ left: citePopoverPos.left + 'px', top: citePopoverPos.top + 'px' }"
+      @mouseenter="cancelCloseCitation"
+      @mouseleave="closeCitation"
+    >
+      <a
+        class="cite-popover-link"
+        :href="activeCitation.url"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        <div class="cite-popover-domain">
+          <img
+            v-if="activeCitation.domain"
+            :src="`https://www.google.com/s2/favicons?domain=${activeCitation.domain}&sz=32`"
+            class="cite-popover-favicon"
+            alt=""
+            @error="(e) => (e.target.style.display = 'none')"
+          />
+          <span>{{ activeCitation.domain || 'source' }}</span>
+        </div>
+        <div class="cite-popover-title">{{ activeCitation.title || activeCitation.url }}</div>
+        <div v-if="activeCitation.snippet" class="cite-popover-snippet">{{ activeCitation.snippet }}</div>
+      </a>
+    </div>
   </div>
 </template>
 
@@ -126,17 +160,126 @@ const messagesContainer = ref(null);
 const loading = ref(false);
 const copiedLabel = ref(null);
 
+// HTML attribute escape — used by the chip substitution below.
+const escAttr = (value) =>
+  (value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+// Replace <source web_id="cite-X"/> markers (any whitespace/closing variant)
+// with a styled chip span. data-* attrs carry everything the popover needs;
+// while citations are still streaming the chip renders in a loading state.
+const renderCiteMarkers = (text, citations) => {
+  if (!text) return '';
+  const byId = {};
+  for (const c of citations || []) byId[c.id] = c;
+  return text.replace(
+    /<source\s+web_id=["']([^"']+)["']\s*\/?>(\s*<\/source>)?/gi,
+    (_m, citeId) => {
+      const c = byId[citeId];
+      const label = c?.domain || 'source';
+      const loading = c ? '' : ' cite-chip--loading';
+      return (
+        `<span class="cite-chip${loading}" tabindex="0"` +
+        ` data-cite-id="${escAttr(citeId)}"` +
+        ` data-title="${escAttr(c?.title || '')}"` +
+        ` data-url="${escAttr(c?.url || '')}"` +
+        ` data-domain="${escAttr(c?.domain || '')}"` +
+        ` data-snippet="${escAttr(c?.snippet || '')}">${escAttr(label)}</span>`
+      );
+    }
+  );
+};
+
 // Render assistant markdown through marked. Legacy stored messages were
 // saved as mixed HTML (<p>...</p><ul>...), so first strip the <p> wrappers
 // the same way the web app does — otherwise marked treats the block as raw
 // HTML and swallows any following markdown (e.g. ### headings after </ul>).
-const renderAssistantContent = (text) => {
+const renderAssistantContent = (text, citations) => {
   if (!text) return '';
-  const cleaned = text
+  let cleaned = text
     .replace(/<p>/gi, '')
     .replace(/<\/p>/gi, '\n\n')
     .trim();
+  // Substitute cite markers BEFORE markdown parsing so marked doesn't try
+  // to interpret the attribute content as anything special.
+  cleaned = renderCiteMarkers(cleaned, citations);
   return marked.parse(cleaned, { async: false });
+};
+
+// --- Citation chip popover (event-delegated) --------------------------------
+const activeCitation = ref(null);
+const citePopoverPos = ref({ left: 0, top: 0 });
+let citeCloseTimer = null;
+
+const findCitationById = (citeId) => {
+  for (const m of messages.value) {
+    const found = m.webCitations?.find((c) => c.id === citeId);
+    if (found) return found;
+  }
+  return null;
+};
+
+const openCitationFor = (el) => {
+  if (citeCloseTimer != null) {
+    clearTimeout(citeCloseTimer);
+    citeCloseTimer = null;
+  }
+  const id = el.getAttribute('data-cite-id') || '';
+  const fromMap = findCitationById(id);
+  const c = fromMap || {
+    id,
+    title: el.getAttribute('data-title') || '',
+    url: el.getAttribute('data-url') || '',
+    domain: el.getAttribute('data-domain') || '',
+    snippet: el.getAttribute('data-snippet') || '',
+  };
+  if (!c.url && !c.title) return;
+  const rect = el.getBoundingClientRect();
+  const POPOVER_WIDTH = 288;
+  const margin = 8;
+  const left = Math.min(
+    Math.max(margin, rect.left),
+    window.innerWidth - POPOVER_WIDTH - margin,
+  );
+  citePopoverPos.value = { left, top: rect.bottom + 6 };
+  activeCitation.value = c;
+};
+
+const closeCitation = () => {
+  if (citeCloseTimer != null) clearTimeout(citeCloseTimer);
+  citeCloseTimer = setTimeout(() => {
+    activeCitation.value = null;
+    citeCloseTimer = null;
+  }, 120);
+};
+
+const cancelCloseCitation = () => {
+  if (citeCloseTimer != null) {
+    clearTimeout(citeCloseTimer);
+    citeCloseTimer = null;
+  }
+};
+
+const handleMessagesPointerOver = (e) => {
+  const target = e.target?.closest?.('.cite-chip');
+  if (target) openCitationFor(target);
+};
+
+const handleMessagesPointerOut = (e) => {
+  const related = e.relatedTarget;
+  if (related && related.closest?.('.cite-popover, .cite-chip')) return;
+  closeCitation();
+};
+
+const handleMessagesClick = (e) => {
+  const target = e.target?.closest?.('.cite-chip');
+  if (target) {
+    e.preventDefault();
+    openCitationFor(target);
+  }
 };
 
 const decodeHtmlEntities = (text) => {
@@ -420,11 +563,11 @@ const handleStreamChunk = (data) => {
             message.statusText = content || '';
         }
     } else if (type === 'done') {
-        // End-of-stream + final {entity_ids, document_ids}. Extension currently
-        // doesn't surface entity/doc IDs in its UI; we just finalize the message.
+        // End-of-stream + final {entity_ids, document_ids, web_citations}.
         if (message) {
             message.pending = false;
             message.commentOptions = parseCommentOptions(message.content);
+            message.webCitations = data.web_citations || [];
         }
         loading.value = false;
     } else if (type === 'error') {
@@ -928,5 +1071,91 @@ const sendMessage = async () => {
   margin: 0;
   font-family: 'Roboto Mono', monospace;
   white-space: pre-wrap;
+}
+
+/* --- Web citation chips (inline source pills) ------------------------------ */
+.message-content :deep(.cite-chip) {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 0.45rem;
+  margin: 0 0.15rem;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  height: 1.25rem;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #3730a3;
+  border: 1px solid #c7d2fe;
+  vertical-align: baseline;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.message-content :deep(.cite-chip:hover),
+.message-content :deep(.cite-chip:focus) {
+  background: #e0e7ff;
+  border-color: #a5b4fc;
+  outline: none;
+}
+
+.message-content :deep(.cite-chip--loading) {
+  background: #f1f5f9;
+  color: #64748b;
+  border-color: #e2e8f0;
+}
+
+.cite-popover {
+  position: fixed;
+  z-index: 1000;
+  width: 18rem;
+  max-width: 90vw;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  padding: 0.625rem 0.75rem;
+  font-size: 0.8rem;
+  color: #0f172a;
+}
+
+.cite-popover-link {
+  color: inherit;
+  text-decoration: none;
+  display: block;
+}
+
+.cite-popover-domain {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.7rem;
+  color: #64748b;
+  margin-bottom: 0.25rem;
+}
+
+.cite-popover-favicon {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+}
+
+.cite-popover-title {
+  font-weight: 500;
+  line-height: 1.3;
+  margin-bottom: 0.25rem;
+}
+
+.cite-popover-snippet {
+  color: #475569;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 </style>
