@@ -382,6 +382,13 @@ async def test_done_event_carries_context(http_client: httpx.AsyncClient, fresh_
     )
     assert isinstance(ctx.get("entity_ids"), list)
     assert isinstance(ctx.get("document_ids"), list)
+    # web_citations is a list of {id, title, url, domain, snippet} objects.
+    # May be empty when the model didn't reach for tavily_search; we only
+    # assert the shape contract here, not population.
+    assert isinstance(ctx.get("web_citations", []), list)
+    for c in ctx.get("web_citations", []) or []:
+        assert isinstance(c, dict)
+        assert "id" in c and "url" in c
     # `done` must be the LAST event before the stream closes (sanity).
     assert result.event_types[-1] == "done", (
         f"`done` should be the terminal event, got: {result.event_types[-5:]}"
