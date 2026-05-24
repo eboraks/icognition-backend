@@ -59,14 +59,23 @@ def get_tavily_search_tool():
             if not results:
                 return f"No Tavily results found for: {query}"
 
-            formatted = []
-            for i, r in enumerate(results, 1):
-                title = r.get("title", "No Title")
-                url = r.get("url", "No URL")
-                snippet = r.get("content", "")[:400]
-                formatted.append(f"[{i}] {title}\nURL: {url}\nSnippet: {snippet}")
+            # Format each result as a markdown link so the model can paste the
+            # citation verbatim into its answer. The leading instruction is the
+            # contract — bare [N] references won't render and the user will see
+            # numbers without sources (the bug this format prevents).
+            formatted = [
+                "CITATION CONTRACT: When you use any of these results, cite "
+                "them inline as the full markdown link [Title](URL) shown "
+                "below. Never use bare [N] references — they won't render.",
+                "",
+            ]
+            for r in results:
+                title = (r.get("title") or "Untitled").strip().replace("]", ")").replace("[", "(")
+                url = r.get("url") or ""
+                snippet = (r.get("content") or "")[:400]
+                formatted.append(f"- [{title}]({url})\n  {snippet}")
 
-            return "\n\n---\n\n".join(formatted)
+            return "\n".join(formatted)
         except Exception as e:
             logger.error(f"Tavily search failed for '{query}': {e}")
             return f"Error performing Tavily search: {str(e)}"
