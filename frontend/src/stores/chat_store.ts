@@ -4,6 +4,15 @@ import { getAuth } from 'firebase/auth';
 import { chatService } from '@/services/chatService.js';
 import { useAuthStore } from './auth_store.js';
 
+// One web citation chip, attached to a message after the `done` event.
+export interface WebCitation {
+  id: string;       // cite-... — matches the <source web_id="..."/> marker
+  title: string;
+  url: string;
+  domain: string;
+  snippet: string;
+}
+
 // Define the shape of a message and a session to match vue-advanced-chat
 export interface ChatMessage {
   _id: string;
@@ -13,6 +22,7 @@ export interface ChatMessage {
   date: string;
   pending?: boolean;
   statusText?: string;
+  webCitations?: WebCitation[];
 }
 
 export interface ChatSession {
@@ -420,11 +430,12 @@ export const useChatStore = defineStore('chat', () => {
         if (msg) msg.statusText = content;
       }
     } else if (type === "done") {
-      // End-of-stream + final {entity_ids, document_ids}. No full-text payload —
-      // streamingBuffer already holds the canonical text from token/content events.
+      // End-of-stream + final {entity_ids, document_ids, web_citations}.
+      // No full-text payload — streamingBuffer already holds the canonical text.
       log('Processing done event...');
       const entityIds = (messageData as any).entity_ids || [];
       const documentIds = (messageData as any).document_ids || [];
+      const webCitations: WebCitation[] = (messageData as any).web_citations || [];
       for (const id of entityIds) chatContextEntityIds.value.add(id);
       for (const id of documentIds) chatContextDocumentIds.value.add(id);
 
@@ -435,6 +446,7 @@ export const useChatStore = defineStore('chat', () => {
           msg.pending = false;
           msg.timestamp = now.toLocaleTimeString();
           msg.date = now.toLocaleDateString();
+          msg.webCitations = webCitations;
         }
       }
       streamingMessageId = null;
