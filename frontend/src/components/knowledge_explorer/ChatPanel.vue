@@ -689,18 +689,22 @@ watch(
       const newMessagesFormatted: ChatMessage[] = newMessages.map(msg => {
         const isPending = (msg as any).pending ?? false;
         const isUser = msg.senderId === authStore.currentUser?.uid;
+        const webCitations = (msg as any).webCitations as WebCitation[] | undefined;
         return {
           type: (isUser ? 'user' : 'system') as 'user' | 'system',
-          content: isUser ? msg.content : renderMarkdown(msg.content),
+          content: isUser ? msg.content : renderMarkdown(msg.content, webCitations),
           actions: (msg as any).actions,
           resources: (msg as any).resources,
           pending: isPending,
           statusText: (msg as any).statusText,
           commentOptions: !isPending && !isUser ? parseCommentOptions(msg.content) : null,
+          webCitations,
         };
       });
-      
-      // Only update if the length changed or content differs (to avoid unnecessary updates)
+
+      // Re-render when anything that affects the rendered output changes —
+      // including webCitations, otherwise chips stay in their grey loading
+      // state forever after the `done` event lands citations on the message.
       if (messages.value.length !== newMessagesFormatted.length ||
           messages.value.some((msg, idx) => {
             const newMsg = newMessagesFormatted[idx];
@@ -708,7 +712,8 @@ watch(
               !newMsg ||
               msg.content !== newMsg.content ||
               msg.pending !== newMsg.pending ||
-              msg.statusText !== newMsg.statusText
+              msg.statusText !== newMsg.statusText ||
+              (msg.webCitations?.length || 0) !== (newMsg.webCitations?.length || 0)
             );
           })) {
         messages.value = [...newMessagesFormatted];
