@@ -38,14 +38,39 @@ def _last_ai_message_id(messages) -> Optional[str]:
     return getattr(msg, "id", None) if msg is not None else None
 
 
-def _build_chat_context(entity_ids, response_text: str) -> dict:
-    """Pack the final {entity_ids, document_ids} payload for the done event."""
+def _build_chat_context(entity_ids, response_text: str, web_citations: list) -> dict:
+    """Pack the final {entity_ids, document_ids, web_citations} payload."""
     doc_ids = list({int(m) for m in re.findall(r'<source\s+doc_id=["\'](\d+)["\']>', response_text or "")})
+    # Keep only the citations the LLM actually referenced — drops noise from
+    # search results the model decided not to use.
+    referenced = {m for m in re.findall(r'<source\s+web_id=["\']([^"\']+)["\']', response_text or "")}
+    filtered_citations = [c for c in (web_citations or []) if c.get("id") in referenced] if referenced else []
     return {
         "type": "chat_context",
         "entity_ids": list(set(entity_ids or [])),
         "document_ids": doc_ids,
+        "web_citations": filtered_citations,
     }
+
+
+def _collect_web_citations(messages) -> list:
+    """
+    Walk the agent state messages, pull tavily_search ToolMessage artifacts,
+    and return a deduped list of citations (later results overwrite earlier
+    duplicates by cite_id).
+    """
+    from langchain_core.messages import ToolMessage
+    seen: dict = {}
+    for msg in messages or []:
+        if not isinstance(msg, ToolMessage) or msg.name != "tavily_search":
+            continue
+        artifact = getattr(msg, "artifact", None) or {}
+        if not isinstance(artifact, dict):
+            continue
+        for cite_id, meta in artifact.items():
+            if isinstance(meta, dict) and meta.get("id"):
+                seen[cite_id] = meta
+    return list(seen.values())
 
 
 def _detect_new_critique(new_messages, seen_critique_id):
@@ -526,11 +551,16 @@ class ChatAgentService:
                 if not streamed_any_token and answer:
                     yield {"type": "content", "content": answer}
 
+                # Web citations from tavily_search ToolMessage artifacts. The
+                # LLM marks each used source with <source web_id="cite-..."/>;
+                # _build_chat_context filters the citation map to just those.
+                web_citations = _collect_web_citations(final_messages)
+
                 # entity_ids will be empty: KG enrichment was removed and the LLM
                 # is expected to use knowledge_graph_tool on demand. Entity pinning
                 # in the UI is preserved only via <source doc_id="N"> tags in the
                 # response (document_ids), not entity IDs.
-                yield _build_chat_context([], answer)
+                yield _build_chat_context([], answer, web_citations)
 
                 logger.info(f"[Session {session_id}] Stream loop completed.")
 

@@ -248,6 +248,7 @@ async def stream_chat_response(
             # Buffered until end-of-stream so we can ship one `done` event.
             final_entity_ids: list = []
             final_document_ids: list = []
+            final_web_citations: list = []
 
             def sse(event: str, payload: dict) -> str:
                 payload = {**payload, "type": event, "message_id": response_message_id}
@@ -287,19 +288,22 @@ async def stream_chat_response(
                         # Buffer — shipped with the `done` event below.
                         final_entity_ids = chunk.get("entity_ids", []) or []
                         final_document_ids = chunk.get("document_ids", []) or []
+                        final_web_citations = chunk.get("web_citations", []) or []
 
                     elif chunk_type == "error":
                         yield sse("error", {"content": chunk.get("content")})
 
                 logger.info(
                     f"[Session {session_id}] Stream done. assistant_response={len(assistant_response)} chars, "
-                    f"entity_ids={len(final_entity_ids)}, document_ids={len(final_document_ids)}"
+                    f"entity_ids={len(final_entity_ids)}, document_ids={len(final_document_ids)}, "
+                    f"web_citations={len(final_web_citations)}"
                 )
 
                 # Single end-of-stream signal — no redundant full-text payload.
                 yield sse("done", {
                     "entity_ids": final_entity_ids,
                     "document_ids": final_document_ids,
+                    "web_citations": final_web_citations,
                 })
 
                 if assistant_response:
