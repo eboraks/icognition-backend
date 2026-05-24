@@ -157,11 +157,16 @@ interface CommentOption {
 }
 
 function escAttr(value: string): string {
+  // Collapse ALL whitespace (newlines, tabs, CRs) to single spaces FIRST. Without
+  // this, a newline inside an attribute value breaks marked.js's HTML tokenizer
+  // mid-tag and the whole <span> gets rendered as literal text in the message.
   return (value || '')
+    .replace(/\s+/g, ' ')
     .replace(/&/g, '&amp;')
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
+    .trim()
 }
 
 function renderCiteMarkers(text: string, citations?: WebCitation[]): string {

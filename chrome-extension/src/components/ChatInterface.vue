@@ -161,12 +161,16 @@ const loading = ref(false);
 const copiedLabel = ref(null);
 
 // HTML attribute escape — used by the chip substitution below.
+// Collapse ALL whitespace FIRST: a newline inside an attribute value breaks
+// marked.js's HTML tokenizer mid-tag and the whole <span> renders as text.
 const escAttr = (value) =>
   (value || '')
+    .replace(/\s+/g, ' ')
     .replace(/&/g, '&amp;')
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+    .replace(/>/g, '&gt;')
+    .trim();
 
 // Replace <source web_id="cite-X"/> markers (any whitespace/closing variant)
 // with a styled chip span. data-* attrs carry everything the popover needs;
