@@ -12,11 +12,65 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 import json
 import logging
+import re
 import uuid
 import asyncio
 # format_chat_message removed — frontend renders markdown via marked.js
 
 logger = logging.getLogger(__name__)
+
+
+def _esc_attr(value) -> str:
+    """HTML attribute escape (also collapses whitespace so newlines inside
+    snippets don't break attribute parsing on the client)."""
+    s = (value or "")
+    if not isinstance(s, str):
+        s = str(s)
+    return (
+        re.sub(r"\s+", " ", s)
+        .replace("&", "&amp;")
+        .replace('"', "&quot;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .strip()
+    )
+
+
+def _inline_citation_metadata(text: str, citations: list) -> str:
+    """
+    Replace bare `<source web_id="cite-X"/>` markers with self-contained
+    variants that carry the citation's title/url/domain/snippet as attributes.
+
+    This is what gets saved to the chat history so that when the user reloads
+    a session (after navigating away), the chips can be rebuilt from the
+    markers alone — no separate citation map is needed.
+    """
+    if not text or not citations:
+        return text
+    by_id = {c.get("id"): c for c in citations if isinstance(c, dict) and c.get("id")}
+    if not by_id:
+        return text
+
+    def _replace(m: "re.Match") -> str:
+        cite_id = m.group(1)
+        c = by_id.get(cite_id)
+        if not c:
+            return m.group(0)  # LLM hallucinated cite_id — leave bare so it
+                               # renders as a loading chip rather than asserting
+        snippet = (c.get("snippet") or "")[:400]
+        return (
+            f'<source web_id="{_esc_attr(cite_id)}"'
+            f' data-title="{_esc_attr(c.get("title"))}"'
+            f' data-url="{_esc_attr(c.get("url"))}"'
+            f' data-domain="{_esc_attr(c.get("domain"))}"'
+            f' data-snippet="{_esc_attr(snippet)}"/>'
+        )
+
+    return re.sub(
+        r'<source\s+web_id=["\']([^"\']+)["\'][^>]*?/?>',
+        _replace,
+        text,
+    )
 
 class WebSocketMessage(BaseModel):
     # WS chat endpoint is legacy and not used by any current frontend.
@@ -308,7 +362,8 @@ async def stream_chat_response(
 
                 if assistant_response:
                     try:
-                        await local_session_service.save_message(session_id, "assistant", assistant_response)
+                        save_text = _inline_citation_metadata(assistant_response, final_web_citations)
+                        await local_session_service.save_message(session_id, "assistant", save_text)
                     except Exception as save_error:
                         logger.error(f"[Session {session_id}] Failed to save assistant response: {save_error}", exc_info=True)
 
@@ -316,7 +371,9 @@ async def stream_chat_response(
                 logger.error(f"Error during streaming for session {session_id}: {e}", exc_info=True)
                 if assistant_response:
                     try:
-                        await local_session_service.save_message(session_id, "assistant", assistant_response)
+                        # Best-effort: enrich what we have so partial saves still get chip metadata.
+                        save_text = _inline_citation_metadata(assistant_response, final_web_citations)
+                        await local_session_service.save_message(session_id, "assistant", save_text)
                     except Exception as save_error:
                         logger.error(f"[Session {session_id}] Failed to save partial assistant response: {save_error}")
                 yield sse("error", {"content": f"\n\nError: {str(e)}. Please try again."})

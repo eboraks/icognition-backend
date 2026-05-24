@@ -172,26 +172,45 @@ const escAttr = (value) =>
     .replace(/>/g, '&gt;')
     .trim();
 
-// Replace <source web_id="cite-X"/> markers (any whitespace/closing variant)
-// with a styled chip span. data-* attrs carry everything the popover needs;
-// while citations are still streaming the chip renders in a loading state.
+// Replace <source web_id="..."/> markers with a styled chip span.
+//
+// Two flavors of marker are accepted:
+//   1. Bare: <source web_id="cite-X"/> — emitted by the LLM during streaming.
+//      Metadata comes from the `citations` map (populated by the `done` event).
+//   2. Enriched: <source web_id="cite-X" data-title="..." data-url="..."
+//      data-domain="..." data-snippet="..."/> — server-side at save time
+//      (chat.py:_inline_citation_metadata). Self-sufficient on reload — no
+//      separate citation map needed.
+// Map wins; marker attrs are the fallback.
 const renderCiteMarkers = (text, citations) => {
   if (!text) return '';
   const byId = {};
   for (const c of citations || []) byId[c.id] = c;
+
+  const readAttr = (attrs, name) => {
+    const m = attrs.match(new RegExp(`\\b${name}\\s*=\\s*["']([^"']*)["']`, 'i'));
+    return m ? m[1] : '';
+  };
+
   return text.replace(
-    /<source\s+web_id=["']([^"']+)["']\s*\/?>(\s*<\/source>)?/gi,
-    (_m, citeId) => {
-      const c = byId[citeId];
-      const label = c?.domain || 'source';
-      const loading = c ? '' : ' cite-chip--loading';
+    /<source\b([^>]*?)\s*\/?>(\s*<\/source>)?/gi,
+    (match, attrs) => {
+      const citeId = readAttr(attrs, 'web_id');
+      if (!citeId) return match;  // not our marker — leave alone
+      const fromMap = byId[citeId];
+      const title = fromMap?.title || readAttr(attrs, 'data-title');
+      const url = fromMap?.url || readAttr(attrs, 'data-url');
+      const domain = fromMap?.domain || readAttr(attrs, 'data-domain');
+      const snippet = fromMap?.snippet || readAttr(attrs, 'data-snippet');
+      const label = domain || 'source';
+      const loading = (title || url || domain) ? '' : ' cite-chip--loading';
       return (
         `<span class="cite-chip${loading}" tabindex="0"` +
         ` data-cite-id="${escAttr(citeId)}"` +
-        ` data-title="${escAttr(c?.title || '')}"` +
-        ` data-url="${escAttr(c?.url || '')}"` +
-        ` data-domain="${escAttr(c?.domain || '')}"` +
-        ` data-snippet="${escAttr(c?.snippet || '')}">${escAttr(label)}</span>`
+        ` data-title="${escAttr(title)}"` +
+        ` data-url="${escAttr(url)}"` +
+        ` data-domain="${escAttr(domain)}"` +
+        ` data-snippet="${escAttr(snippet)}">${escAttr(label)}</span>`
       );
     }
   );
@@ -568,26 +587,10 @@ const handleStreamChunk = (data) => {
         }
     } else if (type === 'done') {
         // End-of-stream + final {entity_ids, document_ids, web_citations}.
-        const webCitations = data.web_citations || [];
-        console.log('[ChatInterface] done event:', {
-            message_id,
-            messageFound: !!message,
-            existingMessageIds: messages.value.map(m => m.id),
-            web_citations_count: webCitations.length,
-            web_citations_ids: webCitations.map(c => c?.id),
-            cite_markers_in_text: (message?.content || '').match(/<source\s+web_id=["']([^"']+)["']/g),
-        });
-        // Find by message_id OR fall back to the last pending system message —
-        // the placeholder's id-sync can race with a fast done event.
-        let target = message;
-        if (!target) {
-            const last = messages.value[messages.value.length - 1];
-            if (last && last.type === 'system') target = last;
-        }
-        if (target) {
-            target.pending = false;
-            target.commentOptions = parseCommentOptions(target.content);
-            target.webCitations = webCitations;
+        if (message) {
+            message.pending = false;
+            message.commentOptions = parseCommentOptions(message.content);
+            message.webCitations = data.web_citations || [];
         }
         loading.value = false;
     } else if (type === 'error') {

@@ -170,31 +170,46 @@ function escAttr(value: string): string {
 }
 
 function renderCiteMarkers(text: string, citations?: WebCitation[]): string {
-  // Replace <source web_id="cite-..."/> markers (any whitespace variant) with
-  // a styled chip span. The data-* attributes carry everything we need to
-  // populate the hover popover via event delegation.
+  // Replace <source web_id="..."/> markers with a styled chip span.
+  //
+  // Two flavors of marker are accepted:
+  //   1. Bare: <source web_id="cite-X"/> — emitted by the LLM during streaming.
+  //      Metadata comes from the `citations` map (populated by the `done` event).
+  //   2. Enriched: <source web_id="cite-X" data-title="…" data-url="…"
+  //      data-domain="…" data-snippet="…"/> — produced server-side at save time
+  //      (see chat.py:_inline_citation_metadata). Self-sufficient on reload —
+  //      no separate citation map needed.
+  //
+  // We prefer the citations map (fresher), then fall back to the marker's
+  // own attrs. A chip with neither is rendered in a loading state.
   if (!text) return ''
   const byId: Record<string, WebCitation> = {}
   for (const c of citations || []) byId[c.id] = c
 
-  // Tolerate self-closing OR explicit-closing forms emitted by the LLM.
+  const readAttr = (attrs: string, name: string): string => {
+    const m = attrs.match(new RegExp(`\\b${name}\\s*=\\s*["']([^"']*)["']`, 'i'))
+    return m ? m[1] : ''
+  }
+
   return text.replace(
-    /<source\s+web_id=["']([^"']+)["']\s*\/?>(\s*<\/source>)?/gi,
-    (_match, citeId) => {
-      const c = byId[citeId]
-      const label = c?.domain || 'source'
-      const titleAttr = c?.title ? escAttr(c.title) : ''
-      const urlAttr = c?.url ? escAttr(c.url) : ''
-      const domainAttr = c?.domain ? escAttr(c.domain) : ''
-      const snippetAttr = c?.snippet ? escAttr(c.snippet) : ''
-      const loadingClass = c ? '' : ' cite-chip--loading'
+    /<source\b([^>]*?)\s*\/?>(\s*<\/source>)?/gi,
+    (match, attrs: string) => {
+      const citeId = readAttr(attrs, 'web_id')
+      if (!citeId) return match  // not our marker — leave alone
+      const fromMap = byId[citeId]
+      const title = fromMap?.title || readAttr(attrs, 'data-title')
+      const url = fromMap?.url || readAttr(attrs, 'data-url')
+      const domain = fromMap?.domain || readAttr(attrs, 'data-domain')
+      const snippet = fromMap?.snippet || readAttr(attrs, 'data-snippet')
+      const label = domain || 'source'
+      const loadingClass = (title || url || domain) ? '' : ' cite-chip--loading'
       return (
         `<span class="cite-chip${loadingClass}" tabindex="0"` +
         ` data-cite-id="${escAttr(citeId)}"` +
-        ` data-title="${titleAttr}"` +
-        ` data-url="${urlAttr}"` +
-        ` data-domain="${domainAttr}"` +
-        ` data-snippet="${snippetAttr}">${escAttr(label)}</span>`
+        ` data-title="${escAttr(title)}"` +
+        ` data-url="${escAttr(url)}"` +
+        ` data-domain="${escAttr(domain)}"` +
+        ` data-snippet="${escAttr(snippet)}">${escAttr(label)}</span>`
       )
     }
   )
