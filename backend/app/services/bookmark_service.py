@@ -185,7 +185,7 @@ class BookmarkService(UserIsolatedService[Bookmark]):
                 
                 if remaining_bookmarks == 0:
                     logger.info(f"Cascading delete for document {document_id} and associated resources")
-                    
+
                     # A. Delete associated ChatSessions (scoped to this document)
                     chat_stmt = select(ChatSession.id).where(
                         ChatSession.scope_type == 'document',
@@ -193,7 +193,7 @@ class BookmarkService(UserIsolatedService[Bookmark]):
                     )
                     chat_result = await session.execute(chat_stmt)
                     session_ids = chat_result.scalars().all()
-                    
+
                     if session_ids:
                         # Delete messages first
                         await session.execute(
@@ -204,18 +204,41 @@ class BookmarkService(UserIsolatedService[Bookmark]):
                             delete(ChatSession).where(ChatSession.id.in_(session_ids))
                         )
                         logger.info(f"Deleted {len(session_ids)} chat sessions for document {document_id}")
-                    
-                    # B. Delete KG edges sourced from this document
+
+                    # B. Delete KG edges sourced from this document.
                     await session.execute(text(
                         "DELETE FROM kg_edge WHERE source_document_id = :doc_id"
                     ), {"doc_id": document_id})
 
-                    # C. Delete KG node-document links for this document
+                    # C. Delete KG node-document junction rows.
                     await session.execute(text(
                         "DELETE FROM kg_node_document WHERE document_id = :doc_id"
                     ), {"doc_id": document_id})
 
-                    # D. Delete the Document itself
+                    # D. Delete theme-document junction rows (theme clustering).
+                    await session.execute(text(
+                        "DELETE FROM theme_document WHERE document_id = :doc_id"
+                    ), {"doc_id": document_id})
+
+                    # E. Delete study-collection-document junction rows.
+                    await session.execute(text(
+                        "DELETE FROM study_collection_document_link WHERE document_id = :doc_id"
+                    ), {"doc_id": document_id})
+
+                    # F. Delete Q&A records linked to this document.
+                    await session.execute(text(
+                        "DELETE FROM question_answer WHERE document_id = :doc_id"
+                    ), {"doc_id": document_id})
+
+                    # G. Delete polymorphic embedding rows pointing at this document.
+                    #    (source_type/source_id isn't a true FK so the DB won't
+                    #    block the document delete, but leaving these orphans
+                    #    around pollutes vector search and the embedding stats.)
+                    await session.execute(text(
+                        "DELETE FROM embedding WHERE source_type = 'document' AND source_id = :doc_id"
+                    ), {"doc_id": document_id})
+
+                    # H. Delete the Document itself
                     await session.execute(
                         delete(Document).where(Document.id == document_id)
                     )
