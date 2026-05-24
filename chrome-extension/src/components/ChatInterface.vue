@@ -386,29 +386,42 @@ const handleStreamChunk = (data) => {
     // Find message with this ID or fall back to the last pending system message
     let message = messages.value.find(m => m.id === message_id);
 
-    if (type === 'stream_chunk') {
-        if (!message) {
-            const lastMessage = messages.value[messages.value.length - 1];
-            if (lastMessage && lastMessage.type === 'system' && lastMessage.pending) {
-                message = lastMessage;
-                message.id = message_id;
-                message.content = '';
-                // Keep pending=true while streaming so status text keeps showing
-                // (matches the web app ChatPanel where pending covers the whole wait)
-            }
+    const adoptPlaceholder = () => {
+        if (message) return;
+        const lastMessage = messages.value[messages.value.length - 1];
+        if (lastMessage && lastMessage.type === 'system' && lastMessage.pending) {
+            message = lastMessage;
+            message.id = message_id;
+            message.content = '';
         }
+    };
+
+    if (type === 'token') {
+        adoptPlaceholder();
         if (message) {
             message.content += content || '';
             scrollToBottom();
         }
+    } else if (type === 'content') {
+        // Research path one-shot — replace content rather than append.
+        adoptPlaceholder();
+        if (message) {
+            message.content = content || '';
+            scrollToBottom();
+        }
     } else if (type === 'draft_replace') {
-        // Reflection rejected the draft — clear content for refined version
         if (message) {
             message.content = '';
             message.statusText = 'Refining response...';
         }
         scrollToBottom();
-    } else if (type === 'end_stream') {
+    } else if (type === 'status') {
+        if (message) {
+            message.statusText = content || '';
+        }
+    } else if (type === 'done') {
+        // End-of-stream + final {entity_ids, document_ids}. Extension currently
+        // doesn't surface entity/doc IDs in its UI; we just finalize the message.
         if (message) {
             message.pending = false;
             message.commentOptions = parseCommentOptions(message.content);
@@ -420,10 +433,6 @@ const handleStreamChunk = (data) => {
             message.pending = false;
         }
         loading.value = false;
-    } else if (type === 'agent_status') {
-        if (message) {
-            message.statusText = content || '';
-        }
     }
 };
 

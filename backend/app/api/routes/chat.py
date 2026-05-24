@@ -19,9 +19,11 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 class WebSocketMessage(BaseModel):
-    type: str  # e.g., "stream_chunk", "end_stream", "error"
+    # WS chat endpoint is legacy and not used by any current frontend.
+    # The active wire format is SSE (see /sessions/{id}/stream).
+    type: str  # e.g., "token", "content", "draft_replace", "status", "done", "error"
     content: str = ""
-    message_id: str | None = None # Optional for tracking streamed messages
+    message_id: str | None = None  # Optional for tracking streamed messages
 
 router = APIRouter(
     prefix="/api/v1/chat",
@@ -208,10 +210,13 @@ async def stream_chat_response(
     should be sent first via POST /sessions/{session_id}/messages, and then
     this endpoint should be called with the returned message_id.
     
-    The stream sends events in the following format:
-    - event: stream_chunk - incremental text chunks
-    - event: end_stream - final complete response
-    - event: error - error occurred
+    SSE events (post-Agent_Architecture_May_24):
+    - event: token         — incremental text delta (append to buffer)
+    - event: content       — full-text replacement (research path; replaces buffer)
+    - event: draft_replace — reflection rejected the draft; clear buffer
+    - event: status        — UI hint {status_type, content}
+    - event: done          — end of stream + {entity_ids, document_ids}
+    - event: error         — failure
     """
     # Verify session exists and belongs to user
     chat_session = await chat_session_service.get_session_by_id(session_id, user_context.user.id)
@@ -228,120 +233,89 @@ async def stream_chat_response(
     user_message = user_message_obj.content
     
     async def generate_stream():
-        """Generator function that yields SSE events with its own database session"""
+        """
+        SSE generator. Event names match backend chunk types one-to-one — no rename
+        layer. The frontend dispatches on the `type` field in each payload.
+        """
         logger.info(f"[Session {session_id}] SSE generate_stream() started for message_id: {message_id}")
-        
-        # Use a fresh session for the entire duration of the stream to prevent premature closure
+
         async with async_session() as session:
             local_session_service = ChatSessionService(session)
-            assistant_response = ""
             response_message_id = str(uuid.uuid4())
-            chunk_count = 0
-            
+
+            # Server-side accumulator — what gets saved to the DB at the end.
+            assistant_response = ""
+            # Buffered until end-of-stream so we can ship one `done` event.
+            final_entity_ids: list = []
+            final_document_ids: list = []
+
+            def sse(event: str, payload: dict) -> str:
+                payload = {**payload, "type": event, "message_id": response_message_id}
+                return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+
             try:
-                # Stream the AI response
-                logger.info(f"[Session {session_id}] Starting iteration over chat_agent_service.get_stream()...")
-                async for chunk in chat_agent_service.get_stream(session_id, user_message, user_context.user.id, skill_override=skill):
+                async for chunk in chat_agent_service.get_stream(
+                    session_id, user_message, user_context.user.id, skill_override=skill,
+                ):
                     chunk_type = chunk.get("type")
-                    
+
                     if chunk_type == "token":
-                        # Individual LLM token — append to response and stream delta
                         token = chunk.get("content", "")
                         if token:
                             assistant_response += token
-                            event_data = {
-                                "type": "stream_chunk",
-                                "content": token,
-                                "message_id": response_message_id
-                            }
-                            yield f"event: stream_chunk\ndata: {json.dumps(event_data)}\n\n"
+                            yield sse("token", {"content": token})
 
                     elif chunk_type == "content":
-                        # Full content (fallback/best-effort) — replace entire response
+                        # Research path one-shot: replace the accumulator (no token stream preceded this).
                         content = chunk.get("content")
                         if content:
                             assistant_response = content
-                            event_data = {
-                                "type": "stream_chunk",
-                                "content": content,
-                                "message_id": response_message_id
-                            }
-                            yield f"event: stream_chunk\ndata: {json.dumps(event_data)}\n\n"
+                            yield sse("content", {"content": content})
 
                     elif chunk_type == "draft_replace":
-                        # Reflection rejected the draft — tell frontend to clear and re-stream
+                        # Reflection rejected the draft — both server- and client-side buffers clear.
                         assistant_response = ""
-                        event_data = {
-                            "type": "draft_replace",
-                            "message_id": response_message_id
-                        }
-                        yield f"event: draft_replace\ndata: {json.dumps(event_data)}\n\n"
+                        yield sse("draft_replace", {})
 
                     elif chunk_type == "status":
-                        event_data = {
-                            "type": "agent_status",
+                        yield sse("status", {
                             "status_type": chunk.get("status_type"),
                             "content": chunk.get("content"),
-                            "message_id": response_message_id
-                        }
-                        yield f"event: agent_status\ndata: {json.dumps(event_data)}\n\n"
-                        
+                        })
+
                     elif chunk_type == "chat_context":
-                        # Send context IDs for graph filtering
-                        context_data = {
-                            "type": "chat_context",
-                            "entity_ids": chunk.get("entity_ids", []),
-                            "document_ids": chunk.get("document_ids", []),
-                            "message_id": response_message_id
-                        }
-                        yield f"event: chat_context\ndata: {json.dumps(context_data)}\n\n"
+                        # Buffer — shipped with the `done` event below.
+                        final_entity_ids = chunk.get("entity_ids", []) or []
+                        final_document_ids = chunk.get("document_ids", []) or []
 
                     elif chunk_type == "error":
-                        # Send error event
-                        error_data = {
-                            "type": "error",
-                            "content": chunk.get("content"),
-                            "message_id": response_message_id
-                        }
-                        yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
-                
-                logger.info(f"[Session {session_id}] Stream iteration completed. Total chunks: {chunk_count}, Total response: {len(assistant_response)} chars")
-                
-                # Send end_stream event (raw markdown — frontend renders via marked.js)
-                event_data = {
-                    "type": "end_stream",
-                    "content": assistant_response,
-                    "message_id": response_message_id
-                }
-                yield f"event: end_stream\ndata: {json.dumps(event_data)}\n\n"
-                
-                # Save assistant response after streaming completes using the fresh session
+                        yield sse("error", {"content": chunk.get("content")})
+
+                logger.info(
+                    f"[Session {session_id}] Stream done. assistant_response={len(assistant_response)} chars, "
+                    f"entity_ids={len(final_entity_ids)}, document_ids={len(final_document_ids)}"
+                )
+
+                # Single end-of-stream signal — no redundant full-text payload.
+                yield sse("done", {
+                    "entity_ids": final_entity_ids,
+                    "document_ids": final_document_ids,
+                })
+
                 if assistant_response:
                     try:
-                        logger.info(f"[Session {session_id}] Saving assistant response to database...")
                         await local_session_service.save_message(session_id, "assistant", assistant_response)
-                        logger.info(f"[Session {session_id}] Successfully saved assistant response")
                     except Exception as save_error:
                         logger.error(f"[Session {session_id}] Failed to save assistant response: {save_error}", exc_info=True)
-                        
+
             except Exception as e:
                 logger.error(f"Error during streaming for session {session_id}: {e}", exc_info=True)
-                
-                # Try to save partial response if available
                 if assistant_response:
                     try:
                         await local_session_service.save_message(session_id, "assistant", assistant_response)
-                        logger.info(f"[Session {session_id}] Saved partial assistant response ({len(assistant_response)} chars)")
                     except Exception as save_error:
                         logger.error(f"[Session {session_id}] Failed to save partial assistant response: {save_error}")
-                
-                # Send error event
-                error_data = {
-                    "type": "error",
-                    "content": f"\n\nError: {str(e)}. Please try again.",
-                    "message_id": response_message_id
-                }
-                yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
+                yield sse("error", {"content": f"\n\nError: {str(e)}. Please try again."})
     
     return StreamingResponse(
         generate_stream(),

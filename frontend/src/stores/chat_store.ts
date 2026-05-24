@@ -350,12 +350,9 @@ export const useChatStore = defineStore('chat', () => {
 
     log(`Handling message type: ${type}, content_length: ${content?.length || 0}, message_id: ${message_id}`);
 
-    if (type === "stream_chunk") {
-      if (!activeSession.value) {
-        log('WARNING: No active session, cannot handle stream_chunk');
-        return;
-      }
-
+    // Helper: ensure the placeholder/streaming message exists and its _id is in sync.
+    const ensureActiveMessage = () => {
+      if (!activeSession.value) return null;
       if (!streamingMessageId) {
         streamingMessageId = message_id || `agent-${Date.now()}`;
         activeSession.value.messages.push({
@@ -367,18 +364,14 @@ export const useChatStore = defineStore('chat', () => {
           pending: true,
         });
       }
-
       if (message_id && streamingMessageId !== message_id) {
         const placeholder = activeSession.value.messages.find(msg => msg._id === streamingMessageId);
-        if (placeholder) {
-          placeholder._id = message_id;
-        }
+        if (placeholder) placeholder._id = message_id;
         streamingMessageId = message_id;
       }
-
-      let activeMessage = activeSession.value.messages.find(msg => msg._id === streamingMessageId);
-      if (!activeMessage) {
-        activeMessage = {
+      let msg = activeSession.value.messages.find(m => m._id === streamingMessageId);
+      if (!msg) {
+        msg = {
           _id: streamingMessageId!,
           content: '',
           senderId: 'agent',
@@ -386,47 +379,68 @@ export const useChatStore = defineStore('chat', () => {
           date: now.toLocaleDateString(),
           pending: true,
         };
-        activeSession.value.messages.push(activeMessage);
+        activeSession.value.messages.push(msg);
       }
+      return msg;
+    };
 
-      if (activeMessage) {
-        // Append token delta to buffer (token-by-token streaming)
-        streamingBuffer += (content || '');
-        activeMessage.content = streamingBuffer;
-        activeMessage.pending = true;
-        activeMessage.timestamp = now.toLocaleTimeString();
-        activeMessage.date = now.toLocaleDateString();
-      }
+    if (type === "token") {
+      // Token delta — append to buffer.
+      const msg = ensureActiveMessage();
+      if (!msg) return;
+      streamingBuffer += (content || '');
+      msg.content = streamingBuffer;
+      msg.pending = true;
+      msg.timestamp = now.toLocaleTimeString();
+      msg.date = now.toLocaleDateString();
+    } else if (type === "content") {
+      // Full-text replacement (research path one-shot — no token stream preceded this).
+      const msg = ensureActiveMessage();
+      if (!msg) return;
+      streamingBuffer = content || '';
+      msg.content = streamingBuffer;
+      msg.pending = true;
+      msg.timestamp = now.toLocaleTimeString();
+      msg.date = now.toLocaleDateString();
     } else if (type === "draft_replace") {
-      // Reflection rejected the current draft — clear content and re-stream refined version
+      // Reflection rejected the current draft — clear and re-stream the refined version.
       log('Draft rejected by reflection, clearing for refined version...');
       if (activeSession.value && streamingMessageId) {
-        const activeMessage = activeSession.value.messages.find(msg => msg._id === streamingMessageId);
-        if (activeMessage) {
-          activeMessage.content = '';
-          activeMessage.statusText = 'Refining response...';
+        const msg = activeSession.value.messages.find(m => m._id === streamingMessageId);
+        if (msg) {
+          msg.content = '';
+          msg.statusText = 'Refining response...';
         }
       }
       streamingBuffer = '';
-    } else if (type === "end_stream") {
-      log('Processing end_stream...');
-      const finalContent = (content && content.length > 0) ? content : streamingBuffer;
+    } else if (type === "status") {
+      log(`STATUS event received: ${content}`);
       if (activeSession.value && streamingMessageId) {
-        log(`Finalizing message: ${finalContent.length} chars`);
-        const activeMessage = activeSession.value.messages.find(msg => msg._id === streamingMessageId);
-        if (activeMessage) {
-          activeMessage.content = finalContent || '';
-          activeMessage.pending = false;
-          activeMessage.timestamp = now.toLocaleTimeString();
-          activeMessage.date = now.toLocaleDateString();
+        const msg = activeSession.value.messages.find(m => m._id === streamingMessageId);
+        if (msg) msg.statusText = content;
+      }
+    } else if (type === "done") {
+      // End-of-stream + final {entity_ids, document_ids}. No full-text payload —
+      // streamingBuffer already holds the canonical text from token/content events.
+      log('Processing done event...');
+      const entityIds = (messageData as any).entity_ids || [];
+      const documentIds = (messageData as any).document_ids || [];
+      for (const id of entityIds) chatContextEntityIds.value.add(id);
+      for (const id of documentIds) chatContextDocumentIds.value.add(id);
+
+      if (activeSession.value && streamingMessageId) {
+        const msg = activeSession.value.messages.find(m => m._id === streamingMessageId);
+        if (msg) {
+          msg.content = streamingBuffer || msg.content || '';
+          msg.pending = false;
+          msg.timestamp = now.toLocaleTimeString();
+          msg.date = now.toLocaleDateString();
         }
       }
       streamingMessageId = null;
       streamingBuffer = '';
-      log('end_stream processed successfully');
 
-      // Refresh sessions lists after stream completes
-      loadSessions();  // Refresh chat history
+      loadSessions();
       try {
         import('./hubStore').then(({ useHubStore }) => {
           useHubStore().loadResearchSessions();
@@ -434,21 +448,6 @@ export const useChatStore = defineStore('chat', () => {
       } catch (e) {
         // hubStore may not be available in all contexts
       }
-    } else if (type === "agent_status") {
-      log(`STATUS event received: ${content}`);
-      if (activeSession.value && streamingMessageId) {
-        const activeMessage = activeSession.value.messages.find(msg => msg._id === streamingMessageId);
-        if (activeMessage) {
-          activeMessage.statusText = content;
-        }
-      }
-    } else if (type === "chat_context") {
-      // Accumulate entity/doc IDs from the chat agent's context
-      const entityIds = (messageData as any).entity_ids || [];
-      const documentIds = (messageData as any).document_ids || [];
-      for (const id of entityIds) chatContextEntityIds.value.add(id);
-      for (const id of documentIds) chatContextDocumentIds.value.add(id);
-      log(`chat_context received: ${entityIds.length} entities, ${documentIds.length} documents`);
     } else if (type === "error") {
       log(`ERROR event received: ${content}`);
       console.error(`[${new Date().toISOString()}] [SSE Handler] Backend SSE error:`, content);
