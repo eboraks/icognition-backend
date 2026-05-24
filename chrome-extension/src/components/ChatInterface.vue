@@ -568,10 +568,26 @@ const handleStreamChunk = (data) => {
         }
     } else if (type === 'done') {
         // End-of-stream + final {entity_ids, document_ids, web_citations}.
-        if (message) {
-            message.pending = false;
-            message.commentOptions = parseCommentOptions(message.content);
-            message.webCitations = data.web_citations || [];
+        const webCitations = data.web_citations || [];
+        console.log('[ChatInterface] done event:', {
+            message_id,
+            messageFound: !!message,
+            existingMessageIds: messages.value.map(m => m.id),
+            web_citations_count: webCitations.length,
+            web_citations_ids: webCitations.map(c => c?.id),
+            cite_markers_in_text: (message?.content || '').match(/<source\s+web_id=["']([^"']+)["']/g),
+        });
+        // Find by message_id OR fall back to the last pending system message —
+        // the placeholder's id-sync can race with a fast done event.
+        let target = message;
+        if (!target) {
+            const last = messages.value[messages.value.length - 1];
+            if (last && last.type === 'system') target = last;
+        }
+        if (target) {
+            target.pending = false;
+            target.commentOptions = parseCommentOptions(target.content);
+            target.webCitations = webCitations;
         }
         loading.value = false;
     } else if (type === 'error') {
