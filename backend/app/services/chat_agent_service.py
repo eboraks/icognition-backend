@@ -10,45 +10,62 @@ from bs4 import BeautifulSoup
 from contextlib import AbstractAsyncContextManager
 
 
-def _build_chat_context_event(chunk: dict, response_text: str) -> dict:
-    """Extract entity IDs from graph state and doc IDs from source tags in the response."""
-    entity_ids = list(set(chunk.get("context_entity_ids", [])))
-    # Extract doc IDs from <source doc_id="N"> tags in the raw response
-    doc_ids = list(set(int(m) for m in re.findall(r'<source\s+doc_id=["\'](\d+)["\']>', response_text)))
+def _normalize_content(content) -> str:
+    """Flatten Gemini's list-of-blocks content into a plain string."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            item.get("text", "") if isinstance(item, dict) else str(item)
+            for item in content
+        )
+    return str(content)
+
+
+def _last_ai_message(messages) -> Optional["AIMessage"]:
+    """Latest non-tool-call AIMessage in a messages list, or None."""
+    from langchain_core.messages import AIMessage as _AI
+    for msg in reversed(messages or []):
+        if isinstance(msg, _AI) and not getattr(msg, "tool_calls", None):
+            return msg
+    return None
+
+
+def _last_ai_message_id(messages) -> Optional[str]:
+    msg = _last_ai_message(messages)
+    return getattr(msg, "id", None) if msg is not None else None
+
+
+def _build_chat_context(entity_ids, response_text: str) -> dict:
+    """Pack the final {entity_ids, document_ids} payload for the done event."""
+    doc_ids = list({int(m) for m in re.findall(r'<source\s+doc_id=["\'](\d+)["\']>', response_text or "")})
     return {
         "type": "chat_context",
-        "entity_ids": entity_ids,
+        "entity_ids": list(set(entity_ids or [])),
         "document_ids": doc_ids,
     }
 
 
-def _latest_ai_answer(state: dict) -> str:
+def _detect_new_critique(new_messages, seen_critique_id):
     """
-    Return the content of the most recent answer-bearing AIMessage in the
-    graph state, or '' if none. Skips tool-call AIMessages (those are
-    intermediate, not user-facing answers).
-    Used when the answer arrives as a single message in state instead of
-    streamed tokens — e.g. dispatch_research_node → writer_node, which
-    invokes a sub-graph and produces one AIMessage when it returns.
+    Find a reflection critique we haven't yet acknowledged in `new_messages`
+    (messages added after the prior-turn snapshot). A critique is a non-tool-call
+    HumanMessage that appears AFTER an AIMessage — reflect_node appends one when
+    it rejects a draft. Returns the message or None.
     """
     from langchain_core.messages import AIMessage as _AI
-
-    messages = state.get("messages") or []
-    for msg in reversed(messages):
-        if not isinstance(msg, _AI):
+    saw_ai = False
+    for msg in new_messages or []:
+        if isinstance(msg, _AI) and not getattr(msg, "tool_calls", None):
+            saw_ai = True
             continue
-        if getattr(msg, "tool_calls", None):
-            continue
-        content = msg.content
-        if isinstance(content, list):
-            content = "".join(
-                item.get("text", "") if isinstance(item, dict) else str(item)
-                for item in content
-            )
-        content = (content or "").strip()
-        if content:
-            return content
-    return ""
+        if saw_ai and isinstance(msg, HumanMessage) and not getattr(msg, "tool_calls", None):
+            mid = getattr(msg, "id", id(msg))
+            if mid != seen_critique_id:
+                return msg
+    return None
 
 
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -402,20 +419,10 @@ class ChatAgentService:
             input_messages.append(HumanMessage(content=message))
             
             logger.info(f"[Session {session_id}] Starting stream for thread_id: {thread_id}")
-            
-            # Stream agent responses using LangGraph's value stream (mirrors previous behavior)
-            accumulated_text = ""
-            chunk_count = 0
-            
-            # State tracking for UI feedback
-            last_intent = None
-            last_processed_message_id = None
 
             try:
-                # Add Langfuse tracing
                 lf_handler = get_langfuse_handler()
-
-                run_config = {"thread_id": thread_id}
+                run_config: dict = {"configurable": {"thread_id": thread_id}}
                 if lf_handler:
                     run_config["callbacks"] = [lf_handler]
                     run_config["run_name"] = PromptType.CHAT_AGENT_SYSTEM.value
@@ -430,155 +437,99 @@ class ChatAgentService:
                     if skill_override:
                         run_config["tags"] = [f"skill:{skill_override}"]
 
-                # --- Token-by-token streaming with reflection/replace ---
-                # We stream using both "messages" (for LLM tokens) and "values" (for state updates).
-                # Draft text is streamed live. If reflection rejects it, we send a
-                # "draft_replace" event so the frontend clears the message and we re-stream.
+                # --- Snapshot BEFORE this turn runs ---
+                # Anchors "what's new" so we can identify the current turn's AIMessage
+                # at the end, instead of guessing from is_satisfactory race conditions.
+                prior = await agent.aget_state(run_config)
+                prior_messages = (prior.values or {}).get("messages") or []
+                prior_last_ai_id = _last_ai_message_id(prior_messages)
+                prior_message_count = len(prior_messages)
 
-                draft_text = ""           # Accumulated tokens for the current draft
-                draft_number = 0          # Which generation pass we're on
-                has_yielded_content = False
-                last_values_state = {}    # Most recent full state from "values" mode
+                # Tracks reflection rejections — when reflect_node appends a critique
+                # HumanMessage at index > prior_message_count, we tell the frontend to
+                # clear its accumulator and we re-arm streamed_any_token.
+                last_critique_id: Optional[str] = None
 
-                logger.info(f"[Session {session_id}] Calling agent.astream() with stream_mode=['messages', 'values']...")
-                async for chunk in agent.astream(
+                streamed_any_token = False
+
+                logger.info(f"[Session {session_id}] astream(stream_mode=['messages','values'])...")
+                async for stream_type, data in agent.astream(
                     {"messages": input_messages},
                     config=run_config,
                     stream_mode=["messages", "values"],
                 ):
-                    chunk_count += 1
-                    stream_type = chunk[0] if isinstance(chunk, tuple) else None
-                    stream_data = chunk[1] if isinstance(chunk, tuple) else chunk
-
-                    # --- Handle "values" events (state snapshots after each node) ---
-                    if stream_type == "values":
-                        last_values_state = stream_data
-
-                        # Intent classification status
-                        current_intent = stream_data.get("intent_description")
-                        if current_intent and current_intent != last_intent:
-                            logger.info(f"[Session {session_id}] Intent detected: {current_intent}")
-                            yield {
-                                "type": "status",
-                                "status_type": "thinking",
-                                "content": f"analyzing request ({current_intent})"
-                            }
-                            last_intent = current_intent
-
-                        # Research dispatch
-                        if stream_data.get("requires_research"):
-                            yield {
-                                "type": "status",
-                                "status_type": "researching",
-                                "content": "Researching the web for fresh sources..."
-                            }
-
-                        # Track classified skill in Langfuse
-                        classified_skill = stream_data.get("skill")
-                        if classified_skill and lf_handler:
-                            run_config.setdefault("tags", [])
-                            skill_tag = f"skill:{classified_skill}"
-                            if skill_tag not in run_config["tags"]:
-                                run_config["tags"].append(skill_tag)
-                                run_config["metadata"]["classified_skill"] = classified_skill
-
-                        # Check for reflection rejection (critique HumanMessage after our draft)
-                        current_messages = stream_data.get("messages", [])
-                        if current_messages:
-                            last_msg = current_messages[-1]
-
-                            # Critique detected — reflection rejected the draft
-                            if isinstance(last_msg, HumanMessage) and draft_text:
-                                is_critique = not last_msg.tool_calls if hasattr(last_msg, 'tool_calls') else True
-                                if is_critique:
-                                    logger.info(f"[Session {session_id}] Draft #{draft_number} rejected by reflection, replacing...")
-                                    draft_text = ""
-                                    draft_number += 1
-                                    yield {"type": "draft_replace"}
-
-                                    if "SYSTEM NOTE" in str(last_msg.content):
-                                        if getattr(last_msg, 'id', None) != last_processed_message_id:
-                                            yield {
-                                                "type": "status",
-                                                "status_type": "thinking",
-                                                "content": "searching google for updated info"
-                                            }
-                                            last_processed_message_id = getattr(last_msg, 'id', None)
-                                    else:
-                                        yield {
-                                            "type": "status",
-                                            "status_type": "thinking",
-                                            "content": "refining answer based on critique"
-                                        }
-
-                        # Success condition: the graph reached is_satisfactory=True
-                        # AND we have an answer. The answer comes from one of two places:
-                        #   1. draft_text — accumulated tokens streamed from generate_node
-                        #   2. the latest AIMessage in state — produced by the research path
-                        #      (dispatch_research_node → writer_node), which runs a sub-graph
-                        #      and lands a single AIMessage in state instead of streaming tokens.
-                        # Either path counts as a good answer; treat them uniformly here so the
-                        # end-of-stream branch doesn't have to infer what happened.
-                        if stream_data.get("is_satisfactory") and not has_yielded_content:
-                            answer = draft_text or _latest_ai_answer(stream_data)
-                            if answer:
-                                if not draft_text:
-                                    # Research path — never streamed; deliver as one block
-                                    yield {"type": "content", "content": answer}
-                                source = "tokens" if draft_text else "message"
-                                logger.info(
-                                    f"[Session {session_id}] Draft #{draft_number} satisfactory "
-                                    f"({len(answer)} chars, source={source})"
-                                )
-                                yield _build_chat_context_event(stream_data, answer)
-                                has_yielded_content = True
-
-                        continue  # Done processing this values event
-
-                    # --- Handle "messages" events (LLM token chunks) ---
                     if stream_type == "messages":
-                        message_chunk, metadata = stream_data
-                        node_name = metadata.get("langgraph_node", "")
-
-                        # Only stream tokens from generate_node (the main answer generation)
-                        # Skip reflect_node, intent_node, and tool calls
-                        if node_name != "generate_node":
+                        # LangGraph "messages" only emits LLM tokens from THIS invocation.
+                        message_chunk, metadata = data
+                        if metadata.get("langgraph_node") != "generate_node":
                             continue
+                        if not isinstance(message_chunk, AIMessageChunk):
+                            continue
+                        if message_chunk.tool_call_chunks:
+                            continue
+                        token = _normalize_content(message_chunk.content)
+                        if token:
+                            streamed_any_token = True
+                            yield {"type": "token", "content": token}
+                        continue
 
-                        # Skip tool-call chunks (intermediate, not final answer text)
-                        if isinstance(message_chunk, AIMessageChunk):
-                            if message_chunk.tool_call_chunks:
-                                continue
-                            token = message_chunk.content
-                            if token:
-                                # Handle Gemini's list-of-dicts content format
-                                if isinstance(token, list):
-                                    token = "".join(
-                                        item.get("text", "") if isinstance(item, dict) else str(item)
-                                        for item in token
-                                    )
-                                draft_text += token
-                                yield {"type": "token", "content": token}
+                    if stream_type != "values":
+                        continue
 
-                # --- Stream ended: finalize ---
-                # If is_satisfactory never fired (max reflections reached, etc.) but we
-                # streamed a draft, ship it as best-effort. Otherwise it's a real failure.
-                if not has_yielded_content:
-                    fallback = draft_text or _latest_ai_answer(last_values_state)
-                    if fallback:
-                        logger.info(
-                            f"[Session {session_id}] No is_satisfactory signal — "
-                            f"yielding fallback ({len(fallback)} chars)"
-                        )
-                        if not draft_text:
-                            yield {"type": "content", "content": fallback}
-                        yield _build_chat_context_event(last_values_state, fallback)
-                    else:
-                        logger.error(
-                            f"[Session {session_id}] Stream produced no answer "
-                            f"({chunk_count} chunks)"
-                        )
-                        yield {"type": "error", "content": "Failed to generate a response. Please try again."}
+                    # --- values events: status pings + draft_replace detection ---
+                    # The final answer comes from aget_state AFTER the stream ends,
+                    # not from these intermediate snapshots.
+                    current_messages = data.get("messages") or []
+                    new_messages = current_messages[prior_message_count:]
+
+                    # Reflection rejected the draft: it appends a HumanMessage critique
+                    # AFTER the new turn's AIMessage. Detect by walking the suffix.
+                    critique = _detect_new_critique(new_messages, last_critique_id)
+                    if critique is not None:
+                        last_critique_id = getattr(critique, "id", id(critique))
+                        streamed_any_token = False
+                        yield {"type": "draft_replace"}
+                        yield {
+                            "type": "status",
+                            "status_type": "thinking",
+                            "content": "refining answer based on critique",
+                        }
+
+                    if data.get("skill") == "research":
+                        yield {
+                            "type": "status",
+                            "status_type": "researching",
+                            "content": "Researching the web for fresh sources...",
+                        }
+
+                # --- Snapshot AFTER this turn runs ---
+                final = await agent.aget_state(run_config)
+                final_messages = (final.values or {}).get("messages") or []
+                answer_msg = _last_ai_message(final_messages)
+
+                # If the latest AIMessage is the same one from the prior snapshot,
+                # this turn produced no answer (LLM failure, dispatch failure, etc).
+                same_as_prior = (
+                    answer_msg is not None
+                    and prior_last_ai_id is not None
+                    and getattr(answer_msg, "id", None) == prior_last_ai_id
+                )
+                if answer_msg is None or same_as_prior:
+                    logger.error(f"[Session {session_id}] Stream produced no new AIMessage")
+                    yield {"type": "error", "content": "Failed to generate a response. Please try again."}
+                    return
+
+                answer = _normalize_content(answer_msg.content).strip()
+
+                # Research path (and any future non-streaming node) doesn't emit
+                # generate_node tokens — deliver the answer as one block instead.
+                if not streamed_any_token and answer:
+                    yield {"type": "content", "content": answer}
+
+                yield _build_chat_context(
+                    (final.values or {}).get("context_entity_ids"),
+                    answer,
+                )
 
                 logger.info(f"[Session {session_id}] Stream loop completed.")
 

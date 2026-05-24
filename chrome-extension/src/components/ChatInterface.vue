@@ -453,18 +453,24 @@ const handleActionClick = (action) => {
 
 // Slash-command → skill key mapping
 const SKILL_SHORTCUTS = {
-    '/social_post': 'social_post',
-    '/write_comment': 'social_post',
+    '/social_post': 'write_social_media_post',
+    '/write_post': 'write_social_media_post',
+    '/write_social_media_post': 'write_social_media_post',
+    '/write_comment': 'write_social_media_comment',
+    '/write_social_media_comment': 'write_social_media_comment',
     '/fact_check': 'fact_check',
     '/email': 'email_draft',
     '/email_draft': 'email_draft',
     '/summary': 'summary',
     '/summarize': 'summary',
+    '/research': 'research',
 };
 
 // Skill commands for the autocomplete dropdown
 const SKILL_COMMAND_LIST = [
-    { command: '/social_post', description: 'Write a social media comment' },
+    { command: '/research', description: 'Multi-agent web research (saves sources to your library)' },
+    { command: '/write_post', description: 'Write a social media post from this article' },
+    { command: '/write_comment', description: 'Write a comment on this social media post' },
     { command: '/fact_check', description: 'Fact check claims in this article' },
     { command: '/summary', description: 'Summarize this document' },
     { command: '/email_draft', description: 'Draft an email about this' },

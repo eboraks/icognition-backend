@@ -1,46 +1,51 @@
-import re
+"""
+Chat agent graph (Agent_Architecture_May_24).
+
+Simplified from the prior "Reflective Research Agent" — no intent_node, no
+auto-research dispatch, reflection is opt-in per skill, web search is Tavily.
+
+Flow:
+    START
+      ├─ skill.research == True (only the "research" skill) → dispatch_research_node → END
+      └─ else → generate_node ──► tools? ──► reflect (if skill.reflect) ──► END
+"""
+
 from typing import Annotated, Any, Dict, List, Optional, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from app.core.config import settings
-from app.chat_workflows.tools import get_google_search_tool, create_retrieve_documents_tool, create_fetch_social_post_tool, create_world_context_tool
-from app.services.prompt_service import get_prompt, get_all_skills, get_skill, get_default_skill, match_skill
+from app.chat_workflows.tools import create_fetch_social_post_tool
+from app.chat_workflows.tavily_tools import get_tavily_search_tool, get_tavily_extract_tool
+from app.services.prompt_service import get_prompt, get_all_skills, get_skill, get_default_skill
 from app.services.prompt_utils import PromptType
 from app.utils.logging import get_logger
 from app.utils.langfuse_worker import get_langfuse_handler
 
 logger = get_logger(__name__)
 
+
 # --- State Definition ---
+
 
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
-    intent_description: str
-    reflection_count: int
-    latest_query: str
-    is_satisfactory: bool
     skill: str
+    latest_query: str
     extracted_entities: List[str]
     kg_context: str
     context_entity_ids: List[int]
     context_document_ids: List[int]
-    requires_research: bool
+    reflection_count: int
+    is_satisfactory: bool
 
-# --- Structured Outputs ---
-
-class IntentClassification(TypedDict):
-    describe_the_user_message_intent: str
-    refined_query: str
-    reasoning: str
-    key_entities: List[str]
-    requires_research: bool
 
 class ReflectionOutput(TypedDict):
     critique: str
@@ -49,7 +54,56 @@ class ReflectionOutput(TypedDict):
     is_satisfactory: bool
 
 
+# --- Lightweight entity extraction (replaces intent_node's key_entities) ---
+
+
+_STOP_WORDS = {
+    "the", "a", "an", "is", "are", "was", "were", "what", "who", "where", "when",
+    "why", "how", "this", "that", "these", "those", "and", "or", "but", "of", "in",
+    "on", "at", "to", "for", "with", "from", "by", "about", "as", "it", "its",
+    "my", "your", "our", "their", "his", "her", "do", "does", "did", "can", "could",
+    "would", "should", "will", "shall", "may", "might", "be", "been", "being",
+    "have", "has", "had", "you", "i", "we", "they", "he", "she",
+}
+
+
+def _extract_query_entities(text_in: str, max_entities: int = 5) -> List[str]:
+    """
+    Cheap, dependency-free entity extraction for KG enrichment.
+
+    Pulls capitalized multi-word phrases and quoted strings out of the user
+    message. This replaces the LLM-based key_entities field that intent_node
+    used to produce. Good enough for fuzzy-matching against kg_node.label.
+    """
+    import re
+
+    if not text_in:
+        return []
+    # Strip HTML wrappers from chat input (frontend wraps messages in <p>).
+    text_in = re.sub(r"<[^>]+>", " ", text_in)
+
+    # Quoted phrases — high signal.
+    quoted = re.findall(r'"([^"]{2,80})"|\'([^\']{2,80})\'', text_in)
+    found: List[str] = []
+    for a, b in quoted:
+        phrase = (a or b).strip()
+        if phrase and phrase not in found:
+            found.append(phrase)
+
+    # Capitalized runs — second pass.
+    for match in re.findall(r"\b[A-Z][\w\-]+(?:\s+[A-Z][\w\-]+){0,4}\b", text_in):
+        phrase = match.strip()
+        # Reject single short capitalized words that are usually sentence starters.
+        if len(phrase.split()) == 1 and phrase.lower() in _STOP_WORDS:
+            continue
+        if phrase and phrase not in found:
+            found.append(phrase)
+
+    return found[:max_entities]
+
+
 # --- Knowledge Graph Entity Resolution ---
+
 
 async def resolve_entities_from_query(
     entity_names: List[str],
@@ -65,10 +119,10 @@ async def resolve_entities_from_query(
     if not entity_names:
         return ("", [])
 
-    all_entity_ids = []
+    all_entity_ids: List[int] = []
     entity_map: Dict[int, dict] = {}
 
-    for name in entity_names[:5]:  # cap at 5 to avoid slow queries
+    for name in entity_names[:5]:  # cap to avoid slow queries
         sql = text("""
             SELECT DISTINCT ON (n.label, n.raw_type)
                    n.id, n.label AS name, n.raw_type AS type, n.description,
@@ -99,7 +153,6 @@ async def resolve_entities_from_query(
     if not all_entity_ids:
         return ("", [])
 
-    # Fetch edges between/involving matched nodes
     rels_sql = text("""
         SELECT e.property_label AS relationship_type,
                n1.label AS from_name, n1.raw_type AS from_type,
@@ -113,7 +166,6 @@ async def resolve_entities_from_query(
     rels_result = await db_session.execute(rels_sql, {"ids": all_entity_ids})
     relationships = rels_result.mappings().all()
 
-    # Fetch documents linked to these nodes
     docs_sql = text("""
         SELECT DISTINCT n.label AS entity_name, d.title AS doc_title
         FROM kg_node_document nd
@@ -126,10 +178,7 @@ async def resolve_entities_from_query(
     docs_result = await db_session.execute(docs_sql, {"ids": all_entity_ids})
     entity_docs = docs_result.mappings().all()
 
-    # Format the context
-    parts = ["[Knowledge Graph Context]"]
-
-    parts.append("Entities found in your library:")
+    parts = ["[Knowledge Graph Context]", "Entities found in your library:"]
     for e in entity_map.values():
         desc = f" — {e['description']}" if e["description"] else ""
         parts.append(f"  * [{e['type']}] {e['name']}{desc}")
@@ -153,45 +202,35 @@ async def resolve_entities_from_query(
 
 # --- Graph Builder Helper ---
 
-# Type alias: maps prompt_type strings to SimpleNamespace objects.
 GraphPrompts = Dict[str, Any]
 
 
 def fetch_graph_prompts() -> GraphPrompts:
-    """
-    Load all prompts required by the research graph from YAML files.
-
-    No database session needed — reads from the YAML-backed prompt service.
-    Raises ValueError if any required prompt is missing.
-    """
-    required = [
-        PromptType.CHAT_INTENT_CLASSIFICATION,
-        PromptType.CHAT_REFLECTION,
-    ]
+    """Load every prompt the chat graph needs from the YAML-backed prompt service."""
+    required = [PromptType.CHAT_REFLECTION]
     prompts: GraphPrompts = {}
     for pt in required:
         prompt = get_prompt(pt.value)
         if prompt is None:
             raise ValueError(
                 f"CRITICAL: Missing prompt '{pt.value}' in YAML files. "
-                "Cannot build research graph."
+                "Cannot build chat graph."
             )
         prompts[pt.value] = prompt
 
-    # Load all skill prompts (skills with prompt_text survive missing YAML entries)
-    skills = get_all_skills()
-    for skill_key, skill_config in skills.items():
+    # Every skill's prompt must resolve to either a YAML entry or an inline prompt_text.
+    for skill_key, skill_config in get_all_skills().items():
         pt = skill_config.prompt_type
-        if pt not in prompts:
-            skill_prompt = get_prompt(pt)
-            if skill_prompt is not None:
-                prompts[pt] = skill_prompt
-            elif not skill_config.prompt_text:
-                raise ValueError(
-                    f"CRITICAL: Missing prompt '{pt}' in YAML files "
-                    f"and skill '{skill_key}' has no prompt_text. "
-                    "Cannot build research graph."
-                )
+        if pt in prompts:
+            continue
+        skill_prompt = get_prompt(pt)
+        if skill_prompt is not None:
+            prompts[pt] = skill_prompt
+        elif not skill_config.prompt_text:
+            raise ValueError(
+                f"CRITICAL: Missing prompt '{pt}' in YAML files and skill "
+                f"'{skill_key}' has no prompt_text. Cannot build chat graph."
+            )
 
     return prompts
 
@@ -207,14 +246,17 @@ def build_research_graph(
     chat_session_id: Optional[int] = None,
 ):
     """
-    Builds the compiled StateGraph for the Reflective Research Agent.
+    Build the compiled StateGraph for the chat agent.
 
     Args:
-        checkpointer: LangGraph checkpointer (e.g. AsyncPostgresSaver)
-        retrieve_tool: LangChain tool for KB retrieval
+        checkpointer: LangGraph checkpointer (e.g. AsyncPostgresSaver).
+        retrieve_tool: LangChain tool for KB retrieval (session-scoped).
+        kg_tool: Knowledge graph tool (session-scoped).
         prompts: Pre-fetched prompt dict from fetch_graph_prompts().
-        db_session: AsyncSession for KG entity resolution (optional).
-        user_id: User ID for scoping KG queries (optional).
+        db_session: AsyncSession for KG entity resolution.
+        user_id: User ID for scoping KG queries.
+        skill_override: Skill key from `?skill=` query param. Defaults to default_skill.
+        chat_session_id: Used to thread research sessions across turns.
     """
     if prompts is None:
         raise ValueError(
@@ -222,197 +264,64 @@ def build_research_graph(
             "Call fetch_graph_prompts() first."
         )
 
-    # Load skills from YAML
     skills = get_all_skills()
     default_skill = get_default_skill()
+    initial_skill = skill_override if skill_override in skills else default_skill
 
-    # 1. Initialize LLMs
     llm = ChatGoogleGenerativeAI(
         model=settings.GEMINI_FLASH_MODEL,
         google_api_key=settings.GOOGLE_API_KEY,
-        temperature=0.1
+        temperature=0.1,
     )
 
-    # Tools
-    google_tool = get_google_search_tool()
+    # --- Tools (Tavily replaces Google CSE) ---
+    tavily_search = get_tavily_search_tool()
+    tavily_extract = get_tavily_extract_tool()
     fetch_tool = create_fetch_social_post_tool()
-    world_tool = create_world_context_tool()
-    tools = [retrieve_tool] if retrieve_tool else []
+
+    tools: List[Any] = []
+    if retrieve_tool is not None:
+        tools.append(retrieve_tool)
     tools.append(fetch_tool)
-    if world_tool:
-        tools.append(world_tool)
-    if kg_tool:
+    if tavily_search is not None:
+        tools.append(tavily_search)
+    if tavily_extract is not None:
+        tools.append(tavily_extract)
+    if kg_tool is not None:
         tools.append(kg_tool)
-    if google_tool:
-        tools.append(google_tool)
 
     llm_with_tools = llm.bind_tools(tools)
 
-    # 2. Nodes
-
-    async def intent_node(state: AgentState):
-        """Classifies the user's intent and matches the best skill via embedding similarity."""
-        messages = state["messages"]
-        last_message = messages[-1].content
-
-        try:
-            intent_prompt = prompts.get(PromptType.CHAT_INTENT_CLASSIFICATION.value)
-            if not intent_prompt:
-                logger.warning("Intent classification prompt not found — using defaults")
-                raise ValueError("Missing intent prompt")
-
-            system_prompt = intent_prompt.system_prompt
-            user_template = intent_prompt.user_prompt or "{input}"
-
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", system_prompt),
-                ("human", user_template),
-            ])
-
-            classifier = prompt | llm.with_structured_output(IntentClassification)
-            result = await classifier.ainvoke(
-                {"input": last_message},
-                config={"run_name": PromptType.CHAT_INTENT_CLASSIFICATION.value}
-            )
-        except Exception as e:
-            logger.error(f"Intent classification failed: {e}", exc_info=True)
-            result = {
-                "refined_query": str(last_message),
-                "describe_the_user_message_intent": "",
-                "key_entities": [],
-                "requires_research": False,
-            }
-
-        # Skill selection: slash command override > embedding similarity match
-        if skill_override and skill_override in skills:
-            skill = skill_override
-            logger.info(f"Using skill override: '{skill}'")
-        else:
-            skill = await match_skill(str(last_message))
-
-        requires_research = bool(result.get("requires_research", False))
-        logger.info(
-            f"Intent classification: requires_research={requires_research}, "
-            f"skill={skill}, query={result.get('refined_query', '')[:80]}"
-        )
-
-        return {
-            "latest_query": result["refined_query"],
-            "intent_description": result["describe_the_user_message_intent"],
-            "skill": skill,
-            "extracted_entities": result.get("key_entities", []),
-            "requires_research": requires_research,
-            # Reset per-turn state so previous turn's values don't carry over
-            "is_satisfactory": False,
-            "reflection_count": 0,
-        }
+    # --- Nodes ---
 
     async def _enrich_kg(state: AgentState) -> tuple:
-        """Resolve extracted entities against the knowledge graph. Returns (kg_context, entity_ids)."""
-        entities = state.get("extracted_entities", [])
+        """Resolve query entities against the KG. Returns (kg_context, entity_ids)."""
+        entities = state.get("extracted_entities") or []
         if not entities or not db_session or not user_id:
             return ("", [])
-
         try:
-            kg_context, entity_ids = await resolve_entities_from_query(
+            return await resolve_entities_from_query(
                 entity_names=entities,
                 user_id=user_id,
                 db_session=db_session,
             )
-            if kg_context:
-                logger.info(f"KG enrichment found context for entities: {entities} (IDs: {entity_ids})")
-            return (kg_context, entity_ids)
         except Exception as e:
             logger.warning(f"KG enrichment failed (non-fatal): {e}")
             return ("", [])
 
-    async def _run_generate(state: AgentState, system_msg: str, run_name: str) -> dict:
-        """Shared generation logic: injects intent + KG context and calls the LLM with tools."""
+    async def generate_node(state: AgentState) -> dict:
+        """Resolve the skill prompt, enrich with KG context, call the LLM with tools."""
         messages = state["messages"]
-        intent_desc = state.get("intent_description")
-        refined_query = state.get("latest_query")
-        kg_context = state.get("kg_context", "")
-        skill = state.get("skill", default_skill)
+        skill_key = state.get("skill") or initial_skill
+        skill_config = skills.get(skill_key) or skills[default_skill]
 
-        prompt_msgs = list(messages)
-
-        # When a skill_override is active (slash command like /fact_check), check if the
-        # user message is essentially just the slash command with no real content.
-        # If so, replace it with a clear instruction the LLM can act on.
-        skip_intent = bool(skill_override)
-        if skip_intent:
-            last_msg = prompt_msgs[-1]
-            if isinstance(last_msg, HumanMessage):
-                # Strip HTML tags and whitespace to check if there's real content beyond the command
-                clean_text = re.sub(r'<[^>]*>', '', str(last_msg.content)).strip()
-                # Remove the slash command itself to see if there's additional user text
-                remaining = re.sub(r'^/\w+\s*', '', clean_text).strip()
-                skill_cfg = get_skill(skill)
-                slash_instruction = skill_cfg.slash_instruction if skill_cfg else ""
-                if not remaining and slash_instruction:
-                    # User sent just the slash command — replace with clear instruction
-                    instruction = slash_instruction
-                    if kg_context:
-                        instruction += f"\n\n{kg_context}"
-                    prompt_msgs[-1] = HumanMessage(content=instruction)
-                elif kg_context:
-                    prompt_msgs[-1] = HumanMessage(content=str(last_msg.content) + f"\n\n{kg_context}")
-        elif (intent_desc or refined_query) or kg_context:
-            last_msg = prompt_msgs[-1]
-            if isinstance(last_msg, HumanMessage):
-                context_block = "\n\n[Analysis Context]"
-                if intent_desc:
-                    context_block += f"\nIntent: {intent_desc}"
-                if refined_query:
-                    context_block += f"\nRefined Query: {refined_query}"
-                if kg_context:
-                    context_block += f"\n\n{kg_context}"
-                prompt_msgs[-1] = HumanMessage(content=str(last_msg.content) + context_block)
-
-        # Append a tool-usage reminder so the LLM doesn't skip tools when it should use them
-        tool_names = [t.name for t in tools]
-        tool_reminder = (
-            "\n\nIMPORTANT — Available tools: " + ", ".join(tool_names) + ". "
-            "If the user's question is NOT fully answerable from the CURRENT CONTEXT above, "
-            "you MUST call the appropriate tool before answering. "
-            "Use retrieve_documents_tool to search the user's library. "
-            "Use google_search_tool to find information not in the library or document context."
-        )
-        system_msg += tool_reminder
-
-        prompt_msgs = [SystemMessage(content=system_msg)] + prompt_msgs
-
-        try:
-            response = await llm_with_tools.ainvoke(prompt_msgs, config={"run_name": run_name})
-
-            # Handle MALFORMED_FUNCTION_CALL: Gemini sometimes generates a tool call
-            # that doesn't match the schema, returning empty content. Retry once without tools.
-            finish_reason = response.response_metadata.get("finish_reason", "")
-            if finish_reason == "MALFORMED_FUNCTION_CALL" or (not response.content and not response.tool_calls):
-                logger.warning(f"Malformed LLM response (finish_reason={finish_reason}), retrying without tools")
-                response = await llm.ainvoke(prompt_msgs, config={"run_name": f"{run_name}_retry"})
-        except Exception as e:
-            logger.error(f"LLM call failed in _run_generate ({run_name}): {e}", exc_info=True)
-            # Return an error message as AIMessage so the graph doesn't crash silently
-            response = AIMessage(content=f"I'm sorry, I encountered an error while processing your request. Please try again. (Error: {type(e).__name__})")
-
-        return {"messages": [response]}
-
-    async def generate_node(state: AgentState):
-        """Unified generation: enriches KG context, resolves skill prompt, calls LLM."""
-        # --- Phase 1: KG Enrichment (runs once per turn) ---
-        kg_context = state.get("kg_context", "")
-        context_entity_ids = state.get("context_entity_ids", [])
-
-        # Only run KG enrichment on the first pass (kg_context still empty and entities exist)
-        entities = state.get("extracted_entities", [])
-        if entities and not kg_context:
+        # KG enrichment runs once per turn (only if not already populated).
+        kg_context = state.get("kg_context") or ""
+        context_entity_ids = state.get("context_entity_ids") or []
+        if not kg_context and state.get("extracted_entities"):
             kg_context, context_entity_ids = await _enrich_kg(state)
 
-        # --- Phase 2: Resolve skill prompt ---
-        skill_key = state.get("skill", default_skill)
-        skill_config = skills.get(skill_key, skills[default_skill])
-
+        # Resolve system prompt from YAML (or skill's inline prompt_text fallback).
         yaml_prompt = prompts.get(skill_config.prompt_type)
         if yaml_prompt:
             system_msg = yaml_prompt.system_prompt or ""
@@ -421,117 +330,130 @@ def build_research_graph(
         elif skill_config.prompt_text:
             system_msg = skill_config.prompt_text
         else:
-            logger.error(f"No prompt available for skill '{skill_key}' — returning error message")
             return {
-                "messages": [AIMessage(content=f"I'm sorry, the '{skill_key}' skill is not properly configured. Please contact support.")],
+                "messages": [AIMessage(
+                    content=f"The '{skill_key}' skill is not configured. Please contact support."
+                )],
                 "kg_context": kg_context,
                 "context_entity_ids": context_entity_ids,
-            }
-
-        # --- Phase 3: Call LLM (pass enriched state so _run_generate sees KG context) ---
-        enriched_state = {**state, "kg_context": kg_context}
-        result = await _run_generate(enriched_state, system_msg, run_name=skill_config.prompt_type)
-        result["kg_context"] = kg_context
-        result["context_entity_ids"] = context_entity_ids
-        return result
-
-    async def reflect_node(state: AgentState):
-        """Critiques the answer and decides if search is needed."""
-        messages = state["messages"]
-        last_ai_msg = messages[-1]
-
-        # If the last message was a tool call (not text), we skip reflection and go back to generate
-        if hasattr(last_ai_msg, 'tool_calls') and last_ai_msg.tool_calls:
-             return {"reflection_count": state.get("reflection_count", 0)}
-
-        try:
-            # Extract only the latest exchange: last human question + last AI response.
-            # Using the full history caused the reflector to confuse old messages
-            # (e.g. a prior single-word "France" turn) with the current AI response.
-            last_human_msg = None
-            last_ai_response = None
-            for msg in reversed(messages):
-                if isinstance(msg, AIMessage) and not msg.tool_calls and last_ai_response is None:
-                    # Extract text content, handling both str and list-of-blocks formats
-                    content = msg.content
-                    if isinstance(content, list):
-                        content = " ".join(
-                            block.get("text", "") if isinstance(block, dict) else str(block)
-                            for block in content
-                        )
-                    last_ai_response = content
-                elif isinstance(msg, HumanMessage) and last_human_msg is None and last_ai_response is not None:
-                    content = msg.content
-                    if isinstance(content, list):
-                        content = " ".join(
-                            block.get("text", "") if isinstance(block, dict) else str(block)
-                            for block in content
-                        )
-                    last_human_msg = content
-                    break
-
-            if not last_ai_response:
-                logger.warning("reflect_node: no AI response found to evaluate — accepting as-is")
-                return {
-                            "reflection_count": state.get("reflection_count", 0) + 1,
-                    "is_satisfactory": True,
-                }
-
-            # Role Swapping: Frame the conversation so the Reflector thinks the AI's answer is a Human submission
-            # This helps the Reflector act as a "Teacher" grading a "Student"
-            translated_messages = []
-            if last_human_msg:
-                translated_messages.append(AIMessage(content=last_human_msg))
-            translated_messages.append(HumanMessage(content=last_ai_response))
-
-            reflect_prompt = prompts.get(PromptType.CHAT_REFLECTION.value)
-            if not reflect_prompt:
-                logger.warning("Reflection prompt not found — skipping reflection, accepting answer as-is")
-                return {
-                            "reflection_count": state.get("reflection_count", 0) + 1,
-                    "is_satisfactory": True,
-                }
-
-            system_prompt = reflect_prompt.system_prompt
-            user_template = reflect_prompt.user_prompt or "Student Submission:\n{messages}"
-
-            msgs_str = "\n\n".join([f"{m.type.upper()}: {m.content}" for m in translated_messages])
-
-            try:
-                user_content = user_template.format(messages=msgs_str)
-            except Exception:
-                user_content = f"Student Submission:\n{msgs_str}"
-
-            prompt = ChatPromptTemplate.from_messages([
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=user_content)
-            ])
-
-            chain = prompt | llm.with_structured_output(ReflectionOutput)
-            result = await chain.ainvoke(
-                {"messages": translated_messages},
-                config={"run_name": PromptType.CHAT_REFLECTION.value}
-            )
-        except Exception as e:
-            logger.error(f"Reflection node failed: {e}", exc_info=True)
-            # On reflection failure, accept the current answer rather than crashing
-            return {
-                    "reflection_count": state.get("reflection_count", 0) + 1,
                 "is_satisfactory": True,
             }
+
+        # Inject the slash_instruction when the user message is bare (e.g. just "/fact_check").
+        prompt_msgs = list(messages)
+        last_msg = prompt_msgs[-1] if prompt_msgs else None
+        if isinstance(last_msg, HumanMessage) and skill_override:
+            import re
+            clean = re.sub(r"<[^>]+>", "", str(last_msg.content)).strip()
+            remaining = re.sub(r"^/\w+\s*", "", clean).strip()
+            if not remaining and skill_config.slash_instruction:
+                instruction = skill_config.slash_instruction
+                if kg_context:
+                    instruction = f"{instruction}\n\n{kg_context}"
+                prompt_msgs[-1] = HumanMessage(content=instruction)
+            elif kg_context:
+                prompt_msgs[-1] = HumanMessage(content=f"{last_msg.content}\n\n{kg_context}")
+        elif isinstance(last_msg, HumanMessage) and kg_context:
+            prompt_msgs[-1] = HumanMessage(content=f"{last_msg.content}\n\n{kg_context}")
+
+        prompt_msgs = [SystemMessage(content=system_msg)] + prompt_msgs
+
+        try:
+            response = await llm_with_tools.ainvoke(
+                prompt_msgs,
+                config={"run_name": skill_config.prompt_type},
+            )
+            # Gemini occasionally emits MALFORMED_FUNCTION_CALL with empty body; retry without tools.
+            finish_reason = response.response_metadata.get("finish_reason", "")
+            if finish_reason == "MALFORMED_FUNCTION_CALL" or (
+                not response.content and not response.tool_calls
+            ):
+                logger.warning(f"Malformed Gemini response (finish_reason={finish_reason}); retrying without tools")
+                response = await llm.ainvoke(
+                    prompt_msgs,
+                    config={"run_name": f"{skill_config.prompt_type}_retry"},
+                )
+        except Exception as e:
+            logger.error(f"LLM call failed in generate_node ({skill_key}): {e}", exc_info=True)
+            response = AIMessage(
+                content=f"I'm sorry, I encountered an error while processing your request. ({type(e).__name__})"
+            )
+
+        return {
+            "messages": [response],
+            "kg_context": kg_context,
+            "context_entity_ids": context_entity_ids,
+        }
+
+    async def reflect_node(state: AgentState) -> dict:
+        """Critique the latest AI response (opt-in per skill via skill.reflect)."""
+        messages = state["messages"]
+        if not messages:
+            return {"reflection_count": state.get("reflection_count", 0) + 1, "is_satisfactory": True}
+
+        # Pull the latest human/AI pair (avoids confusing the reflector with old turns).
+        last_human, last_ai_response = None, None
+        for msg in reversed(messages):
+            if isinstance(msg, AIMessage) and not msg.tool_calls and last_ai_response is None:
+                content = msg.content
+                if isinstance(content, list):
+                    content = " ".join(
+                        item.get("text", "") if isinstance(item, dict) else str(item)
+                        for item in content
+                    )
+                last_ai_response = content
+            elif isinstance(msg, HumanMessage) and last_human is None and last_ai_response is not None:
+                content = msg.content
+                if isinstance(content, list):
+                    content = " ".join(
+                        item.get("text", "") if isinstance(item, dict) else str(item)
+                        for item in content
+                    )
+                last_human = content
+                break
+
+        if not last_ai_response:
+            return {"reflection_count": state.get("reflection_count", 0) + 1, "is_satisfactory": True}
+
+        reflect_prompt = prompts.get(PromptType.CHAT_REFLECTION.value)
+        if not reflect_prompt:
+            return {"reflection_count": state.get("reflection_count", 0) + 1, "is_satisfactory": True}
+
+        # Role-swap: feed AI answer as Human (student submission), question as AI.
+        translated = []
+        if last_human:
+            translated.append(AIMessage(content=last_human))
+        translated.append(HumanMessage(content=last_ai_response))
+        msgs_str = "\n\n".join(f"{m.type.upper()}: {m.content}" for m in translated)
+
+        user_template = reflect_prompt.user_prompt or "Student Submission:\n{messages}"
+        try:
+            user_content = user_template.format(messages=msgs_str)
+        except Exception:
+            user_content = f"Student Submission:\n{msgs_str}"
+
+        chain = ChatPromptTemplate.from_messages([
+            SystemMessage(content=reflect_prompt.system_prompt),
+            HumanMessage(content=user_content),
+        ]) | llm.with_structured_output(ReflectionOutput)
+
+        try:
+            result = await chain.ainvoke(
+                {"messages": translated},
+                config={"run_name": PromptType.CHAT_REFLECTION.value},
+            )
+        except Exception as e:
+            logger.error(f"Reflection failed: {e}", exc_info=True)
+            return {"reflection_count": state.get("reflection_count", 0) + 1, "is_satisfactory": True}
 
         return {
             "reflection_count": state.get("reflection_count", 0) + 1,
             "is_satisfactory": result["is_satisfactory"],
-            "messages": [HumanMessage(content=result["critique"])] if not result["is_satisfactory"] else []
+            "messages": [HumanMessage(content=result["critique"])] if not result["is_satisfactory"] else [],
         }
 
-    async def dispatch_research_node(state: AgentState):
-        """
-        Dispatch the user's brief to the research multi-agent workflow.
-        Creates a ResearchSession, runs the research graph, and appends the
-        final synthesized response as an AIMessage.
-        """
+    async def dispatch_research_node(state: AgentState) -> dict:
+        """Run the multi-agent research workflow. Reached only when skill == 'research'."""
         from app.chat_workflows.research_multiagent_graph import (
             build_research_multiagent_graph,
             DEFAULT_MAX_SUBAGENTS,
@@ -541,42 +463,40 @@ def build_research_graph(
         from app.models import ResearchSession
         from sqlalchemy import select
 
+        # The "brief" is the user's latest message — or the resolved latest_query
+        # if we have one (it'll usually equal the message content here).
         brief = state.get("latest_query") or (
             state["messages"][-1].content if state.get("messages") else ""
         )
+        if isinstance(brief, list):
+            brief = " ".join(
+                item.get("text", "") if isinstance(item, dict) else str(item)
+                for item in brief
+            )
 
-        # Reuse the existing ResearchSession for this chat if one exists, so
-        # follow-up research questions extend the same research (sources,
-        # graph) instead of creating a fresh session per turn. Only fall
-        # back to creating a new session when no prior research is linked to
-        # this chat.
-        research_session_id = None
+        # Reuse an existing ResearchSession for this chat (so follow-ups extend it).
+        research_session_id: Optional[int] = None
         extended_existing = False
         if db_session and user_id:
             try:
-                existing_rs = None
+                existing = None
                 if chat_session_id:
-                    existing_result = await db_session.execute(
+                    result = await db_session.execute(
                         select(ResearchSession)
                         .where(ResearchSession.chat_session_id == chat_session_id)
                         .where(ResearchSession.user_id == user_id)
                         .order_by(ResearchSession.id.desc())
                         .limit(1)
                     )
-                    existing_rs = existing_result.scalar_one_or_none()
+                    existing = result.scalar_one_or_none()
 
-                if existing_rs is not None:
-                    existing_rs.status = "running"
-                    existing_rs.final_response = None
+                if existing is not None:
+                    existing.status = "running"
+                    existing.final_response = None
                     await db_session.commit()
-                    await db_session.refresh(existing_rs)
-                    research_session_id = existing_rs.id
+                    await db_session.refresh(existing)
+                    research_session_id = existing.id
                     extended_existing = True
-                    logger.info(
-                        f"Extending research_session={research_session_id} "
-                        f"(original brief: {existing_rs.brief[:60]!r}) "
-                        f"with follow-up: {brief[:80]!r}"
-                    )
                 else:
                     rs = ResearchSession(
                         user_id=user_id,
@@ -593,7 +513,6 @@ def build_research_graph(
                     await db_session.commit()
                     await db_session.refresh(rs)
                     research_session_id = rs.id
-                    logger.info(f"Created research_session={research_session_id} for brief: {brief[:80]}")
             except Exception as e:
                 logger.error(f"Failed to prepare research session: {e}")
 
@@ -603,7 +522,6 @@ def build_research_graph(
                 "is_satisfactory": True,
             }
 
-        # Build and invoke the research graph (no checkpointer for v1 — research runs are short-lived)
         try:
             research_graph = build_research_multiagent_graph(checkpointer=None)
             initial_state = {
@@ -618,10 +536,8 @@ def build_research_graph(
                     "max_critic_loops": DEFAULT_MAX_CRITIC_LOOPS,
                 },
             }
-            # Use a unique thread_id so this run doesn't collide with anything
-            run_config = {"configurable": {"thread_id": f"research_{research_session_id}"}}
+            run_config: Dict[str, Any] = {"configurable": {"thread_id": f"research_{research_session_id}"}}
 
-            # Wire Langfuse tracing into the research graph
             lf_handler = get_langfuse_handler()
             if lf_handler:
                 run_config["callbacks"] = [lf_handler]
@@ -635,12 +551,8 @@ def build_research_graph(
 
             final_state = await research_graph.ainvoke(initial_state, config=run_config)
             final_response = final_state.get("final_response", "Research completed but produced no response.")
-            saved_doc_ids = final_state.get("saved_doc_ids", []) or []
+            saved_doc_ids = final_state.get("saved_doc_ids") or []
 
-            # Update research_session with results. When extending an
-            # existing session, accumulate sub-topics across turns instead
-            # of overwriting; the plan field becomes a running log of every
-            # research turn on this chat.
             try:
                 result = await db_session.execute(
                     select(ResearchSession).where(ResearchSession.id == research_session_id)
@@ -649,7 +561,7 @@ def build_research_graph(
                 if rs:
                     rs.status = "completed"
                     rs.final_response = final_response
-                    new_sub_topics = final_state.get("plan", []) or []
+                    new_sub_topics = final_state.get("plan") or []
                     if extended_existing:
                         existing_plan = (rs.plan or {}).get("sub_topics", []) if isinstance(rs.plan, dict) else []
                         rs.plan = {
@@ -684,53 +596,93 @@ def build_research_graph(
                 "is_satisfactory": True,
             }
 
-    # 3. Graph Construction
-    from langgraph.prebuilt import ToolNode
+    # --- Initialize per-turn state from the entry point ---
+
+    async def init_turn_node(state: AgentState) -> dict:
+        """
+        Reset per-turn state and extract entities from the new user message.
+
+        Runs as the first node every turn. This is what intent_node used to do
+        (minus the LLM classification, which is now baked into the system prompt).
+        Lightweight regex-based entity extraction replaces the LLM `key_entities` field.
+        """
+        last_user = ""
+        for msg in reversed(state.get("messages", [])):
+            if isinstance(msg, HumanMessage):
+                content = msg.content
+                if isinstance(content, list):
+                    content = " ".join(
+                        item.get("text", "") if isinstance(item, dict) else str(item)
+                        for item in content
+                    )
+                last_user = str(content)
+                break
+
+        entities = _extract_query_entities(last_user)
+        skill_key = skill_override if skill_override in skills else default_skill
+
+        return {
+            "skill": skill_key,
+            "latest_query": last_user,
+            "extracted_entities": entities,
+            # Reset per-turn state so prior turn's checkpoint values don't leak.
+            "kg_context": "",
+            "context_entity_ids": [],
+            "is_satisfactory": False,
+            "reflection_count": 0,
+        }
+
+    # --- Graph wiring ---
 
     graph = StateGraph(AgentState)
-
-    graph.add_node("intent_node", intent_node)
-    graph.add_node("dispatch_research_node", dispatch_research_node)
+    graph.add_node("init_turn", init_turn_node)
     graph.add_node("generate_node", generate_node)
     graph.add_node("reflect_node", reflect_node)
+    graph.add_node("dispatch_research_node", dispatch_research_node)
+    graph.add_node("tools", ToolNode(tools, handle_tool_errors=True))
 
-    tools_node = ToolNode(tools, handle_tool_errors=True)
-    graph.add_node("tools", tools_node)
+    graph.add_edge(START, "init_turn")
 
-    # Edges
-    graph.add_edge(START, "intent_node")
-
-    def route_after_intent(state: AgentState) -> str:
-        """Dispatch to research workflow if intent classifier flagged it, else normal generation."""
-        if state.get("requires_research"):
+    def route_after_init(state: AgentState) -> str:
+        """If skill == research, short-circuit into the multi-agent sub-graph."""
+        skill_cfg = skills.get(state.get("skill") or default_skill)
+        if skill_cfg and getattr(skill_cfg, "research", False):
             return "dispatch_research_node"
         return "generate_node"
 
     graph.add_conditional_edges(
-        "intent_node",
-        route_after_intent,
-        {"dispatch_research_node": "dispatch_research_node", "generate_node": "generate_node"},
+        "init_turn",
+        route_after_init,
+        {"generate_node": "generate_node", "dispatch_research_node": "dispatch_research_node"},
     )
     graph.add_edge("dispatch_research_node", END)
 
     def route_after_generate(state: AgentState) -> str:
-        """Route to tools if tool_calls present, otherwise reflect."""
+        """tools → loop; else: reflect only if the active skill opts in."""
         last_msg = state["messages"][-1]
-        if last_msg.tool_calls:
+        if getattr(last_msg, "tool_calls", None):
             return "tools"
-        return "reflect_node"
+        skill_cfg = skills.get(state.get("skill") or default_skill)
+        if skill_cfg and getattr(skill_cfg, "reflect", False):
+            return "reflect_node"
+        return END
 
-    graph.add_conditional_edges("generate_node", route_after_generate)
+    graph.add_conditional_edges(
+        "generate_node",
+        route_after_generate,
+        {"tools": "tools", "reflect_node": "reflect_node", END: END},
+    )
     graph.add_edge("tools", "generate_node")
 
     def route_after_reflect(state: AgentState) -> str:
-        """Retry generate with critique or END."""
-        if state["reflection_count"] > 3:
-            return END
-        if state.get("is_satisfactory"):
+        if state.get("reflection_count", 0) > 3 or state.get("is_satisfactory"):
             return END
         return "generate_node"
 
-    graph.add_conditional_edges("reflect_node", route_after_reflect)
+    graph.add_conditional_edges(
+        "reflect_node",
+        route_after_reflect,
+        {END: END, "generate_node": "generate_node"},
+    )
 
     return graph.compile(checkpointer=checkpointer)

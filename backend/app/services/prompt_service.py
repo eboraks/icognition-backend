@@ -75,10 +75,18 @@ def _load_all() -> None:
             _skills[key] = SimpleNamespace(
                 key=key,
                 prompt_type=s["prompt_type"],
-                node_name=s["node_name"],
+                node_name=s.get("node_name", "generate_node"),
                 description=s.get("description", ""),
                 slash_instruction=s.get("slash_instruction", ""),
                 prompt_text=s.get("prompt_text"),
+                # Reflection is opt-in per skill. When True, generate_node
+                # routes through reflect_node; when False, the first draft
+                # is returned as-is.
+                reflect=bool(s.get("reflect", False)),
+                # When True, this skill short-circuits into the research
+                # multi-agent sub-graph instead of generate_node. Only the
+                # "research" skill should set this.
+                research=bool(s.get("research", False)),
             )
 
     _loaded = True

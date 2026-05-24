@@ -209,10 +209,12 @@ const SKILL_SHORTCUTS: Record<string, string> = {
   '/email_draft': 'email_draft',
   '/summary': 'summary',
   '/summarize': 'summary',
+  '/research': 'research',
 };
 
 // Skill commands for the autocomplete dropdown
 const SKILL_COMMAND_LIST = [
+  { command: '/research', description: 'Multi-agent web research (saves sources to your library)' },
   { command: '/write_post', description: 'Write a social media post from this article' },
   { command: '/write_comment', description: 'Write a comment on this social media post' },
   { command: '/fact_check', description: 'Fact check claims in this article' },

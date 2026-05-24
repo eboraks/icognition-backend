@@ -1,30 +1,40 @@
 default_skill: qa
 
+# Notes for skill authors:
+# - `reflect: true` routes the answer through the reflection loop (max 3 retries).
+#   Use for skills that need verification (fact_check, summary, research).
+# - `reflect: false` (default) returns the first draft directly.
+# - `research: true` short-circuits the chat agent into the multi-agent
+#   research sub-graph (only the "research" skill should set this).
+# - Web search is via Tavily only. `tavily_search(query, topic="news")` is
+#   the replacement for the old `world_context_tool`; `tavily_search(query)`
+#   (default topic="general") replaces `google_search_tool`.
+
 skills:
   - key: qa
     prompt_type: "Chat Agent: System"
-    node_name: generate_node
     description: "Default knowledge Q&A"
+    reflect: false
     slash_instruction: |
       Answer questions about the document provided in the CURRENT CONTEXT above.
       Use retrieve_documents_tool to find related documents in the user's library if needed.
       If you need more information, ask the user follow-up questions to clarify before answering,
-      and use the google_search_tool and world_context_tool to get up-to-date information if the topic is time-sensitive.
+      and use tavily_search (topic="news" for time-sensitive subjects) to get up-to-date information.
 
   - key: write_social_media_post
     prompt_type: "Chat Skill: Social Media Post"
-    node_name: social_post_generate_node
     description: "Create a new social media post from an article or document"
+    reflect: false
     slash_instruction: |
       Write an original social media post based on the document provided in the CURRENT CONTEXT above.
-      Use world_context_tool to get recent news and context about the topic.
+      Use tavily_search with topic="news" to get recent context about the topic.
     prompt_text: |
       You are an expert social media content creator. Your task is to write an original social media post based on an article or document the user has saved.
 
       The document content is provided in the CURRENT CONTEXT above under 'Document Content'. Use it directly — do not re-fetch the URL unless the content is missing or incomplete.
 
       CURRENT EVENTS ENRICHMENT:
-      If the topic touches on current events, geopolitics, breaking news, or any time-sensitive topic, use the `world_context_tool` with the main subject (e.g. 'Israel Iran war', 'US tariffs 2026', 'OpenAI GPT-5'). Use the returned headlines and snippets to make the post timely and relevant.
+      If the topic touches on current events, geopolitics, breaking news, or any time-sensitive topic, call `tavily_search` with `topic="news"` and the main subject (e.g. 'Israel Iran war', 'US tariffs 2026', 'OpenAI GPT-5'). Use the returned headlines and snippets to make the post timely and relevant.
 
       When writing posts:
       1. Distill the key insight, takeaway, or angle from the document
@@ -40,11 +50,11 @@ skills:
 
   - key: write_social_media_comment
     prompt_type: "Chat Skill: Social Media Comment"
-    node_name: social_comment_generate_node
     description: "Write a comment or reply to an existing social media post"
+    reflect: false
     slash_instruction: |
       Write a comment or reply to the social media post provided in the CURRENT CONTEXT above.
-      Use world_context_tool to get recent news and context about the topic.
+      Use tavily_search with topic="news" to get recent context about the topic.
     prompt_text: |
       You are an expert social media commenter. Your task is to write thoughtful, engaging comments or replies to an existing social media post or article.
 
@@ -52,7 +62,7 @@ skills:
       If 'Document Content' is absent from the context but a URL is available, call `fetch_social_post_tool` with that URL to retrieve the content.
 
       CURRENT EVENTS ENRICHMENT:
-      If the post touches on current events, geopolitics, breaking news, ongoing conflicts, elections, economic policy, or any time-sensitive topic, use the `world_context_tool` with the main subject of the post (e.g. 'Israel Iran war', 'US tariffs 2026', 'OpenAI GPT-5'). Use the returned headlines and snippets to make your comments specific and timely — reference what is actually happening in the world right now.
+      If the post touches on current events, geopolitics, breaking news, ongoing conflicts, elections, economic policy, or any time-sensitive topic, call `tavily_search` with `topic="news"` and the main subject of the post (e.g. 'Israel Iran war', 'US tariffs 2026', 'OpenAI GPT-5'). Use the returned headlines and snippets to make your comments specific and timely — reference what is actually happening in the world right now.
 
       When writing comments:
       1. Match the tone and style of the platform (professional for LinkedIn, conversational for Twitter/X, community-focused for Reddit)
@@ -69,8 +79,8 @@ skills:
 
   - key: email_draft
     prompt_type: "Chat Skill: Email Draft"
-    node_name: email_generate_node
     description: "Email drafting"
+    reflect: false
     slash_instruction: |
       Draft an email based on the document provided in the CURRENT CONTEXT above.
     prompt_text: |
@@ -89,8 +99,8 @@ skills:
 
   - key: summary
     prompt_type: "Chat Skill: Summary"
-    node_name: summary_generate_node
     description: "Document/topic summarization"
+    reflect: true
     slash_instruction: |
       Summarize the document provided in the CURRENT CONTEXT above.
     prompt_text: |
@@ -105,11 +115,11 @@ skills:
 
   - key: fact_check
     prompt_type: "Chat Skill: Fact Check"
-    node_name: fact_check_generate_node
     description: "Fact checking and claim verification"
+    reflect: true
     slash_instruction: |
       Fact-check the document provided in the CURRENT CONTEXT above.
-      You MUST use world_context_tool and/or google_search_tool to verify the key claims.
+      You MUST use tavily_search to verify the key claims.
       Do not rely on your training data alone.
     prompt_text: |
       You are an expert fact-checker and critical analysis assistant. Your task is to evaluate claims, statements, and arguments for accuracy and reliability.
@@ -117,14 +127,14 @@ skills:
       IMPORTANT: The document to fact-check is provided in the CURRENT CONTEXT system message above. If the user's message is just '/fact_check' or a short command, fact-check the document from the CURRENT CONTEXT — do NOT ask for more information.
 
       MANDATORY TOOL USE:
-      You MUST call `world_context_tool` and/or `google_search_tool` to verify claims. Do NOT rely solely on your training data. Always use at least one tool to check the key claims before providing your verdict.
+      You MUST call `tavily_search` to verify claims. Do NOT rely solely on your training data. Always use at least one search call to check the key claims before providing your verdict. Use `topic="news"` for time-sensitive claims and the default `topic="general"` for everything else.
 
       APPROACH:
       1. Identify the key claims or assertions in the content
-      2. Call `world_context_tool` with the main topic to get current facts and context
-      3. Call `google_search_tool` to verify specific statistics, dates, or disputed claims
-      4. Cross-reference with the user's library documents using `retrieve_documents_tool` when relevant
-      5. For each claim, assess whether it is supported, contested, or unsupported
+      2. Call `tavily_search` with the main topic to get current facts and context (use `topic="news"` for breaking-news subjects)
+      3. Call `tavily_search` with `topic="general"` for specific statistics, dates, or disputed claims
+      4. Optionally call `tavily_extract` on a specific URL when a snippet isn't enough
+      5. Cross-reference with the user's library documents using `retrieve_documents_tool` when relevant
 
       OUTPUT FORMAT:
       For each claim, provide:
@@ -136,3 +146,12 @@ skills:
       End with an **Overall Assessment** that summarizes the reliability of the content and highlights the most important findings.
 
       Be balanced and evidence-based. Distinguish between factual errors and differences of opinion. When uncertain, say so explicitly rather than guessing.
+
+  - key: research
+    prompt_type: "Chat Research: Planner"
+    description: "Multi-agent web research with citations (saves sources to the library)"
+    research: true
+    reflect: false
+    slash_instruction: |
+      Run a multi-agent research workflow on the user's request. Uses Tavily-powered
+      sub-agents in parallel and saves the source documents to the user's library.

@@ -22,7 +22,6 @@ class PromptType(Enum):
     OPENING_MESSAGE = "Doc Analysis: Opening Message"
     CHAT_AGENT_SYSTEM = "Chat Agent: System"
     CHAT_AGENT_TYPE_AHEAD = "Chat Agent: Type-ahead Prompt"
-    CHAT_INTENT_CLASSIFICATION = "Chat Agent: Intent Classification"
     CHAT_REFLECTION = "Chat Agent: Reflection"
     CHAT_SOCIAL_WRITER = "Chat Agent: Social Writer"
     CHAT_SKILL_EMAIL_DRAFT = "Chat Skill: Email Draft"

@@ -4,7 +4,6 @@ from bs4 import BeautifulSoup
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
 from langchain_core.tools import Tool, tool
-from langchain_google_community import GoogleSearchAPIWrapper
 from app.core.config import settings
 from app.models_kg import KGNode, KGEdge, KGNodeDocument
 from app.services.document_service import DocumentService
@@ -96,50 +95,10 @@ def create_retrieve_documents_tool(user_id: str, scope_type: str, scope_id: Opti
     
     return retrieve_documents_tool
 
-def get_google_search_tool():
-    """
-    Returns a configured Google Search Tool or None if credentials are missing.
-    Results specifically include title, link, and snippet.
-    """
-    if not settings.GOOGLE_SEARCH_API or not settings.GOOGLE_CSE_ID:
-        return None
 
-    search = GoogleSearchAPIWrapper(
-        google_api_key=settings.GOOGLE_SEARCH_API,
-        google_cse_id=settings.GOOGLE_CSE_ID,
-        k=5
-    )
-
-    @tool
-    async def google_search_tool(query: str) -> str:
-        """
-        Searches Google for recent results to validate or augment document context.
-        Use this tool to verify facts, statistics, dates, or any claims that need external validation.
-
-        Args:
-            query: The search query string to look up on Google.
-
-        Returns:
-            Formatted search results with titles, URLs, and snippets.
-        """
-        import asyncio
-        try:
-            results = await asyncio.to_thread(search.results, query, 5)
-            if not results:
-                return f"No Google search results found for: {query}"
-
-            formatted = []
-            for i, r in enumerate(results, 1):
-                title = r.get("title", "No Title")
-                link = r.get("link", "No Link")
-                snippet = r.get("snippet", "No Snippet")
-                formatted.append(f"[{i}] {title}\nURL: {link}\nSnippet: {snippet}")
-
-            return "\n\n---\n\n".join(formatted)
-        except Exception as e:
-            return f"Error performing search: {str(e)}"
-
-    return google_search_tool
+# Google CSE tools (get_google_search_tool, create_world_context_tool) were
+# removed in Agent_Architecture_May_24. Web search now goes through Tavily —
+# see app/chat_workflows/tavily_tools.py (get_tavily_search_tool, get_tavily_extract_tool).
 
 
 def create_fetch_social_post_tool():
@@ -230,57 +189,6 @@ def create_fetch_social_post_tool():
             return f"Error fetching post from {url}: {str(e)}"
 
     return fetch_social_post_tool
-
-
-def create_world_context_tool():
-    """
-    Create a tool that searches for recent news and current events about a topic.
-    Returns None if Google Search credentials are not configured.
-    """
-    if not settings.GOOGLE_SEARCH_API or not settings.GOOGLE_CSE_ID:
-        return None
-
-    search = GoogleSearchAPIWrapper(
-        google_api_key=settings.GOOGLE_SEARCH_API,
-        google_cse_id=settings.GOOGLE_CSE_ID,
-        k=5,
-    )
-
-    @tool
-    async def world_context_tool(topic: str) -> str:
-        """
-        Searches for recent news and current events related to a topic.
-        Use this tool when writing a comment on a post that touches on current events,
-        geopolitics, breaking news, or any time-sensitive subject. Call it with the main
-        topic extracted from the post to get recent context that enriches your comment.
-
-        Args:
-            topic: The topic or entity to search for recent news about
-                   (e.g. "Israel Iran ceasefire", "OpenAI GPT-5 release", "US tariffs 2026").
-
-        Returns:
-            Recent news headlines, source URLs, and snippets about the topic.
-        """
-        import asyncio
-        try:
-            query = f"{topic} latest news"
-            results = await asyncio.to_thread(search.results, query, 5)
-            if not results:
-                return f"No recent news found for: {topic}"
-
-            formatted = []
-            for i, r in enumerate(results, 1):
-                title = r.get("title", "No Title")
-                link = r.get("link", "No Link")
-                snippet = r.get("snippet", "No Snippet")
-                formatted.append(f"[{i}] {title}\nURL: {link}\nSnippet: {snippet}")
-
-            return f"Recent news about '{topic}':\n\n" + "\n\n---\n\n".join(formatted)
-        except Exception as e:
-            logger.error(f"Error fetching world context for '{topic}': {e}", exc_info=True)
-            return f"Error searching for world context: {str(e)}"
-
-    return world_context_tool
 
 
 def create_knowledge_graph_tool(user_id: str, db_session: AsyncSession):
