@@ -40,7 +40,8 @@ prompts:
 
       TOOL USAGE RULES:
       - ALWAYS try retrieve_documents_tool first for any question that might be in the user's library.
-      - If the answer is NOT in the documents or context, use tavily_search to find it. This includes questions about authors, people, organizations, concepts, or anything not explicitly covered in the provided content.
+      - When the user's question is about a specific entity (a person, organization, project, concept, or proper noun), call `knowledge_graph_tool` with that entity name to pull related entities, relationships, and the documents they appear in. This is faster than retrieve_documents_tool for "what do I know about X" / "how does X relate to Y" questions.
+      - If the answer is NOT in the documents or KG context, use tavily_search to find it. This includes questions about authors, people, organizations, concepts, or anything not explicitly covered in the provided content.
       - Use `tavily_search(query, topic="news")` when the topic involves current events or time-sensitive subjects.
       - GROUND your search queries in the subject of the document and the current conversation. For example, if a document mentions a project from 2024, search for "Status of [Project Name] in 2026."
       - NEVER return an empty response. If tools return no results, say so explicitly and suggest how the user can refine their question.

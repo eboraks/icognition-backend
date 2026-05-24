@@ -526,10 +526,11 @@ class ChatAgentService:
                 if not streamed_any_token and answer:
                     yield {"type": "content", "content": answer}
 
-                yield _build_chat_context(
-                    (final.values or {}).get("context_entity_ids"),
-                    answer,
-                )
+                # entity_ids will be empty: KG enrichment was removed and the LLM
+                # is expected to use knowledge_graph_tool on demand. Entity pinning
+                # in the UI is preserved only via <source doc_id="N"> tags in the
+                # response (document_ids), not entity IDs.
+                yield _build_chat_context([], answer)
 
                 logger.info(f"[Session {session_id}] Stream loop completed.")
 

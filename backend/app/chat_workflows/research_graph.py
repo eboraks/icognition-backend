@@ -19,7 +19,6 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text
 
 from app.core.config import settings
 from app.chat_workflows.tools import create_fetch_social_post_tool
@@ -39,9 +38,6 @@ class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
     skill: str
     latest_query: str
-    extracted_entities: List[str]
-    kg_context: str
-    context_entity_ids: List[int]
     context_document_ids: List[int]
     reflection_count: int
     is_satisfactory: bool
@@ -52,152 +48,6 @@ class ReflectionOutput(TypedDict):
     needs_search: bool
     search_query: str
     is_satisfactory: bool
-
-
-# --- Lightweight entity extraction (replaces intent_node's key_entities) ---
-
-
-_STOP_WORDS = {
-    "the", "a", "an", "is", "are", "was", "were", "what", "who", "where", "when",
-    "why", "how", "this", "that", "these", "those", "and", "or", "but", "of", "in",
-    "on", "at", "to", "for", "with", "from", "by", "about", "as", "it", "its",
-    "my", "your", "our", "their", "his", "her", "do", "does", "did", "can", "could",
-    "would", "should", "will", "shall", "may", "might", "be", "been", "being",
-    "have", "has", "had", "you", "i", "we", "they", "he", "she",
-}
-
-
-def _extract_query_entities(text_in: str, max_entities: int = 5) -> List[str]:
-    """
-    Cheap, dependency-free entity extraction for KG enrichment.
-
-    Pulls capitalized multi-word phrases and quoted strings out of the user
-    message. This replaces the LLM-based key_entities field that intent_node
-    used to produce. Good enough for fuzzy-matching against kg_node.label.
-    """
-    import re
-
-    if not text_in:
-        return []
-    # Strip HTML wrappers from chat input (frontend wraps messages in <p>).
-    text_in = re.sub(r"<[^>]+>", " ", text_in)
-
-    # Quoted phrases — high signal.
-    quoted = re.findall(r'"([^"]{2,80})"|\'([^\']{2,80})\'', text_in)
-    found: List[str] = []
-    for a, b in quoted:
-        phrase = (a or b).strip()
-        if phrase and phrase not in found:
-            found.append(phrase)
-
-    # Capitalized runs — second pass.
-    for match in re.findall(r"\b[A-Z][\w\-]+(?:\s+[A-Z][\w\-]+){0,4}\b", text_in):
-        phrase = match.strip()
-        # Reject single short capitalized words that are usually sentence starters.
-        if len(phrase.split()) == 1 and phrase.lower() in _STOP_WORDS:
-            continue
-        if phrase and phrase not in found:
-            found.append(phrase)
-
-    return found[:max_entities]
-
-
-# --- Knowledge Graph Entity Resolution ---
-
-
-async def resolve_entities_from_query(
-    entity_names: List[str],
-    user_id: str,
-    db_session: AsyncSession,
-    similarity_threshold: float = 0.3,
-    max_entities: int = 10,
-) -> tuple:
-    """
-    Resolve a list of entity names against the knowledge graph using fuzzy matching.
-    Returns (formatted_context_string, matched_entity_ids).
-    """
-    if not entity_names:
-        return ("", [])
-
-    all_entity_ids: List[int] = []
-    entity_map: Dict[int, dict] = {}
-
-    for name in entity_names[:5]:  # cap to avoid slow queries
-        sql = text("""
-            SELECT DISTINCT ON (n.label, n.raw_type)
-                   n.id, n.label AS name, n.raw_type AS type, n.description,
-                   similarity(n.label, :q) AS sim
-            FROM kg_node n
-            WHERE similarity(n.label, :q) >= :threshold
-              AND n.user_id = :user_id
-            ORDER BY n.label, n.raw_type, sim DESC
-            LIMIT 5
-        """)
-        result = await db_session.execute(sql, {
-            "q": name,
-            "threshold": similarity_threshold,
-            "user_id": user_id,
-        })
-        for row in result.mappings().all():
-            eid = row["id"]
-            if eid not in entity_map:
-                entity_map[eid] = {
-                    "id": eid,
-                    "name": row["name"],
-                    "type": row["type"],
-                    "description": row["description"],
-                    "similarity": round(float(row["sim"]), 3),
-                }
-                all_entity_ids.append(eid)
-
-    if not all_entity_ids:
-        return ("", [])
-
-    rels_sql = text("""
-        SELECT e.property_label AS relationship_type,
-               n1.label AS from_name, n1.raw_type AS from_type,
-               n2.label AS to_name, n2.raw_type AS to_type
-        FROM kg_edge e
-        JOIN kg_node n1 ON n1.id = e.from_node_id
-        JOIN kg_node n2 ON n2.id = e.to_node_id
-        WHERE e.from_node_id = ANY(:ids) OR e.to_node_id = ANY(:ids)
-        LIMIT 30
-    """)
-    rels_result = await db_session.execute(rels_sql, {"ids": all_entity_ids})
-    relationships = rels_result.mappings().all()
-
-    docs_sql = text("""
-        SELECT DISTINCT n.label AS entity_name, d.title AS doc_title
-        FROM kg_node_document nd
-        JOIN kg_node n ON n.id = nd.node_id
-        JOIN document d ON d.id = nd.document_id
-        WHERE nd.node_id = ANY(:ids)
-        ORDER BY n.label, d.title
-        LIMIT 20
-    """)
-    docs_result = await db_session.execute(docs_sql, {"ids": all_entity_ids})
-    entity_docs = docs_result.mappings().all()
-
-    parts = ["[Knowledge Graph Context]", "Entities found in your library:"]
-    for e in entity_map.values():
-        desc = f" — {e['description']}" if e["description"] else ""
-        parts.append(f"  * [{e['type']}] {e['name']}{desc}")
-
-    if relationships:
-        parts.append("\nRelationships:")
-        seen = set()
-        for r in relationships:
-            rel_key = (r["from_name"], r["relationship_type"], r["to_name"])
-            if rel_key not in seen:
-                seen.add(rel_key)
-                parts.append(f"  * {r['from_name']} --[{r['relationship_type']}]--> {r['to_name']}")
-
-    if entity_docs:
-        parts.append("\nAppears in documents:")
-        for ed in entity_docs:
-            parts.append(f"  * {ed['entity_name']} -> \"{ed['doc_title']}\"")
-
-    return ("\n".join(parts), list(all_entity_ids))
 
 
 # --- Graph Builder Helper ---
@@ -251,10 +101,11 @@ def build_research_graph(
     Args:
         checkpointer: LangGraph checkpointer (e.g. AsyncPostgresSaver).
         retrieve_tool: LangChain tool for KB retrieval (session-scoped).
-        kg_tool: Knowledge graph tool (session-scoped).
+        kg_tool: Knowledge graph tool the LLM calls on demand (session-scoped).
         prompts: Pre-fetched prompt dict from fetch_graph_prompts().
-        db_session: AsyncSession for KG entity resolution.
-        user_id: User ID for scoping KG queries.
+        db_session: AsyncSession used only by the research dispatch path
+            (creates/updates ResearchSession rows). Not used for KG enrichment.
+        user_id: User ID used only by the research dispatch path.
         skill_override: Skill key from `?skill=` query param. Defaults to default_skill.
         chat_session_id: Used to thread research sessions across turns.
     """
@@ -294,32 +145,15 @@ def build_research_graph(
 
     # --- Nodes ---
 
-    async def _enrich_kg(state: AgentState) -> tuple:
-        """Resolve query entities against the KG. Returns (kg_context, entity_ids)."""
-        entities = state.get("extracted_entities") or []
-        if not entities or not db_session or not user_id:
-            return ("", [])
-        try:
-            return await resolve_entities_from_query(
-                entity_names=entities,
-                user_id=user_id,
-                db_session=db_session,
-            )
-        except Exception as e:
-            logger.warning(f"KG enrichment failed (non-fatal): {e}")
-            return ("", [])
-
     async def generate_node(state: AgentState) -> dict:
-        """Resolve the skill prompt, enrich with KG context, call the LLM with tools."""
+        """Resolve the skill prompt and call the LLM with tools.
+
+        KG context is no longer pre-injected here — the LLM calls
+        knowledge_graph_tool itself when it sees entity names worth looking up.
+        """
         messages = state["messages"]
         skill_key = state.get("skill") or initial_skill
         skill_config = skills.get(skill_key) or skills[default_skill]
-
-        # KG enrichment runs once per turn (only if not already populated).
-        kg_context = state.get("kg_context") or ""
-        context_entity_ids = state.get("context_entity_ids") or []
-        if not kg_context and state.get("extracted_entities"):
-            kg_context, context_entity_ids = await _enrich_kg(state)
 
         # Resolve system prompt from YAML (or skill's inline prompt_text fallback).
         yaml_prompt = prompts.get(skill_config.prompt_type)
@@ -334,8 +168,6 @@ def build_research_graph(
                 "messages": [AIMessage(
                     content=f"The '{skill_key}' skill is not configured. Please contact support."
                 )],
-                "kg_context": kg_context,
-                "context_entity_ids": context_entity_ids,
                 "is_satisfactory": True,
             }
 
@@ -347,14 +179,7 @@ def build_research_graph(
             clean = re.sub(r"<[^>]+>", "", str(last_msg.content)).strip()
             remaining = re.sub(r"^/\w+\s*", "", clean).strip()
             if not remaining and skill_config.slash_instruction:
-                instruction = skill_config.slash_instruction
-                if kg_context:
-                    instruction = f"{instruction}\n\n{kg_context}"
-                prompt_msgs[-1] = HumanMessage(content=instruction)
-            elif kg_context:
-                prompt_msgs[-1] = HumanMessage(content=f"{last_msg.content}\n\n{kg_context}")
-        elif isinstance(last_msg, HumanMessage) and kg_context:
-            prompt_msgs[-1] = HumanMessage(content=f"{last_msg.content}\n\n{kg_context}")
+                prompt_msgs[-1] = HumanMessage(content=skill_config.slash_instruction)
 
         prompt_msgs = [SystemMessage(content=system_msg)] + prompt_msgs
 
@@ -379,11 +204,7 @@ def build_research_graph(
                 content=f"I'm sorry, I encountered an error while processing your request. ({type(e).__name__})"
             )
 
-        return {
-            "messages": [response],
-            "kg_context": kg_context,
-            "context_entity_ids": context_entity_ids,
-        }
+        return {"messages": [response]}
 
     async def reflect_node(state: AgentState) -> dict:
         """Critique the latest AI response (opt-in per skill via skill.reflect)."""
@@ -600,11 +421,8 @@ def build_research_graph(
 
     async def init_turn_node(state: AgentState) -> dict:
         """
-        Reset per-turn state and extract entities from the new user message.
-
-        Runs as the first node every turn. This is what intent_node used to do
-        (minus the LLM classification, which is now baked into the system prompt).
-        Lightweight regex-based entity extraction replaces the LLM `key_entities` field.
+        Pin the skill for this turn and reset per-turn state so prior turn's
+        checkpoint values (is_satisfactory, reflection_count) don't leak.
         """
         last_user = ""
         for msg in reversed(state.get("messages", [])):
@@ -618,16 +436,10 @@ def build_research_graph(
                 last_user = str(content)
                 break
 
-        entities = _extract_query_entities(last_user)
         skill_key = skill_override if skill_override in skills else default_skill
-
         return {
             "skill": skill_key,
             "latest_query": last_user,
-            "extracted_entities": entities,
-            # Reset per-turn state so prior turn's checkpoint values don't leak.
-            "kg_context": "",
-            "context_entity_ids": [],
             "is_satisfactory": False,
             "reflection_count": 0,
         }

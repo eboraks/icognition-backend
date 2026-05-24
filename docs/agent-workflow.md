@@ -108,14 +108,17 @@ START
 
 State definition: `AgentState` in
 [research_graph.py](../backend/app/chat_workflows/research_graph.py).
-Key fields: `messages`, `skill`, `latest_query`, `extracted_entities`,
-`kg_context`, `context_entity_ids`, `is_satisfactory`, `reflection_count`.
+Key fields: `messages`, `skill`, `latest_query`,
+`context_document_ids`, `is_satisfactory`, `reflection_count`.
 
 Notable removals from the previous architecture: there is no `intent_node`,
-no `intent_description`, no `requires_research` flag, and no
-`dispatch_research_node` reachable from `intent_node`.
+no `intent_description`, no `requires_research` flag, no
+`dispatch_research_node` reachable from `intent_node`, and no
+deterministic KG enrichment step before the LLM call. KG context now flows
+through `knowledge_graph_tool` (an on-demand tool the LLM calls when it
+wants entity/relationship context) — see §4.1.
 
-### 2.2 generate_node — prompt resolution, KG enrichment, LLM call
+### 2.2 generate_node — prompt resolution, LLM call
 
 The single generate node handles everything the LLM needs:
 
@@ -123,14 +126,17 @@ The single generate node handles everything the LLM needs:
    `?skill=<key>` (slash command) and defaults to `qa`. The skill key
    indexes into the YAML-loaded skill registry; that yields the system
    prompt and tools list to bind.
-2. **KG enrichment.** On the first generation pass per turn, the latest
-   user message is scanned via `resolve_entities_from_query` (pg_trgm
-   fuzzy match against `kg_node` + `kg_edge`) to produce a
-   `[Knowledge Graph Context]` block that's appended to the user message.
-3. **System prompt assembly.** The skill's system prompt already contains
+2. **System prompt assembly.** The skill's system prompt already contains
    the response-style guidance that used to live in the intent
    classifier (e.g. "this user is asking about a document — answer
    directly; this user is requesting an action — produce the artifact").
+   Its tool-usage rules instruct the LLM to call `knowledge_graph_tool`
+   for entity-centric questions and `retrieve_documents_tool` for
+   library lookups.
+3. **Slash-command bare-message rewrite.** If the user message is just a
+   bare slash command (e.g. `/fact_check` with no body), the skill's
+   `slash_instruction` replaces it so the LLM has something concrete to
+   act on.
 4. **LLM call.** `llm_with_tools.ainvoke(...)` with the assembled
    messages. Gemini's `MALFORMED_FUNCTION_CALL` is retried once without
    tools.
@@ -498,6 +504,7 @@ implementation, and why.
 | `google_search_tool`, `world_context_tool` (Google CSE)  | Tavily (`tavily_search` with `topic="general"|"news"`)                                             | Two providers existed for historical reasons. Tavily covers both ranked search and clean extraction, so one provider is enough. Less config, fewer branches. |
 | `is_satisfactory` polling + `has_yielded_content` + `_latest_ai_answer` heuristic in `get_stream` | State-snapshot-before / state-snapshot-after via `aget_state(config)` | The old loop tried to reconstruct turn boundaries from event streams; the snapshot pair makes the boundary explicit, killing the "previous turn's answer leaks into this turn" bug. |
 | `end_stream` event with full-text re-replay              | `done` event with `{entity_ids, document_ids}` only                                                 | The end-of-stream payload duplicating the streamed text existed only to recover from drift between server and client accumulators. With state-as-truth that drift is impossible. |
+| Deterministic KG enrichment inside `generate_node` (`_enrich_kg`, `resolve_entities_from_query`, `extracted_entities` / `kg_context` / `context_entity_ids` state fields) | The LLM calls `knowledge_graph_tool` on demand; the system prompt instructs it to use the tool for entity-centric questions | Pre-enriching needed something to identify "the entities the user is asking about." The pre-refactor LLM intent classifier produced that; without it, the only options were a regex hack or a dedicated LLM call. Letting the LLM call the existing KG tool when it judges KG context useful is cleaner — and the tool returns richer results than the pre-enriched block did. Trade-off: the `chat_context.entity_ids` payload is empty under the new model; entity pinning in the UI would need to be re-derived from tool output if you want it back. |
 
 What is preserved:
 
@@ -505,7 +512,7 @@ What is preserved:
 - YAML-backed prompts with the `get_prompt()` interface.
 - The research multi-agent sub-graph itself (plan → supervisor → fan-out
   → critic → writer).
-- KG enrichment as a deterministic step inside `generate_node`.
+- The `knowledge_graph_tool` itself (on-demand).
 - The skill abstraction (one system prompt + tools per skill key).
 - SSE as the streaming transport (with a simpler event schema).
 
