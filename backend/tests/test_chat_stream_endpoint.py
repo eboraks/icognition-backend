@@ -47,7 +47,14 @@ import pytest
 
 API_BASE = os.getenv("ICOG_API_BASE", "http://localhost:8000")
 AUTH_TOKEN = os.getenv("ICOG_AUTH_TOKEN", "")
-STREAM_TIMEOUT_S = float(os.getenv("ICOG_STREAM_TIMEOUT", "90"))
+
+# Stream consumption can legitimately take a couple of minutes when the agent
+# reaches for multiple tools (retrieve_documents_tool + tavily_search + …).
+# Plain HTTP calls (POST /messages, POST /sessions, etc.) should be near-instant —
+# we keep that timeout short so a hung server fails fast rather than silently
+# blocking on an exhausted DB pool.
+STREAM_TIMEOUT_S = float(os.getenv("ICOG_STREAM_TIMEOUT", "240"))
+HTTP_TIMEOUT_S = float(os.getenv("ICOG_HTTP_TIMEOUT", "30"))
 
 
 pytestmark = pytest.mark.asyncio
@@ -134,6 +141,7 @@ async def _create_session(client: httpx.AsyncClient, title: str) -> int:
         f"{API_BASE}/api/v1/chat/sessions",
         json={"title": title, "scope_type": "all_library", "scope_id": None},
         headers=_auth_headers(),
+        timeout=HTTP_TIMEOUT_S,
     )
     r.raise_for_status()
     body = r.json()
@@ -145,6 +153,7 @@ async def _delete_session(client: httpx.AsyncClient, session_id: int) -> None:
         await client.delete(
             f"{API_BASE}/api/v1/chat/sessions/{session_id}",
             headers=_auth_headers(),
+            timeout=HTTP_TIMEOUT_S,
         )
     except Exception:
         pass  # best-effort cleanup
@@ -155,6 +164,7 @@ async def _send_user_message(client: httpx.AsyncClient, session_id: int, content
         f"{API_BASE}/api/v1/chat/sessions/{session_id}/messages",
         json={"content": content},
         headers=_auth_headers(),
+        timeout=HTTP_TIMEOUT_S,
     )
     r.raise_for_status()
     body = r.json()
